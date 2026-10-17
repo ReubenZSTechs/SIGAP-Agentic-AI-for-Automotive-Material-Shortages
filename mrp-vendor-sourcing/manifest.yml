@@ -1,0 +1,18 @@
+---
+applications:
+  # 1. Container Backend Python
+  - name: mrp-backend-suppliers
+    path: ./backend
+    memory: 256M
+    instances: 1
+    random-route: true
+    buildpack: python_buildpack
+    command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+  # 2. Container Frontend React
+  - name: mrp-frontend-suppliers
+    path: ./frontend
+    memory: 128M
+    instances: 1
+    random-route: true
+    buildpack: staticfile_buildpack

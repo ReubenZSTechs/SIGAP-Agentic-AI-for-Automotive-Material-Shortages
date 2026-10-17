@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+/* Tema "Blueprint": biru cetak-biru (aksi), baja (netral), oranye keselamatan (hanya merek). */
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --color-primary-50: #EEF3FA;  --color-primary-100: #DDE7F5; --color-primary-200: #BDD0EA;
+  --color-primary-300: #92B0DB; --color-primary-400: #5F89C7; --color-primary-500: #3A6AAE;
+  --color-primary-600: #2352A0; --color-primary-700: #1B4181; --color-primary-800: #153267;
+  --color-primary-900: #0F2347; --color-primary-950: #0A1932;
+  --color-brand: #E0662A;
+  /* Netral baja */
+  --color-slate-50: #F4F6F8;  --color-slate-100: #EAEEF2; --color-slate-200: #DCE2E9;
+  --color-slate-300: #C3CCD6; --color-slate-400: #94A1B0; --color-slate-500: #667587;
+  --color-slate-600: #4B5A6B; --color-slate-700: #364352; --color-slate-800: #243040; --color-slate-900: #152030;
+  /* Alias: kelas indigo-* lama di komponen fitur otomatis memakai palet primary */
+  --color-indigo-50: var(--color-primary-50);   --color-indigo-100: var(--color-primary-100);
+  --color-indigo-200: var(--color-primary-200); --color-indigo-300: var(--color-primary-300);
+  --color-indigo-400: var(--color-primary-400); --color-indigo-500: var(--color-primary-500);
+  --color-indigo-600: var(--color-primary-600); --color-indigo-700: var(--color-primary-700);
+  --color-indigo-800: var(--color-primary-800);
+  --radius-md: 0.5rem; --radius-lg: 0.625rem; --radius-xl: 0.875rem;
+}
+
+html, body, #root { height: 100%; }
+body { @apply bg-slate-50 text-slate-800 antialiased; }
+table { font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--color-primary-500); outline-offset: 2px; }
+select {
+  appearance: none; padding-right: 2rem; background-repeat: no-repeat; background-position: right .65rem center; background-size: 1rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23667587' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+@keyframes pop-in { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slide-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+.anim-pop { animation: pop-in .18s ease-out; }
+.anim-fade { animation: fade-in .15s ease-out; }
+.anim-slide { animation: slide-in .2s ease-out; }
+@media (prefers-reduced-motion: reduce) { .anim-pop, .anim-fade, .anim-slide { animation: none; } }
+
+/* ---- Kalender produksi (FullCalendar): warna event per status, selaras dengan Badge ---- */
+.fc .ev-PLANNED     { --c: var(--color-indigo-600); }
+.fc .ev-IN_PROGRESS { --c: var(--color-amber-500); }
+.fc .ev-COMPLETED   { --c: var(--color-green-600); }
+.fc .ev-CANCELLED   { --c: var(--color-slate-400); opacity: .45; text-decoration: line-through; }
+.fc .fc-event       { border: 0; border-left: 3px solid var(--c); cursor: pointer;
+                      background: color-mix(in srgb, var(--c) 12%, white); color: var(--c); font-size: .75rem; }
+.fc .fc-event .fc-event-main { color: var(--c); padding: 1px 4px; }
+.fc .ev-stale       { background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgb(0 0 0 / .06) 6px 12px); }
+.fc .fc-toolbar-title { font-size: 1rem; font-weight: 600; }
+.fc .fc-button { background: white; color: var(--color-slate-700); border-color: var(--color-slate-300); font-size: .8rem; text-transform: none; }
+.fc .fc-button-primary:not(:disabled).fc-button-active, .fc .fc-button-primary:not(:disabled):active { background: var(--color-indigo-600); color: white; border-color: var(--color-indigo-600); }
+.fc .fc-button:focus { box-shadow: none; }
+.fc { --fc-border-color: var(--color-slate-200); --fc-today-bg-color: var(--color-primary-50); --fc-neutral-bg-color: var(--color-slate-50); }
+.fc .fc-button { border-radius: .5rem; }
+.fc .fc-col-header-cell-cushion, .fc .fc-daygrid-day-number { color: var(--color-slate-600); font-size: .75rem; }

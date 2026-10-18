@@ -58,6 +58,25 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [o for o in self.CORS_ORIGINS.split(",") if o]
 
+    # Chatbot (opsional): kredensial SAP AI Core. Bila kosong, endpoint /chat mengembalikan 503.
+    AICORE_AUTH_URL: str | None = None
+    AICORE_CLIENT_ID: str | None = None
+    AICORE_CLIENT_SECRET: str | None = None
+    AICORE_BASE_URL: str | None = None
+    AICORE_RESOURCE_GROUP: str = "default"
+    # URL role database read-only khusus chatbot; bila kosong memakai DATABASE_URL (tetap READ ONLY).
+    CHAT_DATABASE_URL: str | None = None
+
+    @field_validator("CHAT_DATABASE_URL")
+    @classmethod
+    def _chat_db(cls, v: str | None) -> str | None:
+        return normalize_db_url(v.strip()) if v and v.strip() else None
+
+    @property
+    def aicore_configured(self) -> bool:
+        return all((self.AICORE_AUTH_URL, self.AICORE_CLIENT_ID,
+                    self.AICORE_CLIENT_SECRET, self.AICORE_BASE_URL))
+
     # hide_input_in_errors: jangan cetak isi URL (berisi password) saat validasi gagal.
     model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore", hide_input_in_errors=True)
 

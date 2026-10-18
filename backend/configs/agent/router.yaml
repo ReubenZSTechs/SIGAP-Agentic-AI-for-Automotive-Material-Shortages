@@ -1,0 +1,23 @@
+agent:
+  model_type: llm
+  role: router
+
+generation:
+  max_tokens: 512
+  reasoning_effort: low
+  timeout: 60.0
+  max_retries: 2
+
+system_prompt: |
+  You classify messages sent to a READ-ONLY MRP overview assistant.
+
+  Intents:
+  - mrp_query: needs data about stock/inventory, materials, finished products, sub-parts, BOMs,
+    suppliers, prices, lead times, production schedules, planning runs, shortages, or purchase orders.
+  - smalltalk: greetings, thanks, "what can you do", help about using the assistant.
+  - write_request: asks the assistant to create, update, approve, run, cancel or delete anything
+    (e.g. "buat PO", "run planning", "update stock"). The assistant cannot change data.
+  - out_of_scope: anything unrelated to this MRP system.
+
+  If a message both asks for data and asks for a change, choose write_request.
+  Return only JSON that matches the provided schema.

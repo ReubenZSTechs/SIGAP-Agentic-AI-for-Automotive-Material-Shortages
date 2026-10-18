@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import CommonIcon from '../components/common/Icon';
 import PageHeader from '../components/layout/PageHeader';
 import useFetch from '../hooks/useFetch';
+import { chatService } from '../services/chatService';
 import { inventoryService } from '../services/inventoryService';
 import { purchaseOrderService } from '../services/purchaseOrderService';
 import { OPEN_PO_STATUSES } from '../utils/constants';
@@ -12,162 +13,38 @@ import { OPEN_PO_STATUSES } from '../utils/constants';
 /* -------------------------------------------------------------------------- */
 
 const QUICK_ACTIONS = [
-  'Jalankan Eksplosi BOM',
-  'Cek Stok Critical',
-  'Buat Draft PO Multi-Vendor',
+  'Ringkas stok saat ini untuk setiap item',
+  'Item mana yang stoknya critical?',
+  'Supplier apa saja untuk material Ban Luar Karet?',
   'Ringkas PO yang belum diterima',
 ];
 
-const INITIAL_ACTIONS = {
-  seed1: {
-    id: 'seed1',
-    title: 'Buat 2 PO baru untuk item stok critical',
-    detail: 'Agent mengelompokkan kebutuhan ke 2 vendor dengan harga dan lead time terbaik.',
-    approveLabel: 'Buat draft PO',
-    status: 'pending',
-  },
+const GREETING = {
+  id: 'm0',
+  role: 'agent',
+  blocks: [
+    {
+      type: 'text',
+      text: 'Halo, saya Agent MRP. Tanyakan ringkasan stok, item critical, supplier per material, BOM, jadwal produksi, hasil planning, atau PO terbuka. Saya hanya membaca data (read-only), dan setiap jawaban diverifikasi terhadap database sebelum ditampilkan.',
+    },
+  ],
 };
 
-const INITIAL_MESSAGES = [
-  {
-    id: 'm0',
-    role: 'agent',
-    blocks: [
-      {
-        type: 'text',
-        text: 'Halo, saya Agent MRP. Saya bisa menjalankan eksplosi BOM, memeriksa stok, memilih vendor, dan menyiapkan draft PO. Setiap tindakan yang mengubah data akan saya minta persetujuan Anda dulu.',
-      },
-      { type: 'action', actionId: 'seed1' },
-    ],
-  },
-];
-
-/* -------------------------------------------------------------------------- */
-/*  Util                                                                      */
-/* -------------------------------------------------------------------------- */
+const TOOL_LABELS = {
+  get_stock_summary: 'Ringkasan stok',
+  get_critical_items: 'Item critical',
+  find_materials: 'Cari material',
+  get_material_suppliers: 'Supplier material',
+  list_suppliers: 'Daftar supplier',
+  get_open_purchase_orders: 'PO terbuka',
+  get_latest_planning_run: 'Planning terakhir',
+  get_bom: 'BOM',
+  get_production_schedules: 'Jadwal produksi',
+  query_database: 'Query database',
+};
 
 let uid = 0;
 const nextId = (p = 'id') => `${p}${Date.now().toString(36)}${uid++}`;
-
-// Field inventory belum pasti namanya — sesuaikan dengan response backend Anda.
-const pick = (row, ...keys) => {
-  for (const k of keys) if (row?.[k] !== undefined && row?.[k] !== null) return row[k];
-  return '–';
-};
-
-/**
- * Titik integrasi backend agent.
- * Ganti isi fungsi ini dengan panggilan ke endpoint agent Anda, mis.:
- *   const res = await agentService.chat({ message, attachments });
- *   return res; // { blocks, actions, step }
- * Bentuk keluaran:
- *   blocks:  [{ type:'text', text } | { type:'table', columns, rows } | { type:'action', actionId }]
- *   actions: { [id]: { id, title, detail, approveLabel, status:'pending' } }
- *   step:    nomor langkah workflow yang sedang dikerjakan (0–5)
- */
-async function runAgent(message, { inventory }) {
-  await new Promise((r) => setTimeout(r, 900));
-  const q = message.toLowerCase();
-
-  if (q.includes('critical') || q.includes('stok')) {
-    const rows = (inventory ?? [])
-      .filter((r) => r.status === 'CRITICAL')
-      .slice(0, 8)
-      .map((r) => [
-        pick(r, 'material_name', 'item_name', 'name'),
-        pick(r, 'on_hand', 'stock', 'qty'),
-        pick(r, 'safety_stock', 'min_stock', 'reorder_point'),
-      ]);
-    if (!rows.length) {
-      return {
-        step: 2,
-        blocks: [{ type: 'text', text: 'Tidak ada item dengan status Critical saat ini.' }],
-      };
-    }
-    const id = nextId('a');
-    return {
-      step: 2,
-      blocks: [
-        { type: 'text', text: `Ada ${rows.length} item stok Critical. Berikut daftarnya:` },
-        { type: 'table', columns: ['Material', 'Stok', 'Batas aman'], rows },
-        { type: 'text', text: 'Saya bisa mencarikan vendor terbaik untuk semuanya.' },
-        { type: 'action', actionId: id },
-      ],
-      actions: {
-        [id]: {
-          id,
-          title: 'Jalankan Smart Sourcing untuk item Critical',
-          detail: 'Membandingkan harga dan lead time vendor. Belum ada PO yang dibuat.',
-          approveLabel: 'Jalankan sourcing',
-          status: 'pending',
-        },
-      },
-    };
-  }
-
-  if (q.includes('eksplosi') || q.includes('bom')) {
-    const id = nextId('a');
-    return {
-      step: 1,
-      blocks: [
-        { type: 'text', text: 'Eksplosi BOM akan dihitung dari jadwal produksi (MPS) yang aktif, lalu dibandingkan dengan stok saat ini.' },
-        { type: 'action', actionId: id },
-      ],
-      actions: {
-        [id]: {
-          id,
-          title: 'Jalankan eksplosi BOM',
-          detail: 'Membuat run planning baru dari MPS aktif.',
-          approveLabel: 'Jalankan',
-          status: 'pending',
-        },
-      },
-    };
-  }
-
-  if (q.includes('po')) {
-    const id = nextId('a');
-    return {
-      step: 4,
-      blocks: [
-        { type: 'text', text: 'Draft PO multi-vendor siap dibuat berdasarkan hasil sourcing terakhir. Anda masih bisa mengubah draft sebelum dikirim ke vendor.' },
-        { type: 'action', actionId: id },
-      ],
-      actions: {
-        [id]: {
-          id,
-          title: 'Buat draft PO multi-vendor',
-          detail: 'Satu PO per vendor, status Draft.',
-          approveLabel: 'Buat draft PO',
-          status: 'pending',
-        },
-      },
-    };
-  }
-
-  return {
-    step: null,
-    blocks: [
-      { type: 'text', text: 'Saya belum paham permintaan itu. Coba salah satu aksi cepat di bawah, atau sebutkan langkah MRP yang ingin dikerjakan.' },
-    ],
-  };
-}
-
-/* -------------------------------------------------------------------------- */
-/*  Ikon                                                                      */
-/* -------------------------------------------------------------------------- */
-
-const Icon = ({ d, className = 'h-5 w-5' }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
-    <path d={d} />
-  </svg>
-);
-const ICONS = {
-  send: 'M20 4L4 11l6 2 2 6 8-15z',
-  clip: 'M21 11.5l-8.6 8.6a5 5 0 01-7-7l9-9a3.3 3.3 0 014.7 4.7l-9 9a1.7 1.7 0 01-2.4-2.4l8.3-8.3',
-  close: 'M6 6l12 12M18 6L6 18',
-  check: 'M5 12.5l4.5 4.5L19 7',
-};
 
 /* -------------------------------------------------------------------------- */
 /*  Status bar                                                                */
@@ -202,9 +79,10 @@ function MiniStat({ label, value, tone, to }) {
 /*  Chat                                                                      */
 /* -------------------------------------------------------------------------- */
 
-function DataTable({ columns, rows }) {
+function DataTable({ columns, rows, title }) {
   return (
     <div className="my-2 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      {title && <div className="border-b border-slate-100 px-3 py-2 text-xs font-medium text-slate-600">{title}</div>}
       <table className="w-full text-left text-sm">
         <thead className="bg-slate-50 text-xs text-slate-500">
           <tr>
@@ -227,6 +105,15 @@ function DataTable({ columns, rows }) {
   );
 }
 
+function Notice({ text }) {
+  return (
+    <p className="my-2 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+      <CommonIcon name="alert" className="mt-0.5 h-4 w-4" />
+      <span>{text}</span>
+    </p>
+  );
+}
+
 function ActionCard({ action, onResolve }) {
   if (!action) return null;
   const done = action.status !== 'pending';
@@ -236,7 +123,7 @@ function ActionCard({ action, onResolve }) {
       <p className="mt-0.5 text-xs text-slate-600">{action.detail}</p>
       {done ? (
         <p className={`mt-2 inline-flex items-center gap-1 text-xs font-medium ${action.status === 'approved' ? 'text-emerald-700' : 'text-slate-500'}`}>
-          {action.status === 'approved' && <Icon d={ICONS.check} className="h-3.5 w-3.5" />}
+          {action.status === 'approved' && <CommonIcon name="check" className="h-3.5 w-3.5" />}
           {action.status === 'approved' ? 'Disetujui' : 'Dilewati'}
         </p>
       ) : (
@@ -261,6 +148,43 @@ function ActionCard({ action, onResolve }) {
   );
 }
 
+function ConfidenceBadge({ meta }) {
+  if (!meta?.evaluated || meta.score == null) return null;
+  const tone = meta.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-800';
+  const m = meta.metrics ?? {};
+  const pct = (v) => (v == null ? '–' : `${Math.round(v * 100)}%`);
+  const title = `Faithfulness ${pct(m.faithfulness)} · Relevansi ${pct(m.answer_relevance)} · Angka ${pct(m.numeric_grounding)} · Kelengkapan ${pct(m.completeness)}`;
+  return (
+    <span title={title} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${tone}`}>
+      {meta.passed && <CommonIcon name="check" className="h-3 w-3" />}
+      {meta.passed ? 'Terverifikasi' : 'Belum terverifikasi'} · skor {meta.score.toFixed(2)}
+    </span>
+  );
+}
+
+function Sources({ sources }) {
+  if (!sources?.length) return null;
+  return (
+    <details className="group text-xs text-slate-500">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded px-1 hover:text-slate-700">
+        <CommonIcon name="chevronDown" className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+        Sumber data ({sources.length})
+      </summary>
+      <ul className="mt-1.5 space-y-1.5">
+        {sources.map((s) => (
+          <li key={s.id} className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+            <span className="font-medium text-slate-700">[{s.id}] {TOOL_LABELS[s.tool] ?? s.tool}</span>
+            {Object.keys(s.args ?? {}).length > 0 && <span> · {Object.entries(s.args).map(([k, v]) => `${k}: ${v}`).join(', ')}</span>}
+            <span> · {s.row_count} baris</span>
+            {s.error && <span className="text-red-600"> · {s.error}</span>}
+            {s.sql && <pre className="mt-1 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-slate-600">{s.sql}</pre>}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function Message({ msg, actions, onResolve }) {
   const isUser = msg.role === 'user';
   return (
@@ -270,18 +194,18 @@ function Message({ msg, actions, onResolve }) {
           <CommonIcon name="spark" className="h-4 w-4" />
         </div>
       )}
-      <div className={`max-w-[85%] text-sm leading-relaxed ${isUser ? 'rounded-2xl rounded-br-md bg-primary-700 px-4 py-2.5 text-white' : 'text-slate-800'}`}>
+      <div className={`max-w-[85%] text-sm leading-relaxed ${isUser ? 'rounded-2xl rounded-br-md bg-primary-700 px-4 py-2.5 text-white' : 'min-w-0 text-slate-800'}`}>
         {msg.blocks.map((b, i) => {
           if (b.type === 'text') return <p key={i} className="whitespace-pre-wrap py-0.5">{b.text}</p>;
-          if (b.type === 'table') return <DataTable key={i} columns={b.columns} rows={b.rows} />;
+          if (b.type === 'table') return <DataTable key={i} columns={b.columns} rows={b.rows} title={b.title} />;
+          if (b.type === 'notice') return <Notice key={i} text={b.text} />;
           if (b.type === 'action') return <ActionCard key={i} action={actions[b.actionId]} onResolve={onResolve} />;
           return null;
         })}
-        {msg.attachments?.length > 0 && (
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {msg.attachments.map((f) => (
-              <span key={f} className="rounded-md bg-white/15 px-2 py-0.5 text-xs">{f}</span>
-            ))}
+        {!isUser && msg.meta && (
+          <div className="mt-2 flex flex-wrap items-start gap-2">
+            <ConfidenceBadge meta={msg.meta} />
+            <Sources sources={msg.meta.sources} />
           </div>
         )}
       </div>
@@ -289,29 +213,43 @@ function Message({ msg, actions, onResolve }) {
   );
 }
 
-function Typing() {
+function Progress({ steps }) {
   return (
-    <div className="flex gap-3" role="status" aria-label="Agent sedang mengetik">
+    <div className="flex gap-3" role="status" aria-label="Agent sedang bekerja">
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-900 text-white" aria-hidden="true"><CommonIcon name="spark" className="h-4 w-4" /></div>
-      <div className="flex items-center gap-1 pt-2.5">
-        {[0, 150, 300].map((d) => (
-          <span key={d} className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400 motion-reduce:animate-none" style={{ animationDelay: `${d}ms` }} />
-        ))}
-      </div>
+      <ol className="space-y-1 pt-1.5 text-xs text-slate-500">
+        {steps.length === 0 && (
+          <li className="flex items-center gap-1 pt-1">
+            {[0, 150, 300].map((d) => (
+              <span key={d} className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400 motion-reduce:animate-none" style={{ animationDelay: `${d}ms` }} />
+            ))}
+          </li>
+        )}
+        {steps.map((s, i) => {
+          const active = i === steps.length - 1;
+          return (
+            <li key={s.key} className={`flex items-center gap-2 ${active ? 'font-medium text-indigo-700' : ''}`}>
+              {active
+                ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600 motion-reduce:animate-none" />
+                : <CommonIcon name="check" className="h-3.5 w-3.5 text-emerald-600" />}
+              {s.label}
+              {s.tool && <span className="text-slate-400">· {TOOL_LABELS[s.tool] ?? s.tool}</span>}
+              {s.score != null && <span className={s.passed ? 'text-emerald-700' : 'text-amber-700'}>· skor {s.score.toFixed(2)}</span>}
+            </li>
+          );
+        })}
+      </ol>
     </div>
   );
 }
 
 function Composer({ onSend, busy }) {
   const [text, setText] = useState('');
-  const [files, setFiles] = useState([]);
-  const fileRef = useRef(null);
 
   const submit = () => {
-    if (busy || (!text.trim() && !files.length)) return;
-    onSend(text, files.map((f) => f.name));
+    if (busy || !text.trim()) return;
+    onSend(text);
     setText('');
-    setFiles([]);
   };
 
   return (
@@ -322,7 +260,7 @@ function Composer({ onSend, busy }) {
             key={q}
             type="button"
             disabled={busy}
-            onClick={() => onSend(q, [])}
+            onClick={() => onSend(q)}
             className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-50"
           >
             {q}
@@ -330,42 +268,26 @@ function Composer({ onSend, busy }) {
         ))}
       </div>
 
-      {files.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-2">
-          {files.map((f, i) => (
-            <span key={f.name + i} className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-700">
-              {f.name}
-              <button type="button" aria-label={`Hapus ${f.name}`} onClick={() => setFiles(files.filter((_, j) => j !== i))} className="text-slate-400 hover:text-slate-700">
-                <Icon d={ICONS.close} className="h-3.5 w-3.5" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-
       <div className="flex items-end gap-2 rounded-xl border border-slate-300 bg-white p-2 shadow-sm focus-within:border-primary-500 focus-within:ring-3 focus-within:ring-primary-500/20">
-        <input ref={fileRef} type="file" multiple hidden onChange={(e) => { setFiles((p) => [...p, ...Array.from(e.target.files)]); e.target.value = ''; }} />
-        <button type="button" aria-label="Lampirkan file" onClick={() => fileRef.current?.click()} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700">
-          <Icon d={ICONS.clip} />
-        </button>
         <textarea
           rows={1}
           value={text}
+          maxLength={2000}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
           }}
-          placeholder="Minta Agent mengerjakan sesuatu…"
+          placeholder="Tanyakan data MRP, mis. “supplier untuk material Pedal Sepeda?”"
           className="max-h-32 min-h-[2.25rem] flex-1 resize-none bg-transparent px-1 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
         />
         <button
           type="button"
           aria-label="Kirim"
           onClick={submit}
-          disabled={busy || (!text.trim() && !files.length)}
+          disabled={busy || !text.trim()}
           className="rounded-lg bg-primary-600 p-2 text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-slate-300"
         >
-          <Icon d={ICONS.send} />
+          <CommonIcon name="send" className="h-5 w-5" />
         </button>
       </div>
       <p className="mt-1.5 text-xs text-slate-400">Enter untuk kirim, Shift+Enter untuk baris baru.</p>
@@ -383,44 +305,81 @@ export default function AgenticMrpPage() {
   const count = (s) => inv.data?.filter((r) => r.status === s).length;
   const openPo = pos.data?.filter((p) => OPEN_PO_STATUSES.includes(p.status)).length;
 
-  const [messages, setMessages] = useState(INITIAL_MESSAGES);
-  const [actions, setActions] = useState(INITIAL_ACTIONS);
+  const [threadId, setThreadId] = useState(() => chatService.threadId());
+  const [messages, setMessages] = useState([GREETING]);
+  const [actions, setActions] = useState({});
   const [busy, setBusy] = useState(false);
+  const [steps, setSteps] = useState([]);
   const endRef = useRef(null);
+  const abortRef = useRef(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages, busy]);
+  }, [messages, steps]);
+
+  useEffect(() => {
+    let alive = true;
+    setMessages([GREETING]);
+    chatService
+      .history(threadId)
+      .then((res) => {
+        if (alive && res.messages?.length) {
+          setMessages([GREETING, ...res.messages.map((m) => ({ id: nextId('h'), ...m }))]);
+        }
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [threadId]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const push = (msg) => setMessages((m) => [...m, { id: nextId('m'), ...msg }]);
 
-  const handleSend = async (text, attachments) => {
+  const onProgress = useCallback((e) => {
+    if (e.type !== 'progress') return;
+    setSteps((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.stage === e.stage && !e.tool) {
+        return [...prev.slice(0, -1), { ...last, ...e, key: last.key }];
+      }
+      return [...prev, { ...e, key: nextId('s') }];
+    });
+  }, []);
+
+  const handleSend = async (text) => {
     const content = text.trim();
-    push({ role: 'user', blocks: content ? [{ type: 'text', text: content }] : [], attachments });
+    if (!content) return;
+    push({ role: 'user', blocks: [{ type: 'text', text: content }] });
     setBusy(true);
+    setSteps([]);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      const res = await runAgent(content, { inventory: inv.data, attachments });
-      if (res.actions) setActions((a) => ({ ...a, ...res.actions }));
-      push({ role: 'agent', blocks: res.blocks });
+      const res = await chatService.stream({ message: content, threadId, onEvent: onProgress, signal: controller.signal });
+      if (res.type === 'final') {
+        if (res.actions) setActions((a) => ({ ...a, ...res.actions }));
+        push({ role: 'agent', blocks: res.blocks, meta: res.meta });
+      } else {
+        push({ role: 'agent', blocks: [{ type: 'text', text: res.message ?? 'Agent gagal merespons. Coba kirim ulang.' }] });
+      }
     } catch (e) {
-      push({ role: 'agent', blocks: [{ type: 'text', text: `Agent gagal merespons: ${e.message}. Coba kirim ulang.` }] });
+      if (e?.name !== 'AbortError') {
+        push({ role: 'agent', blocks: [{ type: 'text', text: `Agent gagal merespons: ${e.message}` }] });
+      }
     } finally {
       setBusy(false);
+      setSteps([]);
+      abortRef.current = null;
     }
   };
 
   const handleResolve = (id, status) => {
-    const action = actions[id];
     setActions((a) => ({ ...a, [id]: { ...a[id], status } }));
-    push({
-      role: 'agent',
-      blocks: [{
-        type: 'text',
-        text: status === 'approved'
-          ? `Baik, "${action.title}" sedang dijalankan. Saya kabari setelah selesai.`
-          : `Oke, "${action.title}" saya lewati.`,
-      }],
-    });
+  };
+
+  const newConversation = () => {
+    abortRef.current?.abort();
+    setThreadId(chatService.threadId({ reset: true }));
   };
 
   return (
@@ -440,7 +399,14 @@ export default function AgenticMrpPage() {
         <MiniStat label="Stok Critical" value={count('CRITICAL')} to="/inventory" tone="border-red-200 bg-red-50 text-red-700" />
         <MiniStat label="Stok Warning" value={count('WARNING')} to="/inventory" tone="border-amber-200 bg-amber-50 text-amber-800" />
         <MiniStat label="PO Terbuka" value={openPo} to="/purchase-orders" tone="border-indigo-200 bg-indigo-50 text-indigo-700" />
-
+        <button
+          type="button"
+          onClick={newConversation}
+          className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+        >
+          <CommonIcon name="plus" className="h-3.5 w-3.5" />
+          Percakapan baru
+        </button>
       </div>
 
       {/* Split view */}
@@ -450,12 +416,11 @@ export default function AgenticMrpPage() {
             {messages.map((m) => (
               <Message key={m.id} msg={m} actions={actions} onResolve={handleResolve} />
             ))}
-            {busy && <Typing />}
+            {busy && <Progress steps={steps} />}
             <div ref={endRef} />
           </div>
           <Composer onSend={handleSend} busy={busy} />
         </section>
-
       </div>
     </>
   );

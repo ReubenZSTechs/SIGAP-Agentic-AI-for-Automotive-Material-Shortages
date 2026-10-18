@@ -4,18 +4,71 @@ Alur bisnis end-to-end: **Master Material & Supplier → BOM → Jadwal & Stock 
 
 | Sisi | Stack | Folder |
 |:--|:--|:--|
-| Backend | Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2, SQLite (PostgreSQL opsional) | `backend/` |
+| Backend | Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2, PostgreSQL (Supabase) | `backend/` |
+| Chatbot | LangGraph, SAP AI Core (gpt-5.4 + claude-4.6-sonnet), sqlglot | `backend/app/chatbot/` (service), `backend/configs/` (agent, schema, tools, workflows) |
 | Frontend | React 18, Vite, React Router v6, Zustand, Axios, Tailwind CSS v4 | `frontend/` |
 
 ```
 .
-├── backend/    API FastAPI (+ seed data & 60 tes)
-├── frontend/   SPA React (Vite)
-├── docs/       rancangan delta (kalender, sinkron stok, Manual PO)
+├── backend/            API FastAPI (+ seed data & tes) + chatbot LangGraph
+├── frontend/           SPA React (Vite)
+├── docker/             skrip init Postgres lokal (role read-only chatbot, DB test)
+├── docker-compose.yaml stack lokal: Postgres + backend + frontend
+├── docs/               rancangan delta (kalender, sinkron stok, Manual PO)
 └── README.md
 ```
 
-## Menjalankan (butuh 2 terminal)
+## Menjalankan dengan Docker (paling cepat untuk user testing)
+
+Prasyarat: Docker + Docker Compose v2.24+.
+
+```bash
+cp backend/.env.example backend/.env    # isi AICORE_* agar chatbot aktif (opsional)
+docker compose up --build
+```
+
+| Layanan | URL | Keterangan |
+|:--|:--|:--|
+| Frontend | <http://localhost:8080> | nginx; `/api` di-proxy ke backend (SSE tanpa buffering) |
+| Backend | <http://localhost:8000/docs> | otomatis di-seed (`--demo-schedules`) saat start pertama |
+| Postgres | `localhost:5433` (user/pass `mrp`) | DB `mrp` (aplikasi) & `mrp_test` (pytest); role `mrp_chat_ro` hanya SELECT |
+
+- `DATABASE_URL` di `backend/.env` **ditimpa** ke Postgres lokal; hanya kredensial `AICORE_*` yang dipakai dari file itu. Tanpa `AICORE_*`, aplikasi tetap jalan dan chatbot mengembalikan 503.
+- Tes backend di dalam container: `docker compose exec backend pytest -q`.
+- Reset data: `docker compose down -v` (menghapus volume DB) lalu `up` lagi.
+
+## Chatbot MRP (Dashboard)
+
+> Dokumentasi lengkap (arsitektur, alur, konfigurasi, API): [`docs/CHATBOT.md`](docs/CHATBOT.md).
+
+Agent **read-only** di halaman Dashboard untuk pertanyaan seperti *"ringkas stok tiap item"*, *"item mana yang critical?"*, *"supplier apa saja untuk material Pedal Sepeda?"*. Jawaban di-stream (SSE) beserta langkah progres, skor verifikasi, dan sumber datanya (tool/SQL).
+
+```
+rewrite → route ─┬─ smalltalk / di luar topik / permintaan ubah data → respond_direct → finalize
+                 └─ mrp_query → plan → execute_tools → synthesize → evaluate ─┬─ lolos → finalize
+                       ▲               (query_database: generate→guard→execute→fix ≤3)       │
+                       └──── konteks kurang (≤2x) ◄──┴── revisi dengan kritik (≤2x) ◄─────────┘
+```
+
+- **Tool terkurasi** memakai service yang sama dengan UI (stok, item critical, supplier per material, PO terbuka, planning terakhir, BOM, jadwal). **`query_database`** = agent text-to-SQL cadangan dengan retry, hanya boleh `SELECT` (divalidasi `sqlglot`), relasi allowlist, `LIMIT ≤ 200`, transaksi `READ ONLY` + `statement_timeout`.
+- **Semantic layer**: view `chat_*_v` (dibuat otomatis setiap `create_all`) menerapkan rumus bisnis (Tersedia, Dipesan, Defisit, status CRITICAL/WARNING/SAFE) agar SQL buatan LLM tidak salah hitung.
+- **Tabel jawaban dirender dari baris evidence asli**, bukan dari teks model.
+- **Quality gate** (konfigurasi di `backend/configs/models.yaml` → `chatbot.evaluation`): evaluator memakai model berbeda (Claude) dari generator (GPT).
+
+  | Metrik | Cara hitung | Bobot |
+  |:--|:--|--:|
+  | Faithfulness | judge per klaim: klaim didukung ÷ total klaim | 0.40 |
+  | Answer relevance | judge | 0.25 |
+  | Numeric grounding | deterministik: setiap angka di teks ada di evidence (nilai, jumlah baris, total kolom) | 0.20 |
+  | Completeness | judge: semua bagian pertanyaan terjawab & didukung data | 0.15 |
+
+  Lolos bila skor tertimbang **≥ 0.80** dan faithfulness ≥ 0.70. Bila gagal: ambil data tambahan (konteks kurang) atau revisi jawaban dengan kritik evaluator; setelah batas percobaan, draf terbaik ditampilkan dengan catatan "belum terverifikasi".
+- **Kontrak output**: setiap agent punya `configs/agent/<agent>.yaml` (prompt & parameter) dan `configs/schema/<agent>.schema.json` (JSON Schema). Output divalidasi; bila tidak valid, model diminta memperbaiki satu kali.
+- **Memori percakapan**: LangGraph `PostgresSaver` (tabel `checkpoint*`), satu `thread_id` per percakapan (tombol *Percakapan baru*).
+- **Endpoint**: `POST /api/v1/chat/stream` (SSE: `progress`… lalu `final`/`error`), `POST /api/v1/chat`, `GET /api/v1/chat/{thread_id}/history`, `GET /api/v1/chat/health`.
+- **Evaluasi offline** dengan LLM sungguhan: `cd backend && python -m scripts.seed --reset --demo-schedules && python -m scripts.eval_chatbot` (pertanyaan di `tests/chatbot_eval/golden.yaml`).
+
+## Menjalankan tanpa Docker (butuh 2 terminal)
 
 Prasyarat: **Python 3.11+** dan **Node.js 18+** (diuji dengan Node 22).
 
@@ -83,7 +136,7 @@ Reset data demo: `cd backend && python -m scripts.seed --reset --demo-schedules`
 ## Tes
 
 ```bash
-cd backend && pytest -q          # 60 tes: BOM, planning, sourcing, PO, goods receipt, kontrak frontend, CORS
+cd backend && pytest -q          # BOM, planning, sourcing, PO, goods receipt, kontrak frontend, chatbot (butuh TEST_DATABASE_URL)
 cd frontend && npm run build     # build produksi
 ```
 

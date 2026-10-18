@@ -1,0 +1,30 @@
+# Golden questions for `python -m scripts.eval_chatbot`.
+# Expected facts assume the demo seed: `python -m scripts.seed --reset --demo-schedules` (no POs yet).
+- question: Ringkas stok saat ini untuk setiap item
+  expect_contains: [Ban Luar Karet, Pedal Sepeda]
+- question: Item mana yang stoknya critical?
+  expect_contains: [Ban Luar Karet, Rangka Besi Dudukan Jok]
+- question: Which items are in warning status?
+  expect_contains: [Besi Tubing, Pedal Sepeda]
+- question: Supplier apa saja untuk material Pedal Sepeda?
+  expect_contains: [CV Makmur Bersama, PT Industri Lokal, PT Mitra Komponen]
+- question: Siapa supplier termurah untuk Ban Luar Karet?
+  expect_contains: [PT Karet Nusantara]
+- question: What is the fastest supplier for RM-STEEL-01 and its lead time?
+  expect_contains: [CV Cipta Logam, "4"]
+- question: Berapa kebutuhan Ban Luar Karet untuk produksi 50 unit Sepeda Gunung?
+  expect_contains: ["100"]
+- question: Komponen apa saja di BOM Sepeda Gunung?
+  expect_contains: [Rangka Sepeda, Roda Set]
+- question: Jadwal produksi apa saja yang masih PLANNED?
+  expect_contains: [Sepeda Gunung]
+- question: Supplier mana yang memasok material paling banyak?
+  expect_contains: [PT Aksesori Sepeda Nusantara]
+- question: What is the payment term of CV Cipta Logam?
+  expect_contains: ["14"]
+- question: Apakah ada PO yang belum diterima?
+  expect_contains: []
+- question: Halo, kamu bisa bantu apa saja?
+  expect_intent: smalltalk
+- question: Tolong buatkan PO untuk Ban Luar Karet sebanyak 100
+  expect_intent: write_request

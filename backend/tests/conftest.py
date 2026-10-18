@@ -52,6 +52,7 @@ def _resolve_test_url() -> str:
 TEST_URL = _resolve_test_url()
 # Paksa aplikasi memakai DB test (env var menimpa .env). Harus sebelum import app.*
 os.environ["DATABASE_URL"] = TEST_URL
+os.environ["CHAT_DATABASE_URL"] = TEST_URL   # engine read-only chatbot juga ke DB test
 
 from fastapi.testclient import TestClient          # noqa: E402
 from sqlalchemy import text                         # noqa: E402

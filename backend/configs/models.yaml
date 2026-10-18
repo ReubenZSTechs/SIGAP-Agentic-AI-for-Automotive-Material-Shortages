@@ -1,5 +1,67 @@
 SAP_LLM:
-    served_name: default_llm
-    description: default llm using SAP API
-    agents:
-      prompt_rewriter:  backend/configs/agent/prompt_rewriter.yaml
+  description: LLM deployments on SAP AI Core / Generative AI Hub (resource group from AICORE_RESOURCE_GROUP)
+  models:
+    generator:
+      provider: sap_openai
+      model_name: gpt-5.4
+      served_name: default_llm
+      description: SQL generation, retrieval planning, and answer synthesis
+    judge:
+      provider: sap_bedrock
+      model_name: anthropic--claude-4.6-sonnet
+      served_name: judge_llm
+      description: Independent evaluator (different model family than the generator)
+
+  agents:
+    prompt_rewriter:
+      model: generator
+      config: agent/prompt_rewriter.yaml
+      schema: schema/prompt_rewriter.schema.json
+    router:
+      model: generator
+      config: agent/router.yaml
+      schema: schema/router.schema.json
+    retrieval_planner:
+      model: generator
+      config: agent/retrieval_planner.yaml
+      schema: schema/retrieval_planner.schema.json
+    sql_generator:
+      model: generator
+      config: agent/sql_generator.yaml
+      schema: schema/sql_generator.schema.json
+    sql_fixer:
+      model: generator
+      config: agent/sql_fixer.yaml
+      schema: schema/sql_fixer.schema.json
+    synthesizer:
+      model: generator
+      config: agent/synthesizer.yaml
+      schema: schema/synthesizer.schema.json
+    evaluator:
+      model: judge
+      config: agent/evaluator.yaml
+      schema: schema/evaluator.schema.json
+    direct_responder:
+      model: generator
+      config: agent/direct_responder.yaml
+      schema: schema/direct_responder.schema.json
+
+chatbot:
+  history_turns: 6
+  evaluation:
+    threshold: 0.8
+    faithfulness_floor: 0.7
+    weights:
+      faithfulness: 0.40
+      answer_relevance: 0.25
+      numeric_grounding: 0.20
+      completeness: 0.15
+    max_retrieve_attempts: 2
+    max_revise_attempts: 2
+  sql_agent:
+    max_attempts: 3
+    row_limit: 200
+    statement_timeout_ms: 5000
+  evidence:
+    max_rows_in_prompt: 60
+    max_calls_per_plan: 4

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sql_generator.schema.json",
+  "title": "SqlGeneratorOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sql", "tables_used", "rationale"],
+  "properties": {
+    "sql": {"type": "string", "minLength": 1, "description": "One PostgreSQL SELECT (or WITH ... SELECT) statement."},
+    "tables_used": {"type": "array", "items": {"type": "string"}},
+    "rationale": {"type": "string", "description": "One sentence on how the query answers the question."}
+  }
+}

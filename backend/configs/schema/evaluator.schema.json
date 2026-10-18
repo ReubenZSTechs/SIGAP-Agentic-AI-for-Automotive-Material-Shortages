@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "evaluator.schema.json",
+  "title": "EvaluatorOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["faithfulness", "answer_relevance", "completeness", "claim_verdicts", "failure_type", "critique"],
+  "properties": {
+    "faithfulness": {"type": "number", "minimum": 0, "maximum": 1},
+    "answer_relevance": {"type": "number", "minimum": 0, "maximum": 1},
+    "completeness": {"type": "number", "minimum": 0, "maximum": 1},
+    "claim_verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "supported", "evidence_ids", "note"],
+        "properties": {
+          "claim": {"type": "string"},
+          "supported": {"type": "boolean"},
+          "evidence_ids": {"type": "array", "items": {"type": "string"}},
+          "note": {"type": "string"}
+        }
+      }
+    },
+    "failure_type": {
+      "type": "string",
+      "enum": ["none", "missing_context", "unfaithful", "incomplete", "irrelevant"],
+      "description": "Dominant problem; missing_context means the evidence itself lacks what the question needs."
+    },
+    "critique": {"type": "string", "description": "Concrete instructions to fix the answer or the retrieval."}
+  }
+}

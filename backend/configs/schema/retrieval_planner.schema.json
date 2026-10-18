@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "retrieval_planner.schema.json",
+  "title": "RetrievalPlannerOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["calls"],
+  "properties": {
+    "calls": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tool", "purpose", "args"],
+        "properties": {
+          "tool": {
+            "type": "string",
+            "enum": [
+              "get_stock_summary", "get_critical_items", "find_materials", "get_material_suppliers",
+              "list_suppliers", "get_open_purchase_orders", "get_latest_planning_run", "get_bom",
+              "get_production_schedules", "query_database"
+            ]
+          },
+          "purpose": {"type": "string", "description": "Which part of the question this call answers."},
+          "args": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Arguments for the chosen tool; unused arguments must be null.",
+            "required": [
+              "category", "status", "include_warning", "query", "material", "supplier",
+              "product", "qty", "date_from", "date_to", "schedule_status", "question"
+            ],
+            "properties": {
+              "category": {"type": ["string", "null"], "enum": ["FINISHED", "SUB_PART", "PURCHASED", null]},
+              "status": {"type": ["string", "null"], "enum": ["CRITICAL", "WARNING", "SAFE", null]},
+              "include_warning": {"type": ["boolean", "null"]},
+              "query": {"type": ["string", "null"]},
+              "material": {"type": ["string", "null"], "description": "Material SKU or (partial) name."},
+              "supplier": {"type": ["string", "null"], "description": "Supplier code or (partial) name."},
+              "product": {"type": ["string", "null"], "description": "Finished product SKU or (partial) name."},
+              "qty": {"type": ["number", "null"]},
+              "date_from": {"type": ["string", "null"], "description": "ISO date YYYY-MM-DD."},
+              "date_to": {"type": ["string", "null"], "description": "ISO date YYYY-MM-DD."},
+              "schedule_status": {"type": ["string", "null"], "enum": ["PLANNED", "IN_PROGRESS", "COMPLETED", "CANCELLED", null]},
+              "question": {"type": ["string", "null"], "description": "Self-contained data question for query_database."}
+            }
+          }
+        }
+      }
+    }
+  }
+}

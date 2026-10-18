@@ -1,0 +1,5 @@
+SAP_LLM:
+    served_name: default_llm
+    description: default llm using SAP API
+    agents:
+      prompt_rewriter:  backend/configs/agent/prompt_rewriter.yaml

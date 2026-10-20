@@ -1,0 +1,26 @@
+import { useNavigate } from 'react-router-dom';
+import Button from '../../../components/common/Button';
+import Icon from '../../../components/common/Icon';
+import Modal from '../../../components/common/Modal';
+import FilePreview from '../document/FilePreview';
+import { hubService } from '../../../services/hubService';
+
+// Pratinjau lampiran di dalam panel; validasi lengkap ada di halaman Dokumen.
+export default function AttachmentPreview({ attachment: a, onClose }) {
+  const navigate = useNavigate();
+  if (!a) return null;
+  const url = hubService.documentFileUrl(a.doc_id);
+  return (
+    <Modal open onClose={onClose} size="lg" title={a.name}
+      footer={(
+        <>
+          <a href={url} download={a.name} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-white px-3.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50">
+            <Icon name="download" /> Unduh
+          </a>
+          <Button onClick={() => navigate(`/supplier-hub/documents/${a.doc_id}`)}><Icon name="file" /> Validasi di Dokumen</Button>
+        </>
+      )}>
+      <FilePreview url={url} kind={a.kind} name={a.name} />
+    </Modal>
+  );
+}

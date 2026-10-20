@@ -43,6 +43,9 @@ class SandboxTransport:
     def ack_button(self, callback_id, text=None):
         return None
 
+    def download(self, file_id):
+        return None
+
 
 class TelegramError(RuntimeError):
     """The Bot API returned ok=false."""
@@ -53,6 +56,7 @@ class TelegramTransport:
     name = "telegram"
 
     def __init__(self, token: str, client: httpx.Client | None = None):
+        self._token = token
         self._http = client or httpx.Client(base_url=f"https://api.telegram.org/bot{token}/",
                                             timeout=httpx.Timeout(60.0, connect=10.0))
 
@@ -80,13 +84,32 @@ class TelegramTransport:
     def _normalize(u: dict) -> dict:
         if "message" in u:
             m = u["message"]
-            return {"update_id": u["update_id"], "kind": "message", "chat_id": m["chat"]["id"],
-                    "text": m.get("text") or "", "message_id": m.get("message_id")}
+            out = {"update_id": u["update_id"], "kind": "message", "chat_id": m["chat"]["id"],
+                   "text": m.get("text") or m.get("caption") or "", "message_id": m.get("message_id")}
+            files = []
+            if m.get("photo"):                                    # ukuran terbesar ada di akhir daftar
+                p = m["photo"][-1]
+                files.append({"file_id": p["file_id"], "name": f"foto_{m.get('message_id')}.jpg",
+                              "mime": "image/jpeg", "size": p.get("file_size")})
+            if m.get("document"):
+                d = m["document"]
+                files.append({"file_id": d["file_id"], "name": d.get("file_name") or "dokumen",
+                              "mime": d.get("mime_type") or "application/octet-stream", "size": d.get("file_size")})
+            if files:
+                out["attachments"] = files
+            return out
         if "callback_query" in u:
             cq = u["callback_query"]
             return {"update_id": u["update_id"], "kind": "button", "chat_id": cq["message"]["chat"]["id"],
                     "callback_id": cq["id"], "data": cq.get("data") or ""}
         return {"update_id": u["update_id"], "kind": "other"}
+
+    def download(self, file_id: str) -> bytes:
+        """Unduh file lampiran (getFile -> /file/bot<token>/<path>); dipakai Agent Hub untuk dokumen."""
+        info = self._call("getFile", file_id=file_id)
+        resp = self._http.get(f"https://api.telegram.org/file/bot{self._token}/{info['file_path']}")
+        resp.raise_for_status()
+        return resp.content
 
     def ack_button(self, callback_id, text=None):
         try:

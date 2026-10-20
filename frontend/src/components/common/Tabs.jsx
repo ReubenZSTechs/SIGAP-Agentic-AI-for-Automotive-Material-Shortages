@@ -19,7 +19,7 @@ export default function Tabs({ tabs, value, onChange, variant = 'underline' }) {
       {tabs.map((t) => (
         <button key={t.id} role="tab" aria-selected={value === t.id} disabled={t.disabled}
           onClick={() => onChange(t.id)}
-          className={`-mb-px border-b-2 px-0.5 pb-3 pt-1 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+          className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-0.5 pb-3 pt-1 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
             value === t.id
               ? 'border-primary-600 text-primary-700'
               : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-800'}`}>

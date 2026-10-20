@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import Icon from '../common/Icon';
+import { useHubStore } from '../../store/hubStore';
 
 const GROUPS = [
   { label: null, links: [{ to: '/', label: 'Dashboard', icon: 'spark', end: true }] },
@@ -14,9 +15,11 @@ const GROUPS = [
     { to: '/mps', label: 'MPS & Planning', icon: 'calendar' },
   ] },
   { label: 'Pembelian', links: [{ to: '/purchase-orders', label: 'Purchase Order', icon: 'file' }] },
+  { label: 'Agent', links: [{ to: '/supplier-hub', label: 'Hub Supplier', icon: 'inbox', badge: true }] },
 ];
 
 export default function Sidebar({ onNavigate, onCollapse }) {
+  const pending = useHubStore((s) => s.pending);
   return (
     <nav className="flex h-full w-[232px] flex-col bg-primary-900 px-3 py-5" aria-label="Menu utama">
       <div className="mb-7 flex items-center gap-2.5 px-2">
@@ -46,6 +49,9 @@ export default function Sidebar({ onNavigate, onCollapse }) {
                         : 'text-primary-100/80 hover:bg-white/5 hover:text-white'}`}>
                   <Icon name={l.icon} className="h-[18px] w-[18px]" />
                   {l.label}
+                  {l.badge && pending > 0 && (
+                    <span className="ml-auto rounded-md bg-amber-400 px-1.5 text-xs font-bold text-primary-950" aria-label={`${pending} menunggu persetujuan`}>{pending}</span>
+                  )}
                 </NavLink>
               ))}
             </div>

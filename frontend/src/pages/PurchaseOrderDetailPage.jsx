@@ -9,6 +9,7 @@ import PoItemsTable from '../features/procurement/PoItemsTable';
 import GoodsReceiptForm from '../features/procurement/GoodsReceiptForm';
 import ReceiptResultTable from '../features/procurement/ReceiptResultTable';
 import PoMovementHistory from '../features/procurement/PoMovementHistory';
+import PoHubPanel from '../features/supplierHub/PoHubPanel';
 import useFetch from '../hooks/useFetch';
 import { purchaseOrderService } from '../services/purchaseOrderService';
 
@@ -46,6 +47,7 @@ export default function PurchaseOrderDetailPage() {
         {['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'].includes(po.status) && (
           <p className="text-sm text-slate-500">Penerimaan barang tersedia setelah PO diterbitkan.</p>
         )}
+        <PoHubPanel po={po} />
       </div>
     </>
   );

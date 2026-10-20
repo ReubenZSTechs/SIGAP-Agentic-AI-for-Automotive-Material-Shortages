@@ -75,6 +75,11 @@ SAP_LLM:
       model: generator
       config: agent/manager_decision_agent.yaml
       schema: schema/manager_decision_agent.schema.json
+    # --- Agent Hub (misi multi-supplier) ---
+    mission_reply_agent:
+      model: generator
+      config: agent/mission_reply_agent.yaml
+      schema: schema/mission_reply_agent.schema.json
 
 chatbot:
   history_turns: 6

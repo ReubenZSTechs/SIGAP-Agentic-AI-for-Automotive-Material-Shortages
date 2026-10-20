@@ -10,8 +10,15 @@ const P = {
   truck: 'M3 6h11v10H3zM14 10h4l3 3v3h-7M5.2 18.5a1.8 1.8 0 103.6 0 1.8 1.8 0 00-3.6 0zM15.2 18.5a1.8 1.8 0 103.6 0 1.8 1.8 0 00-3.6 0z',
   warehouse: 'M3 10l9-6 9 6v10H3V10zM8 20v-6h8v6', tree: 'M5 4h6v4H5zM13 10h6v4h-6zM13 16h6v4h-6zM8 8v10h5M8 12h5',
   calendar: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4', file: 'M7 3h8l4 4v14H7zM15 3v4h4M10 12h6M10 16h6',
-  arrowLeft: 'M19 12H5M11 6l-6 6 6 6', filter: 'M4 5h16l-6 8v6l-4-2v-4L4 5z', panelLeft: 'M4 5h16v14H4zM9 5v14', play: 'M7 5l12 7-12 7V5z', send: 'M20 4L4 11l6 2 2 6 8-15z',
+  arrowLeft: 'M19 12H5M11 6l-6 6 6 6', filter: 'M4 5h16l-6 8v6l-4-2v-4L4 5z', panelLeft: 'M4 5h16v14H4zM9 5v14', inbox: 'M4 13l2-8h12l2 8M4 13v6h16v-6M4 13h5l1 2h4l1-2h5', clock: 'M12 21a9 9 0 100-18 9 9 0 000 18zM12 7v5l3 2', pause: 'M8 5v14M16 5v14', play: 'M7 5l12 7-12 7V5z', send: 'M20 4L4 11l6 2 2 6 8-15z',
   clip: 'M21 11.5l-8.6 8.6a5 5 0 01-7-7l9-9a3.3 3.3 0 014.7 4.7l-9 9a1.7 1.7 0 01-2.4-2.4l8.3-8.3',
+  chat: 'M4 5h16v11H9l-5 4V5z', checks: 'M2 12.5l4.5 4.5L16 7M11 16l1 1L22 7', user: 'M12 12a4 4 0 100-8 4 4 0 000 8zM4 21c0-4 3.6-6 8-6s8 2 8 6',
+  shield: 'M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3zM9 12l2 2 4-4', link: 'M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1',
+  image: 'M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9.5v.01', tag: 'M3 12V4h8l9 9-8 8-9-9zM7.5 8v.01',
+  refresh: 'M20 11a8 8 0 00-14.9-3M4 4v4h4M4 13a8 8 0 0014.9 3M20 20v-4h-4', copy: 'M8 8h12v12H8zM16 8V4H4v12h4',
+  download: 'M12 4v11M7 10l5 5 5-5M5 20h14', zoom: 'M11 4a7 7 0 100 14 7 7 0 000-14zM20 20l-4-4M11 8v6M8 11h6',
+  bell: 'M6 16v-5a6 6 0 0112 0v5l2 2H4l2-2zM10 20a2 2 0 004 0', flag: 'M5 21V4M5 4h12l-2 4 2 4H5',
+  sliders: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4',
 };
 export default function Icon({ name, className = 'h-4 w-4' }) {
   return (

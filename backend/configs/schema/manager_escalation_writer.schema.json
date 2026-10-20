@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manager_escalation_writer.schema.json",
+  "title": "ManagerEscalationOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "message_text",
+    "urgency",
+    "recommended_option",
+    "rationale"
+  ],
+  "properties": {
+    "message_text": {
+      "type": "string",
+      "description": "Message to the purchasing manager explaining the situation WITHOUT restating figures (the system appends details and options)."
+    },
+    "urgency": {
+      "type": "string",
+      "enum": [
+        "normal",
+        "high"
+      ]
+    },
+    "recommended_option": {
+      "type": "string",
+      "enum": [
+        "abort",
+        "approve_change",
+        "resource",
+        "none"
+      ],
+      "description": "Must be one of the provided option keys, or none."
+    },
+    "rationale": {
+      "type": "string",
+      "description": "One sentence explaining the recommendation."
+    }
+  }
+}

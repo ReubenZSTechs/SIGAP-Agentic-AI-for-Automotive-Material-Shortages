@@ -6,7 +6,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.chatbot.semantic_views import OPEN_PO_STATUSES
-from app.models import (Material, MaterialSupplier, PlanningRun, PurchaseOrder, Schedule, Supplier)
+from app.models import (Material, MaterialSupplier, PlanningRun, POChangeRequest, POSupplierConfirmation,
+                        PurchaseOrder, Schedule, Supplier, SupplierConversation)
 from app.models.enums import ItemCategory, ScheduleStatus, StockStatus
 from app.services import bom_service, inventory_service, master_service, planning_service
 
@@ -225,6 +226,36 @@ def get_production_schedules(db: Session, date_from: str | None = None, date_to:
     return rows, {"schedule_count": len(rows)}
 
 
+def get_po_supplier_status(db: Session, query: str | None = None, supplier: str | None = None,
+                           **_) -> ToolOutput:
+    """Supplier confirmation status (Telegram agent) of open POs, optionally for one PO / supplier."""
+    stmt = select(PurchaseOrder).order_by(PurchaseOrder.id)
+    if query:
+        term = query.strip()
+        stmt = stmt.where(or_(PurchaseOrder.po_number.ilike(_like(term)),
+                              PurchaseOrder.id == (int(term) if term.isdigit() else -1)))
+    else:
+        stmt = stmt.where(PurchaseOrder.status.in_(OPEN_PO_STATUSES))
+    if supplier:
+        stmt = stmt.join(Supplier, Supplier.id == PurchaseOrder.supplier_id).where(
+            or_(Supplier.code.ilike(_like(supplier)), Supplier.name.ilike(_like(supplier))))
+    rows = []
+    for po in db.scalars(stmt):
+        conf = db.scalar(select(POSupplierConfirmation).where(POSupplierConfirmation.po_id == po.id))
+        conv = db.scalar(select(SupplierConversation).where(SupplierConversation.po_id == po.id)
+                         .order_by(SupplierConversation.id.desc()).limit(1))
+        pending_cr = db.scalar(select(func.count()).select_from(POChangeRequest).where(
+            POChangeRequest.po_id == po.id, POChangeRequest.status.in_(("PENDING_MANAGER", "AWAITING_MANAGER_CONFIRM"))))
+        rows.append({"po_number": po.po_number, "po_status": po.status, "supplier_name": po.supplier_name,
+                     "total_amount": po.total_amount,
+                     "supplier_confirmation": conf.status if conf else "NOT_REQUESTED",
+                     "promised_delivery_date": conf.promised_delivery_date if conf else None,
+                     "supplier_reference": conf.supplier_reference if conf else None,
+                     "last_conversation": f"{conv.purpose.value}:{conv.status.value}" if conv else None,
+                     "pending_revision_requests": pending_cr})
+    return rows, {"po_count": len(rows)}
+
+
 CURATED = {
     "get_stock_summary": get_stock_summary,
     "get_critical_items": get_critical_items,
@@ -235,4 +266,5 @@ CURATED = {
     "get_latest_planning_run": get_latest_planning_run,
     "get_bom": get_bom,
     "get_production_schedules": get_production_schedules,
+    "get_po_supplier_status": get_po_supplier_status,
 }

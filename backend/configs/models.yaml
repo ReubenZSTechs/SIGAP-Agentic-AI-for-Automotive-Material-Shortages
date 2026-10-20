@@ -45,6 +45,36 @@ SAP_LLM:
       model: generator
       config: agent/direct_responder.yaml
       schema: schema/direct_responder.schema.json
+    # --- Otomasi PO (Dashboard) ---
+    automation_parser:
+      model: generator
+      config: agent/automation_parser.yaml
+      schema: schema/automation_parser.schema.json
+    automation_clarifier:
+      model: generator
+      config: agent/automation_clarifier.yaml
+      schema: schema/automation_clarifier.schema.json
+    # --- Supplier Telegram ---
+    supplier_outreach_writer:
+      model: generator
+      config: agent/supplier_outreach_writer.yaml
+      schema: schema/supplier_outreach_writer.schema.json
+    supplier_reply_agent:
+      model: generator
+      config: agent/supplier_reply_agent.yaml
+      schema: schema/supplier_reply_agent.schema.json
+    supplier_inbound_triage:
+      model: generator
+      config: agent/supplier_inbound_triage.yaml
+      schema: schema/supplier_inbound_triage.schema.json
+    manager_escalation_writer:
+      model: generator
+      config: agent/manager_escalation_writer.yaml
+      schema: schema/manager_escalation_writer.schema.json
+    manager_decision_agent:
+      model: generator
+      config: agent/manager_decision_agent.yaml
+      schema: schema/manager_decision_agent.schema.json
 
 chatbot:
   history_turns: 6
@@ -65,3 +95,19 @@ chatbot:
   evidence:
     max_rows_in_prompt: 60
     max_calls_per_plan: 4
+
+automation:
+  proposal_ttl_minutes: 30      # kartu konfirmasi kedaluwarsa setelah ini
+  max_clarify_rounds: 3         # setelah ini permintaan dianggap gagal & draf dibuang
+  actor: "Agent MRP (dikonfirmasi pengguna)"
+
+supplier_chat:
+  max_turns: 8                  # balasan supplier tanpa keputusan jelas sebelum eskalasi ke manajer
+  max_revision_rounds: 2        # setelah ini opsi "setujui perubahan" tidak ditawarkan lagi
+  reminder_after_hours: 24
+  escalate_after_hours: 72
+  change_request_ttl_hours: 48  # opsi revisi tanpa keputusan manajer -> EXPIRED
+  history_messages: 12          # pesan terakhir yang diberikan ke agent
+  poll_timeout_s: 25            # long polling getUpdates
+  idle_sleep_s: 5               # jeda loop worker di mode sandbox
+  manager_actor: "Manager via Telegram"

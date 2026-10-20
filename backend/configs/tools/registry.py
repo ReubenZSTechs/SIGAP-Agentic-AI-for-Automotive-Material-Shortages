@@ -1,4 +1,9 @@
-"""Tool catalog shown to the retrieval planner and the dispatcher that runs planned calls."""
+"""Tool catalog shown to the retrieval planner and the dispatcher that runs planned calls.
+
+`TOOL_CATALOG` / `CURATED` are READ-ONLY (read-only session). Write tools for PO automation and the
+supplier Telegram agent live in `configs.tools.po_actions.WRITE_TOOLS` and are never offered to the
+retrieval planner; only deterministic workflow nodes call them.
+"""
 from app.chatbot.db import chat_session
 from app.chatbot.evidence import Evidence, make_evidence
 from configs.tools.curated import CURATED
@@ -26,6 +31,11 @@ TOOL_CATALOG: dict[str, tuple[str, str]] = {
                                  "required quantity of every component for qty units."),
     "get_production_schedules": ("date_from?, date_to?, schedule_status?",
                                  "Production batches (MPS): product, line, date, target qty, status."),
+    "get_po_supplier_status": ("query?, supplier?",
+                               "Supplier confirmation of purchase orders via the Telegram agent: confirmation "
+                               "status (PENDING/CONFIRMED/DECLINED/CANCEL_PENDING/REVISION_PENDING), promised "
+                               "delivery date, last conversation, pending revision requests. query = PO number/id; "
+                               "without it, all open POs."),
     "query_database": ("question",
                        "Fallback text-to-SQL agent over read-only views/tables for anything the tools "
                        "above cannot answer (aggregations, rankings, stock movement history, joins)."),

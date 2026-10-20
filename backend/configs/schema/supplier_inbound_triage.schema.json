@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "supplier_inbound_triage.schema.json",
+  "title": "SupplierInboundTriageOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "po_number",
+    "intent",
+    "reply_text"
+  ],
+  "properties": {
+    "po_number": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "PO number from the provided open_pos list the message is about; null if unclear."
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "revision_request",
+        "confirmation",
+        "question",
+        "other"
+      ]
+    },
+    "reply_text": {
+      "type": "string",
+      "description": "Short reply to the supplier (used when no further processing happens)."
+    }
+  }
+}

@@ -43,6 +43,37 @@ services:
       timeout: 3s
       retries: 30
 
+  # Agent Telegram supplier: dispatch percakapan, long polling Telegram, pengingat/eskalasi.
+  supplier-worker:
+    build: ./backend
+    depends_on:
+      backend:
+        condition: service_healthy
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://mrp:mrp@db:5432/mrp
+      CHAT_DATABASE_URL: postgresql://mrp_chat_ro:mrp_chat_ro@db:5432/mrp
+      CORS_ORIGINS: http://localhost:8080
+    command: ["python", "-m", "app.supplier_chat.worker"]
+    restart: unless-stopped
+
+  # Streamlit "Telegram Lab" (opsional): docker compose --profile lab up
+  telegram-lab:
+    build: ./backend
+    profiles: ["lab"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://mrp:mrp@db:5432/mrp
+      CORS_ORIGINS: http://localhost:8080
+      SIGAP_API_URL: http://backend:8000/api/v1
+    command: ["sh", "-c", "pip install -q -r requirements-streamlit.txt && streamlit run streamlit_app/telegram_lab.py --server.address 0.0.0.0 --server.port 8501"]
+    ports:
+      - "8501:8501"
+
   frontend:
     build: ./frontend
     depends_on:

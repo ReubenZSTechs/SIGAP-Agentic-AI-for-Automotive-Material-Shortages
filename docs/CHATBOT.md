@@ -11,7 +11,7 @@ Three promises shape the whole design:
 
 | Promise | What it means in practice |
 |:--|:--|
-| **Read-only** | The chatbot can never create, change, or delete data. Requests like "buat PO" get a polite pointer to the right page. |
+| **Read-only answers, confirmed writes** | Questions are answered from read-only database access. The only thing the assistant can change is **Purchase Orders**, and only after you approve a confirmation card. See [`AUTOMATION.md`](AUTOMATION.md); suppliers are then contacted on Telegram ([`SUPPLIER_TELEGRAM.md`](SUPPLIER_TELEGRAM.md)). All other change requests get a pointer to the right page. |
 | **Grounded** | Every fact comes from the database. Tables are built from real query results, never typed by the AI. |
 | **Verified** | Before you see an answer, a second AI model grades it. Answers scoring below **0.80** are improved automatically or clearly marked as unverified. |
 
@@ -95,14 +95,17 @@ It also resolves follow-ups: if you previously asked about Ban Luar Karet and no
 > `"item apa yang critical?"` → `"Which items have critical stock?"` (language: `id`)
 
 ### Step 2 — Route
-Classifies the request into one of four intents:
+Classifies the request into one of five intents:
 
 | Intent | Example | What happens |
 |:--|:--|:--|
 | `mrp_query` | "stok Pedal berapa?" | goes to data retrieval (steps 3–7) |
+| `po_automation` | "buatkan PO 50 Ban", "hapus PO 12" (or an answer to a pending PO question) | PO automation branch: clarify → confirmation card → execute ([`AUTOMATION.md`](AUTOMATION.md)) |
 | `smalltalk` | "halo, bisa bantu apa?" | friendly reply explaining capabilities |
-| `write_request` | "buatkan PO untuk Ban" | explains it is read-only, points to the right page |
+| `write_request` | "update stok", "jalankan planning" | explains it can only change POs, points to the right page |
 | `out_of_scope` | "cuaca hari ini?" | politely declines |
+
+The router also receives the PO request that is still being clarified (if any), so a short answer like "yang Ban Luar Karet" continues that request.
 
 ### Step 3 — Plan
 Picks 1–4 **tools** that together fetch everything the question needs. Curated tools are preferred because they already apply the business rules; free-form SQL is the fallback.
@@ -283,8 +286,12 @@ backend/
 │   │   ├── registry.py           tool catalog for the planner + tool dispatcher
 │   │   ├── sql_guard.py          SQL safety checks
 │   │   └── sql_executor.py       read-only SQL execution
+│   │   └── po_actions.py         WRITE tools for PO automation & the supplier agent (never offered to the planner)
 │   └── workflows/                LangGraph workflows
 │       ├── chat_graph.py         main workflow (section 2)
+│       ├── automation_graph.py   PO automation branch (AUTOMATION.md)
+│       ├── supplier_chat_graph.py  supplier Telegram replies (SUPPLIER_TELEGRAM.md)
+│       ├── manager_graph.py      manager decisions on supplier revisions
 │       └── sql_agent_graph.py    query_database workflow (section 4.2)
 ├── app/api/v1/endpoints/chat.py  HTTP + SSE endpoints
 ├── scripts/eval_chatbot.py       offline evaluation with real models
@@ -294,9 +301,9 @@ frontend/src/
 └── services/chatService.js       SSE client + thread id
 ```
 
-### The eight agents
+### The chatbot agents
 
-Each agent is one LLM call with its own prompt (`configs/agent/`) and output contract (`configs/schema/`):
+Each agent is one LLM call with its own prompt (`configs/agent/`) and output contract (`configs/schema/`). The eight below answer questions; the PO automation and supplier Telegram agents are listed in [`AUTOMATION.md`](AUTOMATION.md#agents) and [`SUPPLIER_TELEGRAM.md`](SUPPLIER_TELEGRAM.md#agents).
 
 | Agent | Step | Model | Output |
 |:--|:--|:--|:--|
@@ -354,12 +361,12 @@ Environment variables (`backend/.env`, see `backend/.env.example`):
 
 | Method & path | Purpose |
 |:--|:--|
-| `POST /api/v1/chat/stream` | Ask a question; returns an SSE stream of `progress` events, then one `final` (or `error`) event. |
+| `POST /api/v1/chat/stream` | Ask a question (`message`) or answer a PO confirmation card (`resume`); returns an SSE stream of `progress` events, then one `final` (or `error`) event. |
 | `POST /api/v1/chat` | Same, without streaming; returns the final event as JSON. |
-| `GET /api/v1/chat/{thread_id}/history` | Messages of a conversation (used to restore the UI after reload). |
+| `GET /api/v1/chat/{thread_id}/history` | Messages of a conversation plus its PO `actions` cards with current status (used to restore the UI after reload). |
 | `GET /api/v1/chat/health` | `{ "configured": true/false }`, i.e. whether the AI Core credentials are set. |
 
-Request body: `{ "message": "item apa yang critical?", "thread_id": "3f2c9a7e1b4d" }` (thread id: 8–64 letters, digits, `-` or `_`).
+Request body: `{ "message": "item apa yang critical?", "thread_id": "3f2c9a7e1b4d" }` (thread id: 8–64 letters, digits, `-` or `_`), or, to answer a confirmation card, `{ "thread_id": "...", "resume": { "action_id": "<32 hex>", "decision": "approve" | "reject" } }`.
 
 `final` event (shortened):
 

@@ -17,6 +17,7 @@ const QUICK_ACTIONS = [
   'Item mana yang stoknya critical?',
   'Supplier apa saja untuk material Ban Luar Karet?',
   'Ringkas PO yang belum diterima',
+  'Buat PO 50 Ban Luar Karet',
 ];
 
 const GREETING = {
@@ -25,7 +26,7 @@ const GREETING = {
   blocks: [
     {
       type: 'text',
-      text: 'Halo, saya Agent MRP. Tanyakan ringkasan stok, item critical, supplier per material, BOM, jadwal produksi, hasil planning, atau PO terbuka. Saya hanya membaca data (read-only), dan setiap jawaban diverifikasi terhadap database sebelum ditampilkan.',
+      text: 'Halo, saya Agent MRP. Tanyakan ringkasan stok, item critical, supplier per material, BOM, jadwal produksi, hasil planning, atau PO terbuka; setiap jawaban diverifikasi terhadap database. Saya juga bisa membuat, mengubah, atau menghapus Purchase Order (mis. "Buat PO 50 Ban Luar Karet") — selalu dengan konfirmasi Anda dulu, lalu supplier dihubungi via Telegram.',
     },
   ],
 };
@@ -40,7 +41,15 @@ const TOOL_LABELS = {
   get_latest_planning_run: 'Planning terakhir',
   get_bom: 'BOM',
   get_production_schedules: 'Jadwal produksi',
+  get_po_supplier_status: 'Konfirmasi supplier',
   query_database: 'Query database',
+};
+
+const ACTION_STATUS = {
+  approved: { label: 'Dijalankan', tone: 'text-emerald-700', icon: 'check' },
+  rejected: { label: 'Dibatalkan', tone: 'text-slate-500', icon: 'x' },
+  expired: { label: 'Kedaluwarsa / digantikan', tone: 'text-slate-500', icon: 'x' },
+  failed: { label: 'Gagal', tone: 'text-red-700', icon: 'alert' },
 };
 
 let uid = 0;
@@ -114,36 +123,62 @@ function Notice({ text }) {
   );
 }
 
-function ActionCard({ action, onResolve }) {
+function ActionCard({ action, onResolve, busy }) {
   if (!action) return null;
   const done = action.status !== 'pending';
+  const st = ACTION_STATUS[action.status];
+  const danger = action.kind === 'delete';
   return (
-    <div className="my-2 rounded-xl border border-primary-200 border-l-4 border-l-primary-600 bg-primary-50/70 p-4">
+    <div className={`my-2 rounded-xl border border-l-4 p-4 ${danger ? 'border-red-200 border-l-red-600 bg-red-50/60' : 'border-primary-200 border-l-primary-600 bg-primary-50/70'}`}>
       <div className="text-sm font-medium text-slate-900">{action.title}</div>
       <p className="mt-0.5 text-xs text-slate-600">{action.detail}</p>
+      {action.tables?.map((t, i) => (
+        <DataTable key={i} columns={t.columns} rows={t.rows} title={t.title} />
+      ))}
+      {action.warnings?.map((w) => <Notice key={w} text={w} />)}
       {done ? (
-        <p className={`mt-2 inline-flex items-center gap-1 text-xs font-medium ${action.status === 'approved' ? 'text-emerald-700' : 'text-slate-500'}`}>
-          {action.status === 'approved' && <CommonIcon name="check" className="h-3.5 w-3.5" />}
-          {action.status === 'approved' ? 'Disetujui' : 'Dilewati'}
+        <p className={`mt-2 inline-flex items-center gap-1 text-xs font-medium ${st?.tone ?? 'text-slate-500'}`}>
+          <CommonIcon name={st?.icon ?? 'info'} className="h-3.5 w-3.5" />
+          {st?.label ?? action.status}
         </p>
       ) : (
         <div className="mt-3 flex gap-2">
           <button
             type="button"
-            onClick={() => onResolve(action.id, 'approved')}
-            className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-primary-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+            disabled={busy}
+            onClick={() => onResolve(action.id, 'approve')}
+            className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white shadow-sm disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${danger ? 'bg-red-600 hover:bg-red-700 focus-visible:outline-red-600' : 'bg-primary-600 hover:bg-primary-700 focus-visible:outline-indigo-600'}`}
           >
             {action.approveLabel}
           </button>
           <button
             type="button"
-            onClick={() => onResolve(action.id, 'rejected')}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+            disabled={busy}
+            onClick={() => onResolve(action.id, 'reject')}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
           >
-            Lewati
+            Batal
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function Options({ options, onPick, disabled }) {
+  return (
+    <div className="my-2 flex flex-wrap gap-2">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          disabled={disabled}
+          onClick={() => onPick(o.value)}
+          className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -185,7 +220,7 @@ function Sources({ sources }) {
   );
 }
 
-function Message({ msg, actions, onResolve }) {
+function Message({ msg, actions, onResolve, onPick, busy, isLast }) {
   const isUser = msg.role === 'user';
   return (
     <div className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -199,7 +234,8 @@ function Message({ msg, actions, onResolve }) {
           if (b.type === 'text') return <p key={i} className="whitespace-pre-wrap py-0.5">{b.text}</p>;
           if (b.type === 'table') return <DataTable key={i} columns={b.columns} rows={b.rows} title={b.title} />;
           if (b.type === 'notice') return <Notice key={i} text={b.text} />;
-          if (b.type === 'action') return <ActionCard key={i} action={actions[b.actionId]} onResolve={onResolve} />;
+          if (b.type === 'action') return <ActionCard key={i} action={actions[b.actionId]} onResolve={onResolve} busy={busy} />;
+          if (b.type === 'options') return <Options key={i} options={b.options} onPick={onPick} disabled={busy || !isLast} />;
           return null;
         })}
         {!isUser && msg.meta && (
@@ -277,7 +313,7 @@ function Composer({ onSend, busy }) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
           }}
-          placeholder="Tanyakan data MRP, mis. “supplier untuk material Pedal Sepeda?”"
+          placeholder="Tanyakan data MRP atau minta ubah PO, mis. “Buat PO 50 Ban Luar Karet”"
           className="max-h-32 min-h-[2.25rem] flex-1 resize-none bg-transparent px-1 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
         />
         <button
@@ -326,6 +362,7 @@ export default function AgenticMrpPage() {
         if (alive && res.messages?.length) {
           setMessages([GREETING, ...res.messages.map((m) => ({ id: nextId('h'), ...m }))]);
         }
+        if (alive && res.actions) setActions(res.actions);
       })
       .catch(() => {});
     return () => { alive = false; };
@@ -346,18 +383,19 @@ export default function AgenticMrpPage() {
     });
   }, []);
 
-  const handleSend = async (text) => {
-    const content = text.trim();
-    if (!content) return;
-    push({ role: 'user', blocks: [{ type: 'text', text: content }] });
+  /** Runs one streamed turn: a new message, or a resume answer to a confirmation card. */
+  const runTurn = async (payload) => {
     setBusy(true);
     setSteps([]);
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const res = await chatService.stream({ message: content, threadId, onEvent: onProgress, signal: controller.signal });
+      const res = await chatService.stream({ ...payload, threadId, onEvent: onProgress, signal: controller.signal });
       if (res.type === 'final') {
         if (res.actions) setActions((a) => ({ ...a, ...res.actions }));
+        if (res.action_updates) {
+          setActions((a) => Object.fromEntries(Object.entries(a).map(([id, v]) => [id, res.action_updates[id] ? { ...v, ...res.action_updates[id] } : v])));
+        }
         push({ role: 'agent', blocks: res.blocks, meta: res.meta });
       } else {
         push({ role: 'agent', blocks: [{ type: 'text', text: res.message ?? 'Agent gagal merespons. Coba kirim ulang.' }] });
@@ -373,8 +411,18 @@ export default function AgenticMrpPage() {
     }
   };
 
-  const handleResolve = (id, status) => {
-    setActions((a) => ({ ...a, [id]: { ...a[id], status } }));
+  const handleSend = async (text) => {
+    const content = text.trim();
+    if (!content || busy) return;
+    push({ role: 'user', blocks: [{ type: 'text', text: content }] });
+    // Pesan baru menggantikan kartu konfirmasi yang masih menunggu (backend menandainya superseded).
+    setActions((a) => Object.fromEntries(Object.entries(a).map(([id, v]) => [id, v.status === 'pending' ? { ...v, status: 'expired' } : v])));
+    await runTurn({ message: content });
+  };
+
+  const handleResolve = async (id, decision) => {
+    if (busy) return;
+    await runTurn({ resume: { actionId: id, decision } });
   };
 
   const newConversation = () => {
@@ -413,8 +461,16 @@ export default function AgenticMrpPage() {
       <div className="relative flex h-[calc(100vh-17rem)] min-h-[34rem] overflow-hidden rounded-2xl border border-slate-200 bg-white">
         <section className="flex min-w-0 flex-1 flex-col" aria-label="Percakapan dengan Agent">
           <div className="flex-1 space-y-5 overflow-y-auto px-5 py-6" role="log" aria-live="polite">
-            {messages.map((m) => (
-              <Message key={m.id} msg={m} actions={actions} onResolve={handleResolve} />
+            {messages.map((m, i) => (
+              <Message
+                key={m.id}
+                msg={m}
+                actions={actions}
+                onResolve={handleResolve}
+                onPick={handleSend}
+                busy={busy}
+                isLast={i === messages.length - 1}
+              />
             ))}
             {busy && <Progress steps={steps} />}
             <div ref={endRef} />

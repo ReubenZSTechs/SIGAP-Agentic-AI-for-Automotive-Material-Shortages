@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -71,6 +72,17 @@ class Settings(BaseSettings):
     @classmethod
     def _chat_db(cls, v: str | None) -> str | None:
         return normalize_db_url(v.strip()) if v and v.strip() else None
+
+    # Supplier Telegram: "sandbox" (pesan hanya disimpan di DB, supplier/manajer diperankan via
+    # Streamlit) atau "telegram" (Bot API sungguhan, long polling oleh worker).
+    TELEGRAM_MODE: Literal["sandbox", "telegram"] = "sandbox"
+    TELEGRAM_BOT_TOKEN: str | None = None
+    TELEGRAM_BOT_USERNAME: str | None = None        # untuk deep link t.me/<username>?start=<token>
+    TELEGRAM_MANAGER_CHAT_ID: int | None = None     # chat manajer penerima eskalasi & opsi revisi
+
+    @property
+    def telegram_live(self) -> bool:
+        return self.TELEGRAM_MODE == "telegram" and bool(self.TELEGRAM_BOT_TOKEN)
 
     @property
     def aicore_configured(self) -> bool:

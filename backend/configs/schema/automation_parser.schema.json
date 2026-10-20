@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "automation_parser.schema.json",
+  "title": "AutomationParserOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operation",
+    "po_reference",
+    "items",
+    "supplier_query",
+    "needed_by_date",
+    "notes",
+    "user_cancelled",
+    "reason"
+  ],
+  "properties": {
+    "operation": {
+      "type": "string",
+      "enum": [
+        "create",
+        "update",
+        "delete",
+        "none"
+      ],
+      "description": "create = new PO, update = change an existing PO, delete = delete/cancel a PO, none = not (or no longer) a PO change request."
+    },
+    "po_reference": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Existing PO the user refers to: numeric id or PO number exactly as written (e.g. '123', 'PO-202610-0001'); null for create."
+    },
+    "items": {
+      "type": "array",
+      "description": "Materials to order (create) or change (update). Empty for delete.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "material_query",
+          "qty"
+        ],
+        "properties": {
+          "material_query": {
+            "type": "string",
+            "description": "Material name or SKU as the user wrote it, or the option value they picked."
+          },
+          "qty": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Quantity in the material's unit; null when the user did not say."
+          }
+        }
+      }
+    },
+    "supplier_query": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Supplier code or name if the user named one (or picked one); otherwise null."
+    },
+    "needed_by_date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Requested delivery date as YYYY-MM-DD, resolved against today; null if not given."
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Free-text note for the PO if the user gave one."
+    },
+    "user_cancelled": {
+      "type": "boolean",
+      "description": "True when the user says to stop / never mind the pending request."
+    },
+    "reason": {
+      "type": "string",
+      "description": "One short sentence explaining the interpretation."
+    }
+  }
+}

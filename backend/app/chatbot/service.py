@@ -4,6 +4,7 @@ import threading
 from collections.abc import Iterator
 
 from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.types import Command
 
 from app.chatbot.config_loader import load_registry
 from app.chatbot.llm import build_agents, build_sap_clients
@@ -27,11 +28,38 @@ class ChatService:
     def _config(thread_id: str) -> dict:
         return {"configurable": {"thread_id": thread_id}}
 
-    def stream(self, message: str, thread_id: str) -> Iterator[dict]:
-        """Yields progress events, then exactly one `final` (or `error`) event."""
+    def pending_action(self, thread_id: str) -> str | None:
+        """Id of the automation proposal this thread is paused on (LangGraph interrupt), if any."""
+        snapshot = self.graph.get_state(self._config(thread_id))
+        interrupts = list(getattr(snapshot, "interrupts", ()) or ())
+        if not interrupts:
+            interrupts = [i for t in (snapshot.tasks or ()) for i in (getattr(t, "interrupts", ()) or ())]
+        for it in interrupts:
+            value = getattr(it, "value", None)
+            if isinstance(value, dict) and value.get("action_id"):
+                return value["action_id"]
+        return None
+
+    def stream(self, message: str | None, thread_id: str, resume: dict | None = None) -> Iterator[dict]:
+        """Yields progress events, then exactly one `final` (or `error`) event.
+
+        `resume={action_id, decision: approve|reject}` answers a pending PO confirmation card. A new
+        `message` while a card is pending first marks that proposal as superseded.
+        """
         config = self._config(thread_id)
         try:
-            for event in self.graph.stream(new_turn(message), config, stream_mode="custom"):
+            pending = self.pending_action(thread_id)
+            if resume is not None:
+                if pending != resume["action_id"]:
+                    yield {"type": "error", "message": "Usulan ini sudah tidak menunggu konfirmasi.",
+                           "detail": "no matching pending action"}
+                    return
+                graph_input = Command(resume={"decision": resume["decision"], "action_id": pending})
+            else:
+                if pending:
+                    self.graph.invoke(Command(resume={"decision": "superseded", "action_id": pending}), config)
+                graph_input = new_turn(message, thread_id)
+            for event in self.graph.stream(graph_input, config, stream_mode="custom"):
                 yield event
             final = self.graph.get_state(config).values.get("final")
             yield {"type": "final", **final}
@@ -39,10 +67,10 @@ class ChatService:
             log.exception("chat turn failed (thread=%s)", thread_id)
             yield {"type": "error", "message": ERROR_TEXT["id"], "detail": f"{type(e).__name__}: {e}"}
 
-    def run(self, message: str, thread_id: str) -> dict:
+    def run(self, message: str | None, thread_id: str, resume: dict | None = None) -> dict:
         """Runs one turn and returns the final event (or the error event)."""
         last = {}
-        for event in self.stream(message, thread_id):
+        for event in self.stream(message, thread_id, resume):
             last = event
         return last
 
@@ -58,6 +86,24 @@ class ChatService:
                             or [{"type": "text", "text": str(m.content)}],
                             "meta": m.additional_kwargs.get("meta")})
         return out
+
+    def actions(self, thread_id: str) -> dict:
+        """PO action cards shown in this thread, with their current status from `automation_actions`."""
+        from app.database import SessionLocal
+        from app.models import AutomationAction
+        from configs.workflows.automation_graph import UI_STATUS
+        values = self.graph.get_state(self._config(thread_id)).values or {}
+        cards = {}
+        for m in values.get("messages", []):
+            if isinstance(m, AIMessage):
+                cards.update(m.additional_kwargs.get("actions") or {})
+        if cards:
+            with SessionLocal() as db:
+                for aid, card in cards.items():
+                    row = db.get(AutomationAction, aid)
+                    if row is not None:
+                        cards[aid] = {**card, "status": UI_STATUS[row.status]}
+        return cards
 
 
 _lock = threading.Lock()
@@ -76,12 +122,15 @@ def _checkpointer():
     return saver
 
 
-def get_chat_service() -> ChatService:
-    """FastAPI dependency: lazily builds the production service (SAP clients + PostgresSaver)."""
-    global _service
-    if _service is None:
+_agents: tuple[dict, object] | None = None
+
+
+def live_agents():
+    """(agents, registry) bound to SAP AI Core, built once and shared by the chat and supplier services."""
+    global _agents
+    if _agents is None:
         with _lock:
-            if _service is None:
+            if _agents is None:
                 if not settings.aicore_configured:
                     raise ChatUnavailable("Chatbot belum dikonfigurasi: isi AICORE_AUTH_URL, AICORE_CLIENT_ID, "
                                           "AICORE_CLIENT_SECRET, dan AICORE_BASE_URL di backend/.env.")
@@ -92,6 +141,19 @@ def get_chat_service() -> ChatService:
                     log.exception("cannot connect to SAP AI Core")
                     raise ChatUnavailable(f"Gagal terhubung ke SAP AI Core ({type(e).__name__}): {e}. "
                                           "Periksa nilai AICORE_* di backend/.env.") from e
-                agents = build_agents(registry, clients)
-                _service = ChatService(build_graph(agents, registry.chatbot, checkpointer=_checkpointer()))
+                _agents = (build_agents(registry, clients), registry)
+    return _agents
+
+
+def get_chat_service() -> ChatService:
+    """FastAPI dependency: lazily builds the production service (SAP clients + PostgresSaver)."""
+    global _service
+    if _service is None:
+        agents, registry = live_agents()
+        with _lock:
+            if _service is None:
+                from app.supplier_chat.service import dispatch_in_background
+                _service = ChatService(build_graph(agents, registry.chatbot, checkpointer=_checkpointer(),
+                                                   automation_cfg=registry.automation,
+                                                   on_supplier_work=dispatch_in_background))
     return _service

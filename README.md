@@ -32,19 +32,28 @@ docker compose up --build
 | Frontend | <http://localhost:8080> | nginx; `/api` di-proxy ke backend (SSE tanpa buffering) |
 | Backend | <http://localhost:8000/docs> | otomatis di-seed (`--demo-schedules`) saat start pertama |
 | Postgres | `localhost:5433` (user/pass `mrp`) | DB `mrp` (aplikasi) & `mrp_test` (pytest); role `mrp_chat_ro` hanya SELECT |
+| Supplier worker | — | agent Telegram supplier (`python -m app.supplier_chat.worker`): dispatch percakapan, long polling, pengingat |
+| Telegram Lab | <http://localhost:8501> | opsional, `docker compose --profile lab up`: uji agent Telegram (Streamlit) |
 
 - `DATABASE_URL` di `backend/.env` **ditimpa** ke Postgres lokal; hanya kredensial `AICORE_*` yang dipakai dari file itu. Tanpa `AICORE_*`, aplikasi tetap jalan dan chatbot mengembalikan 503.
 - Tes backend di dalam container: `docker compose exec backend pytest -q`.
 - Reset data: `docker compose down -v` (menghapus volume DB) lalu `up` lagi.
 
+## Otomasi PO & Agent Telegram Supplier
+
+- **Otomasi PO** ([`docs/AUTOMATION.md`](docs/AUTOMATION.md)): dari chat Dashboard, mis. *"Buat PO 50 Ban Luar Karet"* atau *"Hapus PO 12"*. Agent mengklarifikasi sampai permintaan cocok dengan database, menampilkan **kartu konfirmasi**, lalu menjalankan CRUD PO lewat tool (`configs/tools/po_actions.py`) dan menghubungi supplier.
+- **Agent Telegram supplier** ([`docs/SUPPLIER_TELEGRAM.md`](docs/SUPPLIER_TELEGRAM.md)): loop latar belakang yang meminta konfirmasi/pembatalan PO ke supplier sampai jelas, lalu memperbarui database. Bila supplier minta **revisi**, manajer menerima opsi via Telegram: batalkan PO, setujui perubahan, atau pesan ke supplier lain. Uji tanpa bot sungguhan dengan `TELEGRAM_MODE=sandbox` + Streamlit **Telegram Lab** (`streamlit run backend/streamlit_app/telegram_lab.py`).
+
 ## Chatbot MRP (Dashboard)
 
 > Dokumentasi lengkap (arsitektur, alur, konfigurasi, API): [`docs/CHATBOT.md`](docs/CHATBOT.md).
 
-Agent **read-only** di halaman Dashboard untuk pertanyaan seperti *"ringkas stok tiap item"*, *"item mana yang critical?"*, *"supplier apa saja untuk material Pedal Sepeda?"*. Jawaban di-stream (SSE) beserta langkah progres, skor verifikasi, dan sumber datanya (tool/SQL).
+Agent di halaman Dashboard (menjawab dari data **read-only**; satu-satunya perubahan yang bisa dilakukan adalah PO, selalu setelah konfirmasi) untuk pertanyaan seperti *"ringkas stok tiap item"*, *"item mana yang critical?"*, *"supplier apa saja untuk material Pedal Sepeda?"*. Jawaban di-stream (SSE) beserta langkah progres, skor verifikasi, dan sumber datanya (tool/SQL).
 
 ```
-rewrite → route ─┬─ smalltalk / di luar topik / permintaan ubah data → respond_direct → finalize
+rewrite → route ─┬─ smalltalk / di luar topik / ubah data non-PO → respond_direct → finalize
+                 ├─ po_automation → parse → resolve ─┬─ kurang jelas → clarify → finalize
+                 │                                    └─ jelas → propose → [konfirmasi] → execute → supplier (Telegram)
                  └─ mrp_query → plan → execute_tools → synthesize → evaluate ─┬─ lolos → finalize
                        ▲               (query_database: generate→guard→execute→fix ≤3)       │
                        └──── konteks kurang (≤2x) ◄──┴── revisi dengan kritik (≤2x) ◄─────────┘

@@ -94,7 +94,7 @@ def test_every_curated_tool_runs_on_seed(tool, client, seeded):
             "get_bom": {"product": "Sepeda Gunung", "qty": 50}}.get(tool, {})
     ev = run_curated(tool, args, "", "E1", 200)
     assert ev["error"] is None
-    assert ev["row_count"] > 0 or tool == "get_open_purchase_orders"
+    assert ev["row_count"] > 0 or tool in ("get_open_purchase_orders", "get_po_supplier_status")   # seed tanpa PO
 
 
 def test_bom_tool_scales_quantities(seeded):

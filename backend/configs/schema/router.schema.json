@@ -4,13 +4,25 @@
   "title": "RouterOutput",
   "type": "object",
   "additionalProperties": false,
-  "required": ["intent", "reason"],
+  "required": [
+    "intent",
+    "reason"
+  ],
   "properties": {
     "intent": {
       "type": "string",
-      "enum": ["mrp_query", "smalltalk", "out_of_scope", "write_request"],
-      "description": "mrp_query = needs MRP data; smalltalk = greeting/help/thanks; out_of_scope = unrelated to MRP; write_request = asks to create/change/delete data."
+      "enum": [
+        "mrp_query",
+        "po_automation",
+        "smalltalk",
+        "out_of_scope",
+        "write_request"
+      ],
+      "description": "mrp_query = needs MRP data; po_automation = create/update/delete/cancel a purchase order (or continue a pending PO request); smalltalk = greeting/help/thanks; out_of_scope = unrelated to MRP; write_request = asks to change anything other than purchase orders."
     },
-    "reason": {"type": "string", "description": "One short sentence justifying the intent."}
+    "reason": {
+      "type": "string",
+      "description": "One short sentence justifying the intent."
+    }
   }
 }

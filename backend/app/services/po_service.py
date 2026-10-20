@@ -30,10 +30,18 @@ def _now() -> datetime:
 
 
 def _next_po_number(db: Session) -> str:
+    """Nomor terbesar yang PERNAH dipakai bulan ini + 1.
+
+    Bukan COUNT: setelah hard delete, COUNT bisa menghasilkan nomor yang masih dipakai PO lain.
+    Nomor PO yang sudah dihapus (tercatat di percakapan supplier / audit agent) juga tidak dipakai ulang.
+    """
+    from app.models import AutomationAction, SupplierConversation   # hindari import siklik
     prefix = f"PO-{datetime.now():%Y%m}-"
-    count = db.scalar(select(func.count()).select_from(PurchaseOrder)
-                      .where(PurchaseOrder.po_number.like(f"{prefix}%")))
-    return f"{prefix}{count + 1:04d}"
+    used = [db.scalar(select(func.max(col)).where(col.like(f"{prefix}%")))
+            for col in (PurchaseOrder.po_number, SupplierConversation.po_number, AutomationAction.po_number)]
+    last = max((u for u in used if u), default=None)
+    seq = int(last.rsplit("-", 1)[1]) if last else 0
+    return f"{prefix}{seq + 1:04d}"
 
 
 def transition(db: Session, po: PurchaseOrder, new: POStatus) -> None:
@@ -204,6 +212,72 @@ def reject(db: Session, po: PurchaseOrder, rejected_by: str, reason: str) -> Pur
     _require_manual(po)
     transition(db, po, POStatus.REJECTED)
     po.decided_by, po.decided_at, po.rejection_reason = rejected_by.strip(), _now(), reason.strip()
+    db.commit()
+    db.refresh(po)
+    return po
+
+
+# ------------------------- Otomasi agent: hapus PO & revisi supplier -------------------------
+NOT_DELETABLE = (POStatus.PARTIALLY_RECEIVED, POStatus.RECEIVED)
+_REVISABLE_FIELDS = ("qty_ordered", "unit_price", "needed_by_date")
+
+
+def _has_receipts(po: PurchaseOrder) -> bool:
+    return any(i.qty_received > 0 for i in po.items)
+
+
+def delete_po(db: Session, po: PurchaseOrder) -> None:
+    """Hard delete (item ikut terhapus). Mengembalikan logika stok lewat derivasi:
+
+    * `on_order` dihitung dari baris PO berstatus COUNTED -> otomatis turun saat PO dihapus;
+      run DRAFT ditandai basi agar tidak dipakai untuk membuat PO ganda/kurang.
+    * Run planning asal (PO_GENERATED) ditandai basi agar terlihat perlu dijalankan ulang.
+    * Ditolak bila barang sudah diterima (stok fisik sudah bertambah; butuh proses retur).
+    """
+    if po.status in NOT_DELETABLE or _has_receipts(po):
+        raise AppError(409, f"PO {po.po_number} sudah menerima barang ({po.status.value}); tidak dapat dihapus")
+    if po.status in planning_service.COUNTED[po.source]:
+        planning_service.mark_runs_stale(db)
+    if po.planning_run_id is not None:
+        run = db.get(PlanningRun, po.planning_run_id)
+        if run is not None:
+            run.is_stale = True
+    db.delete(po)
+    db.commit()
+
+
+def apply_supplier_revision(db: Session, po: PurchaseOrder, changes: list[dict]) -> PurchaseOrder:
+    """Revisi PO ISSUED (belum ada penerimaan) atas permintaan supplier yang disetujui manajer.
+
+    `changes`: [{po_item_id, field: qty_ordered|unit_price|needed_by_date, new}] (sudah tervalidasi).
+    """
+    if po.status != POStatus.ISSUED or _has_receipts(po):
+        raise AppError(409, f"PO {po.po_number} berstatus {po.status.value}; revisi hanya untuk PO ISSUED tanpa penerimaan")
+    items = {i.id: i for i in po.items}
+    qty_changed = False
+    for c in changes:
+        it = items.get(c["po_item_id"])
+        if it is None or c["field"] not in _REVISABLE_FIELDS:
+            raise AppError(422, f"Perubahan tidak valid: {c}")
+        new = c["new"]
+        if c["field"] == "qty_ordered":
+            if new <= 0:
+                raise AppError(422, f"{it.sku}: qty harus > 0")
+            qty_changed |= new != it.qty_ordered
+            it.qty_ordered = float(new)
+        elif c["field"] == "unit_price":
+            if new < 0:
+                raise AppError(422, f"{it.sku}: harga tidak boleh negatif")
+            it.unit_price = int(new)
+        else:
+            new = date.fromisoformat(new) if isinstance(new, str) else new
+            if new < po.po_date:
+                raise AppError(422, f"{it.sku}: tanggal kebutuhan tidak boleh sebelum tanggal PO")
+            it.needed_by_date = new
+        it.line_total = round(it.qty_ordered * it.unit_price)
+    po.total_amount = sum(i.line_total for i in po.items)
+    if qty_changed:                     # on_order berubah -> run DRAFT basi
+        planning_service.mark_runs_stale(db)
     db.commit()
     db.refresh(po)
     return po

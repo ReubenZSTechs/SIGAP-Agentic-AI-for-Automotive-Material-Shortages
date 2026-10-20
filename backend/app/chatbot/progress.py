@@ -16,6 +16,12 @@ LABELS = {
     "evaluate": {"id": "Memverifikasi jawaban", "en": "Verifying the answer"},
     "revise": {"id": "Memperbaiki jawaban", "en": "Revising the answer"},
     "respond": {"id": "Menyusun balasan", "en": "Writing a reply"},
+    "auto_parse": {"id": "Memahami permintaan PO", "en": "Understanding the PO request"},
+    "auto_resolve": {"id": "Mencocokkan dengan database", "en": "Matching against the database"},
+    "auto_clarify": {"id": "Menyiapkan pertanyaan klarifikasi", "en": "Preparing a clarification"},
+    "auto_propose": {"id": "Menyiapkan usulan untuk dikonfirmasi", "en": "Preparing the proposal"},
+    "auto_execute": {"id": "Menjalankan perubahan PO", "en": "Applying the PO change"},
+    "supplier_contact": {"id": "Menghubungi supplier via Telegram", "en": "Contacting the supplier on Telegram"},
 }
 
 _parent_writer: ContextVar = ContextVar("chat_parent_writer", default=None)

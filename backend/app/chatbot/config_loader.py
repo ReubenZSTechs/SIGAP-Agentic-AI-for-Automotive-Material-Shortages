@@ -41,6 +41,8 @@ class Registry:
     models: dict[str, ModelSpec]
     agents: dict[str, AgentSpec]
     chatbot: dict
+    automation: dict = field(default_factory=dict)
+    supplier_chat: dict = field(default_factory=dict)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -72,4 +74,5 @@ def load_registry(config_dir: Path = CONFIG_DIR) -> Registry:
         agents[name] = AgentSpec(name=name, model=entry["model"], system_prompt=cfg["system_prompt"],
                                  generation=cfg.get("generation", {}), schema=schema,
                                  validator=Draft202012Validator(schema))
-    return Registry(models=models, agents=agents, chatbot=root.get("chatbot", {}))
+    return Registry(models=models, agents=agents, chatbot=root.get("chatbot", {}),
+                    automation=root.get("automation", {}), supplier_chat=root.get("supplier_chat", {}))

@@ -1,4 +1,7 @@
-"""Main LangGraph workflow: rewrite -> route -> plan -> tools -> synthesize -> evaluate (loop) -> finalize."""
+"""Main LangGraph workflow: rewrite -> route -> plan -> tools -> synthesize -> evaluate (loop) -> finalize.
+
+PO change requests (`po_automation`) branch into `automation_graph` (clarify -> confirm -> execute).
+"""
 import contextvars
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +18,7 @@ from app.chatbot.progress import current_writer, emit, forward_to
 from app.chatbot.scoring import apply_gate, numeric_grounding
 from configs.tools.curated import CURATED
 from configs.tools.registry import catalog_text, run_curated, run_query_database
+from configs.workflows.automation_graph import add_automation_nodes
 from configs.workflows.sql_agent_graph import build_sql_graph
 
 LANGUAGE_NAMES = {"id": "Indonesian (Bahasa Indonesia)", "en": "English"}
@@ -33,8 +37,9 @@ ERROR_TEXT = {
 
 
 class ChatState(TypedDict, total=False):
-    """Graph state. `messages` persists across turns; the rest is reset every turn."""
+    """Graph state. `messages` and `automation_draft` persist across turns; the rest is reset every turn."""
     messages: Annotated[list[AnyMessage], add_messages]
+    thread_id: str
     question: str
     rewritten: str
     language: str
@@ -49,14 +54,21 @@ class ChatState(TypedDict, total=False):
     retrieve_attempts: int
     revise_attempts: int
     final: dict | None
+    # PO automation (see automation_graph.py)
+    automation_draft: dict | None        # request being collected across clarification turns
+    automation_resolution: dict | None
+    automation_step: str
+    automation_decision: dict | None     # value the confirmation interrupt was resumed with
+    pending_action: dict | None
 
 
-def new_turn(message: str) -> ChatState:
-    """Input for a new user turn (resets every per-turn field)."""
+def new_turn(message: str, thread_id: str = "") -> ChatState:
+    """Input for a new user turn (resets every per-turn field; keeps `automation_draft`)."""
     return ChatState(messages=[HumanMessage(content=message)], question=message, rewritten=message,
                      language="id", intent="", plan=[], evidence=[], draft=None, evaluation=None,
                      best=None, feedback=None, next_step="", retrieve_attempts=0, revise_attempts=0,
-                     final=None)
+                     final=None, thread_id=thread_id, automation_resolution=None, automation_step="",
+                     automation_decision=None, pending_action=None)
 
 
 def _history(messages: list[AnyMessage], turns: int) -> list[dict]:
@@ -74,8 +86,12 @@ def _call_key(tool: str, args: dict) -> str:
     return json.dumps([tool, {k: v for k, v in sorted(args.items()) if v is not None}], default=str)
 
 
-def build_graph(agents: dict[str, Agent], cfg: dict, checkpointer=None):
-    """Compiles the chatbot graph. `cfg` is the `chatbot` section of models.yaml."""
+def build_graph(agents: dict[str, Agent], cfg: dict, checkpointer=None, automation_cfg: dict | None = None,
+                on_supplier_work=None):
+    """Compiles the chatbot graph. `cfg` / `automation_cfg` are sections of models.yaml.
+
+    `on_supplier_work` is called after an automation queued supplier conversations (starts Telegram dispatch).
+    """
     ev_cfg, sql_cfg, gate_cfg = cfg["evidence"], cfg["sql_agent"], cfg["evaluation"]
     row_limit = sql_cfg["row_limit"]
     sql_graph = build_sql_graph(agents, max_attempts=sql_cfg["max_attempts"], row_limit=row_limit,
@@ -90,11 +106,17 @@ def build_graph(agents: dict[str, Agent], cfg: dict, checkpointer=None):
         return {"rewritten": out["rewritten_query"], "language": out["language"]}
 
     def route(state: ChatState) -> ChatState:
-        """Classifies intent; only `mrp_query` goes to retrieval."""
+        """Classifies intent: `mrp_query` -> retrieval, `po_automation` -> automation branch."""
         emit("route", state["language"])
-        out = agents["router"].run(json.dumps({"message": state["question"], "rewritten": state["rewritten"]},
-                                              ensure_ascii=False))
-        return {"intent": out["intent"]}
+        pending = state.get("automation_draft")
+        pending_info = {"request": pending["request"], "last_question": (pending.get("last_clarification") or {})
+                        .get("question")} if pending else None
+        out = agents["router"].run(json.dumps({"message": state["question"], "rewritten": state["rewritten"],
+                                               "pending_po_request": pending_info}, ensure_ascii=False))
+        update = {"intent": out["intent"]}
+        if pending and out["intent"] != "po_automation":   # pengguna beralih topik -> draf dibuang
+            update["automation_draft"] = None
+        return update
 
     def respond_direct(state: ChatState) -> ChatState:
         """Replies to smalltalk / out-of-scope / write requests without touching data."""
@@ -221,8 +243,10 @@ def build_graph(agents: dict[str, Agent], cfg: dict, checkpointer=None):
         for b in chosen["draft"]["blocks"]:
             if b["type"] == "table":
                 blocks.append(render_table(evidence[b["evidence_id"]], b.get("columns"), language, b.get("title")))
-            else:
+            elif b["type"] == "text":
                 blocks.append({"type": "text", "text": b["text"]})
+            else:                                               # options (klarifikasi otomasi PO), dll.
+                blocks.append(b)
         ev = chosen["evaluation"]
         if ev and not ev["passed"]:
             blocks.append({"type": "notice", "tone": "warning",
@@ -251,8 +275,9 @@ def build_graph(agents: dict[str, Agent], cfg: dict, checkpointer=None):
         g.add_node(name, fn)
     g.add_edge(START, "rewrite")
     g.add_edge("rewrite", "route")
-    g.add_conditional_edges("route", lambda s: "plan" if s["intent"] == "mrp_query" else "respond_direct",
-                            ["plan", "respond_direct"])
+    add_automation_nodes(g, agents, automation_cfg or {}, on_supplier_work=on_supplier_work)
+    g.add_conditional_edges("route", lambda s: {"mrp_query": "plan", "po_automation": "auto_parse"}
+                            .get(s["intent"], "respond_direct"), ["plan", "auto_parse", "respond_direct"])
     g.add_edge("respond_direct", "finalize")
     g.add_edge("plan", "execute_tools")
     g.add_edge("execute_tools", "synthesize")

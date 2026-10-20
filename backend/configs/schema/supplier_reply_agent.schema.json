@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "supplier_reply_agent.schema.json",
+  "title": "SupplierReplyOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decision",
+    "reply_text",
+    "promised_delivery_date",
+    "supplier_reference",
+    "proposed_changes",
+    "change_summary",
+    "reason"
+  ],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "confirmed",
+        "declined",
+        "change_requested",
+        "question",
+        "unclear"
+      ],
+      "description": "What the supplier's latest message means for the purpose of this conversation."
+    },
+    "reply_text": {
+      "type": "string",
+      "description": "Short reply to send back to the supplier (no promises the system cannot keep)."
+    },
+    "promised_delivery_date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Delivery date promised by the supplier as YYYY-MM-DD, if stated."
+    },
+    "supplier_reference": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Supplier's own order/reference number, if given."
+    },
+    "proposed_changes": {
+      "type": "array",
+      "description": "Only for change_requested: each requested change to an EXISTING PO line.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "material_ref",
+          "field",
+          "new_value",
+          "reason"
+        ],
+        "properties": {
+          "material_ref": {
+            "type": "string",
+            "description": "SKU or material name from the PO the change applies to."
+          },
+          "field": {
+            "type": "string",
+            "enum": [
+              "qty",
+              "unit_price",
+              "needed_by_date"
+            ]
+          },
+          "new_value": {
+            "type": "string",
+            "description": "qty as a plain number, unit_price as an integer Rupiah without separators, dates as YYYY-MM-DD."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "change_summary": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "One sentence summarising the requested revision, for the manager."
+    },
+    "reason": {
+      "type": "string",
+      "description": "One short sentence justifying the decision."
+    }
+  }
+}

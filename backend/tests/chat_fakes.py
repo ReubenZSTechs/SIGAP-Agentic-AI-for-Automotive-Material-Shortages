@@ -61,3 +61,48 @@ def judge(f=1.0, r=1.0, c=1.0, failure="none", critique="ok", supported=True) ->
     return {"faithfulness": f, "answer_relevance": r, "completeness": c,
             "claim_verdicts": [{"claim": "c1", "supported": supported, "evidence_ids": ["E1"], "note": ""}],
             "failure_type": failure, "critique": critique}
+
+
+# ------------------------------ PO automation & supplier Telegram ------------------------------
+ROUTE_AUTO = {"intent": "po_automation", "reason": "asks to change a PO"}
+
+
+def parsed(operation="create", items=None, po_reference=None, supplier_query=None, needed_by_date=None,
+           notes=None, user_cancelled=False) -> dict:
+    """AutomationParserOutput with every key present."""
+    return {"operation": operation, "po_reference": po_reference, "items": items or [],
+            "supplier_query": supplier_query, "needed_by_date": needed_by_date, "notes": notes,
+            "user_cancelled": user_cancelled, "reason": "test"}
+
+
+def item(material_query: str, qty=None) -> dict:
+    return {"material_query": material_query, "qty": qty}
+
+
+def clarify(question="Material yang mana?", options=None) -> dict:
+    return {"question_text": question, "options": options or []}
+
+
+OUTREACH = {"message_text": "Halo, mohon konfirmasi PO berikut.", "language": "id"}
+
+
+def reply(decision="confirmed", text="Terima kasih.", promised=None, ref=None, changes=None, summary=None) -> dict:
+    """SupplierReplyOutput."""
+    return {"decision": decision, "reply_text": text, "promised_delivery_date": promised, "supplier_reference": ref,
+            "proposed_changes": changes or [], "change_summary": summary, "reason": "test"}
+
+
+def change(material_ref: str, field: str, new_value: str) -> dict:
+    return {"material_ref": material_ref, "field": field, "new_value": new_value, "reason": None}
+
+
+def triage(po_number=None, intent="other", text="Baik.") -> dict:
+    return {"po_number": po_number, "intent": intent, "reply_text": text}
+
+
+ESCALATION = {"message_text": "Supplier perlu ditindaklanjuti.", "urgency": "normal",
+              "recommended_option": "none", "rationale": "test"}
+
+
+def decision(choice="approve_change", cr_id=None, text="Siap.") -> dict:
+    return {"choice": choice, "change_request_id": cr_id, "reply_text": text}

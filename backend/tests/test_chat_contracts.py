@@ -19,6 +19,13 @@ FIXTURES = {
                     "claims": [{"text": "x", "evidence_ids": ["E1"]}], "insufficient_data": False},
     "evaluator": F.judge(),
     "direct_responder": {"blocks": [{"type": "text", "text": "Halo"}]},
+    "automation_parser": F.parsed(items=[F.item("ban", 50)]),
+    "automation_clarifier": F.clarify(options=[{"label": "RM-RUB-01 Ban Luar Karet", "value": "RM-RUB-01"}]),
+    "supplier_outreach_writer": F.OUTREACH,
+    "supplier_reply_agent": F.reply("change_requested", changes=[F.change("RM-RUB-01", "qty", "40")]),
+    "supplier_inbound_triage": F.triage("PO-202610-0001", "revision_request"),
+    "manager_escalation_writer": F.ESCALATION,
+    "manager_decision_agent": F.decision(cr_id=1),
 }
 
 

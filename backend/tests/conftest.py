@@ -53,6 +53,8 @@ TEST_URL = _resolve_test_url()
 # Paksa aplikasi memakai DB test (env var menimpa .env). Harus sebelum import app.*
 os.environ["DATABASE_URL"] = TEST_URL
 os.environ["CHAT_DATABASE_URL"] = TEST_URL   # engine read-only chatbot juga ke DB test
+os.environ["TELEGRAM_MODE"] = "sandbox"      # tes tidak pernah memakai bot Telegram sungguhan
+os.environ.pop("TELEGRAM_MANAGER_CHAT_ID", None)
 
 from fastapi.testclient import TestClient          # noqa: E402
 from sqlalchemy import text                         # noqa: E402

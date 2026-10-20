@@ -11,6 +11,12 @@ import PlanningRunPage from '../pages/PlanningRunPage';
 import PurchaseOrdersPage from '../pages/PurchaseOrdersPage';
 import PurchaseOrderDetailPage from '../pages/PurchaseOrderDetailPage';
 import ManualPoPage from '../pages/ManualPoPage';
+import SupplierHubPage from '../pages/SupplierHubPage';
+import HubApprovals from '../pages/supplierHub/HubApprovals';
+import HubConversations from '../pages/supplierHub/HubConversations';
+import HubMissions from '../pages/supplierHub/HubMissions';
+import HubDocuments from '../pages/supplierHub/HubDocuments';
+import HubSettings from '../pages/supplierHub/HubSettings';
 import NotFoundPage from '../pages/NotFoundPage';
 
 export default function AppRoutes() {
@@ -29,6 +35,16 @@ export default function AppRoutes() {
         <Route path="purchase-orders/new" element={<ManualPoPage />} />
         <Route path="purchase-orders/:id/edit" element={<ManualPoPage />} />
         <Route path="purchase-orders/:id" element={<PurchaseOrderDetailPage />} />
+        <Route path="supplier-hub" element={<SupplierHubPage />}>
+          <Route index element={<HubApprovals />} />
+          <Route path="conversations" element={<HubConversations />} />
+          <Route path="conversations/:id" element={<HubConversations />} />
+          <Route path="missions" element={<HubMissions />} />
+          <Route path="missions/:id" element={<HubMissions />} />
+          <Route path="documents" element={<HubDocuments />} />
+          <Route path="documents/:id" element={<HubDocuments />} />
+          <Route path="settings" element={<HubSettings />} />
+        </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

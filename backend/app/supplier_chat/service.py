@@ -253,7 +253,8 @@ class SupplierChatService:
     # -------------------------------------------- inbound --------------------------------------------
     def handle_update(self, update: dict) -> dict:
         if update.get("kind") == "message":
-            return self.handle_inbound(update["chat_id"], update.get("text", ""), update.get("message_id"))
+            return self.handle_inbound(update["chat_id"], update.get("text", ""), update.get("message_id"),
+                                       attachments=update.get("attachments"))
         if update.get("kind") == "button":
             result = self.handle_button(update["chat_id"], update.get("data", ""))
             if update.get("callback_id"):
@@ -269,8 +270,14 @@ class SupplierChatService:
             db.commit()
         return self.manager_graph.invoke({"kind": "button", "data": data}) or {}
 
-    def handle_inbound(self, chat_id: int, text: str, message_id: int | None = None) -> dict:
+    def handle_inbound(self, chat_id: int, text: str, message_id: int | None = None,
+                       attachments: list[dict] | None = None) -> dict:
         text = (text or "").strip()
+        if attachments and chat_id != self.manager_chat_id:      # foto/PDF supplier -> Agent Hub (dokumen)
+            from app.hub import hooks as hub_hooks
+            stored = hub_hooks.store_attachments(self, chat_id, text, attachments, message_id)
+            if stored is not None:
+                return stored
         if not text:
             return {"handled": False}
         if self.manager_chat_id is not None and chat_id == self.manager_chat_id:
@@ -303,7 +310,13 @@ class SupplierChatService:
             db.commit()
             supplier_id, msg_id = link.supplier_id, msg.id
             conv_id, conv_status, po_number = (conv.id, conv.status, conv.po_number) if conv else (None, None, None)
+        from app.hub import hooks as hub_hooks
+        if hub_hooks.is_human_mode(supplier_id):                # admin mengambil alih di Agent Hub: tidak dibalas agent
+            return {"handled": True, "human_mode": True, "conversation_id": conv_id}
         if conv_id is None:
+            routed = hub_hooks.route_mission_reply(self, supplier_id, chat_id, text, msg_id)   # misi Hub yang menunggu
+            if routed is not None:
+                return routed
             return self._triage(supplier_id, chat_id, text, msg_id)
         if conv_status == CS.REVISION_REQUESTED:
             self.deliver([{"chat_id": chat_id, "conversation_id": conv_id, "supplier_id": supplier_id, "direction": MD.OUT,

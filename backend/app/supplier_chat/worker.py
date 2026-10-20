@@ -10,6 +10,7 @@ import time
 
 from app.chatbot.service import ChatUnavailable
 from app.config import settings
+from app.hub import hooks as hub_hooks
 from app.supplier_chat.service import get_supplier_chat_service
 
 log = logging.getLogger("supplier_chat.worker")
@@ -41,6 +42,7 @@ def run_forever() -> None:
             else:
                 time.sleep(cfg.get("idle_sleep_s", 5))
             svc.dispatch_queued()
+            hub_hooks.tick(svc)                      # misi Agent Hub (menelan error-nya sendiri)
             if time.monotonic() - last_tick > TIMEOUT_EVERY_S:
                 svc.tick_timeouts()
                 last_tick = time.monotonic()

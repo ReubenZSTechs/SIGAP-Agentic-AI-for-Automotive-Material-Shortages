@@ -27,6 +27,7 @@ class ManagerTurn(TypedDict, total=False):
     text: str | None
     data: str | None
     choice: str | None
+    actor: str | None          # mis. "Rina via Hub"; default dari cfg.manager_actor
     sends: list[dict]
     execute: bool
     result: dict
@@ -145,7 +146,8 @@ def build_manager_graph(svc):
                 cr = db.get(POChangeRequest, cr_id)
                 if cr is None:
                     raise AppError(404, f"Permintaan revisi #{cr_id} tidak ditemukan")
-                result = A.apply_change_request(db, cr, choice, cfg.get("manager_actor", "Manager via Telegram"))
+                actor = state.get("actor") or cfg.get("manager_actor", "Manager via Telegram")
+                result = A.apply_change_request(db, cr, choice, actor)
                 notices = [svc.withdrawal_send(db, n["supplier_id"], n["snapshot"], n["conversation_id"])
                            for n in result.pop("notices")]
         except AppError as e:

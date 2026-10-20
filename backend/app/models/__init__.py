@@ -16,4 +16,8 @@ from app.models.supplier_chat import (  # noqa: F401
     SupplierTelegramLink, SupplierConversation, SupplierMessage, POSupplierConfirmation, POChangeRequest,
 )
 from app.models.automation import AutomationAction  # noqa: F401
+from app.models.hub import (  # noqa: F401
+    HubSettings, HubMessageTemplate, HubSupplierControl, HubMission, HubMissionTarget, HubOutbox, HubProposal,
+    HubDocument, HubAuditLog,
+)
 from app.chatbot import semantic_views  # noqa: F401,E402  (view chatbot ikut create_all/drop_all)

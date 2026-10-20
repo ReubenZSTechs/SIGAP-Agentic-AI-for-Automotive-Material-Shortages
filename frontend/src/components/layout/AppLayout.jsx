@@ -4,12 +4,17 @@ import Sidebar from './Sidebar';
 import Toaster from '../common/Toaster';
 import Icon from '../common/Icon';
 import useDisclosure from '../../hooks/useDisclosure';
+import usePolling from '../../hooks/usePolling';
+import { useHubStore } from '../../store/hubStore';
 
 const KEY = 'sidebarCollapsed';
 const readCollapsed = () => { try { return localStorage.getItem(KEY) === '1'; } catch { return false; } };
 
 export default function AppLayout() {
   const menu = useDisclosure();
+  const refreshStatus = useHubStore((s) => s.refreshStatus);
+  useEffect(() => { refreshStatus(); }, [refreshStatus]);
+  usePolling(refreshStatus, 15000); // lencana Hub di Sidebar
   const [collapsed, setCollapsed] = useState(readCollapsed); // hanya berlaku di desktop
 
   const toggle = () => setCollapsed((c) => {

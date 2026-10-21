@@ -30,7 +30,8 @@ def test_supplier_confirmation_updates_po_confirmation(seeded):
     assert H.confirmation_status(po_id) == "CONFIRMED"
     conv = H.conversation(cid)
     assert conv.status.value == "CONFIRMED" and conv.outcome["promised_delivery_date"] == "2026-10-25"
-    assert H.messages("OUT", chat)[-1].text == "Terima kasih."
+    reply, pdf = H.messages("OUT", chat)[-2:]
+    assert reply.text == "Terima kasih." and pdf.agent_output["source"] == "po_pdf"    # balasan, lalu PDF final
 
 
 def test_cancellation_confirmed_deletes_po_and_reverts_stock(client, seeded):
@@ -106,7 +107,7 @@ def test_one_active_conversation_per_supplier(seeded):
 
 
 def test_sandbox_api_round_trip(client, seeded):
-    """The Streamlit harness path: link, start, reply as supplier via HTTP."""
+    """The ops API path: link, start, reply as supplier via HTTP."""
     import app.api.v1.endpoints.supplier_chat as ep
     po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 5)
     svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed")})
@@ -117,7 +118,7 @@ def test_sandbox_api_round_trip(client, seeded):
         r = client.post(f"{H.API}/supplier-chat/conversations", json={"po_id": po_id, "purpose": "CONFIRM_ORDER"})
         assert r.status_code == 201 and r.json()["status"] == "AWAITING_SUPPLIER"
         r = client.post(f"{H.API}/supplier-chat/sandbox/inbound", json={"supplier_id": sid, "text": "siap"})
-        assert r.status_code == 200 and [m["direction"] for m in r.json()["messages"]] == ["IN", "OUT"]
+        assert r.status_code == 200 and [m["direction"] for m in r.json()["messages"]] == ["IN", "OUT", "OUT"]  # balasan + PDF final
         detail = client.get(f"{H.API}/supplier-chat/conversations/{r.json()['messages'][0]['conversation_id']}").json()
         assert detail["status"] == "CONFIRMED" and detail["confirmation"]["status"] == "CONFIRMED"
         assert any(l["linked"] for l in client.get(f"{H.API}/supplier-chat/links").json())
@@ -151,3 +152,16 @@ def test_telegram_mode_ignores_sandbox_link_and_resends_after_real_link(seeded):
     assert svc.handle_inbound(777, f"/start {token}")["linked"] is True
     assert H.conversation(cid).status.value == "AWAITING_SUPPLIER"
     assert [m.error for m in H.messages("OUT", 777)][-1] is None
+
+
+def test_issuing_from_po_page_queues_one_supplier_confirmation(client, seeded):
+    po = H.draft_po(client, seeded, "RM-TUB-01", "SUP-KRT", 5)
+    for step in ("submit", "approve"):
+        body = {"approved_by": "Rina"} if step == "approve" else None
+        assert client.post(f"{H.API}/purchase-orders/{po['id']}/{step}", json=body).status_code == 200
+    assert client.patch(f"{H.API}/purchase-orders/{po['id']}/status", json={"status": "ISSUED"}).status_code == 200
+    convs = [c for c in H.conversations() if c.po_id == po["id"]]
+    assert len(convs) == 1 and convs[0].purpose.value == "CONFIRM_ORDER"
+    assert H.confirmation_status(po["id"]) == "PENDING"
+    with A.write_session() as db:                                       # jalur lain (mis. Hub) tidak menggandakan
+        assert A.ensure_confirm_conversation(db, db.get(PurchaseOrder, po["id"])) is None

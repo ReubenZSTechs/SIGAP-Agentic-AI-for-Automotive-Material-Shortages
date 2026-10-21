@@ -30,7 +30,7 @@ function Attachment({ a, onOpen }) {
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-500"><Icon name={a.kind === 'image' ? 'image' : 'file'} className="h-5 w-5" /></span>
       <span className="min-w-0">
         <span className="block truncate text-sm font-medium text-slate-800">{a.name}</span>
-        <span className="block text-xs text-slate-500">{a.kind === 'image' ? 'Gambar' : 'Dokumen'} · {a.size}{a.archived ? ' · diarsipkan' : ''}</span>
+        <span className="block text-xs text-slate-500">{a.outbound ? 'PO final (PDF) dikirim ke supplier' : `${a.kind === 'image' ? 'Gambar' : 'Dokumen'} · ${a.size}`}{a.archived ? ' · diarsipkan' : ''}</span>
       </span>
     </button>
   );
@@ -47,7 +47,7 @@ function Status({ m }) {
 }
 
 // Supplier di kiri (netral); Agent di kanan (biru lembut, draf bergaris putus); admin di kanan (kontur); sistem sebagai chip di tengah.
-export default function MessageBubble({ m, supplier, busy, onOpenApproval, onOpenMission, onOpenAttachment, onSendDraft, onDiscard, onRetry }) {
+export default function MessageBubble({ m, supplier, busy, onOpenApproval, onOpenMission, onOpenManager, onOpenAttachment, onSendDraft, onDiscard, onRetry }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(m.text);
 
@@ -57,6 +57,7 @@ export default function MessageBubble({ m, supplier, busy, onOpenApproval, onOpe
         <span className="inline-flex max-w-full flex-wrap items-center justify-center gap-x-2 rounded-full bg-white px-3 py-1 text-center text-xs text-slate-600 ring-1 ring-slate-200">
           {m.text}
           {m.approval_id && <button type="button" onClick={() => onOpenApproval(m.approval_id)} className="font-semibold text-primary-700 hover:underline">Lihat persetujuan</button>}
+          {m.kind === 'manager' && onOpenManager && <button type="button" onClick={onOpenManager} className="font-semibold text-primary-700 hover:underline">Buka chat manajer</button>}
           <span className="tabular-nums text-slate-400">{clock(m.at)}</span>
         </span>
       </div>

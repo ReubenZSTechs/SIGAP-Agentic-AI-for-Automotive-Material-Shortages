@@ -27,7 +27,7 @@ export default function PoHeader({ po, onChanged }) {
     try { await fn(); toast.success(okMsg); setConfirmCancel(false); onChanged(); }
     catch (e) { toast.error(e.message); } finally { setBusy(false); }
   };
-  const issue = () => run(() => purchaseOrderService.setStatus(po.id, 'ISSUED'), 'PO diterbitkan');
+  const issue = () => run(() => purchaseOrderService.setStatus(po.id, 'ISSUED'), 'PO diterbitkan; supplier dihubungi via Telegram untuk konfirmasi');
   const submit = () => run(() => purchaseOrderService.submit(po.id), 'PO dikirim untuk approval');
   const cancel = () => run(() => purchaseOrderService.setStatus(po.id, 'CANCELLED'), 'PO dibatalkan');
 

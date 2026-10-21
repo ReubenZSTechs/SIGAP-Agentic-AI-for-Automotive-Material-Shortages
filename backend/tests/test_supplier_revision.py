@@ -1,4 +1,6 @@
 """Supplier revision requests -> manager options (abort / approve change / re-source) -> execution."""
+import pytest
+
 from app.database import SessionLocal
 from app.models import PurchaseOrder
 from tests import chat_fakes as F
@@ -9,9 +11,9 @@ QTY_40 = F.reply("change_requested", "Kami teruskan ke manajer.", changes=[F.cha
 SCRIPT = {"SupplierOutreachOutput": F.OUTREACH, "ManagerEscalationOutput": F.ESCALATION}
 
 
-def _revision(seeded, sku="RM-RUB-01", reply=QTY_40, **script):
+def _revision(seeded, sku="RM-RUB-01", reply=QTY_40, transport=None, **script):
     po_id = H.issue_po(seeded, sku, "SUP-KRT", 50)
-    svc, fake = H.supplier_service({**SCRIPT, "SupplierReplyOutput": reply, **script})
+    svc, fake = H.supplier_service({**SCRIPT, "SupplierReplyOutput": reply, **script}, transport=transport)
     chat = H.link(svc, seeded, "SUP-KRT")
     cid = H.start(svc, po_id)
     svc.handle_inbound(chat, "Maaf, kami hanya sanggup 40 buah")
@@ -43,10 +45,87 @@ def test_approve_change_revises_po_and_asks_supplier_to_reconfirm(seeded):
     assert H.on_order("RM-RUB-01") == 40
     revision_conv = H.conversations()[-1]
     assert revision_conv.purpose.value == "REVISION_CONFIRM" and revision_conv.status.value == "AWAITING_SUPPLIER"
-    assert "40 Buah" in H.messages("OUT", chat)[-1].text
-    svc.handle_inbound(chat, "Oke, konfirmasi 40")
+    ask = H.messages("OUT", chat)[-1].text
+    assert "RM-RUB-01 Ban Luar Karet: qty 50 → 40" in ask and "Total: Rp1.750.000 → Rp1.400.000" in ask
+    assert "Termin: Net" not in ask                                   # PO lengkap tidak dikirim ulang
+    v1, v2 = H.revisions(po_id)
+    assert (v1.status.value, v2.status.value) == ("SUPERSEDED", "CURRENT") and v2.changes[0]["new"] == 40
+    svc.handle_inbound(chat, "Oke, konfirmasi 40, tidak ada perubahan lagi")
     assert H.confirmation_status(po_id) == "CONFIRMED"
     assert H.change_requests()[0].status.value == "CHANGE_APPROVED"
+    final = H.revisions(po_id)[-1]
+    assert final.version == 2 and final.status.value == "FINAL" and final.snapshot["total_amount"] == 40 * 35_000
+    pdf = H.messages("OUT", chat)[-1]
+    assert pdf.agent_output["source"] == "po_pdf" and pdf.agent_output["revision_id"] == final.id
+    assert final.pdf_message_id == pdf.id
+
+
+def test_first_confirmation_saves_v1_as_final_and_sends_pdf(seeded):
+    transport = H.RecordingTransport()
+    po_id = H.issue_po(seeded, "RM-RUB-01", "SUP-KRT", 50)
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed")}, transport=transport)
+    chat = H.link(svc, seeded, "SUP-KRT")
+    H.start(svc, po_id)
+    [v1] = H.revisions(po_id)
+    assert v1.status.value == "CURRENT"
+    svc.handle_inbound(chat, "siap, kami kirim minggu depan")
+    [v1] = H.revisions(po_id)
+    assert v1.status.value == "FINAL"
+    [(to, name, content, caption)] = transport.documents
+    assert to == chat and name == f"{v1.po_number}-v1.pdf" and content.startswith(b"%PDF") and "final" in caption
+
+
+def test_reminder_does_not_resend_the_po(seeded):
+    po_id = H.issue_po(seeded, "RM-RUB-01", "SUP-KRT", 50)
+    svc, _ = H.supplier_service(SCRIPT, reminder_after_hours=0)
+    chat = H.link(svc, seeded, "SUP-KRT")
+    H.start(svc, po_id)
+    assert svc.tick_timeouts()["reminded"] == 1
+    reminder = H.messages("OUT", chat)[-1].text
+    assert reminder.startswith("Pengingat") and "Termin: Net" not in reminder
+
+
+def test_hub_decision_removes_telegram_buttons_and_logs_once(seeded):
+    from app.hub import approvals, manager
+    transport = H.RecordingTransport()
+    po_id, _, _, svc, fake = _revision(seeded, transport=transport)
+    [cr] = H.change_requests()
+    options = H.messages("MANAGER_OUT")[-1]
+    with SessionLocal() as db:
+        assert [b["state"] for b in manager.manager_thread(db)["messages"][-1]["buttons"]] == ["active"] * 3
+    fake.script["SupplierReplyOutput"] = [F.reply("confirmed")]
+    approvals.choose_change_request(svc, cr.id, "approve_change", "Rina")
+    assert (svc.manager_chat_id, options.telegram_message_id, None) in transport.edited
+    assert any("Diputuskan via Hub oleh Rina" in text for _, text, _ in transport.sent)
+    with SessionLocal() as db:
+        thread = manager.manager_thread(db)["messages"]
+    states = next(m for m in thread if m["id"] == options.id)["buttons"]
+    assert [b["state"] for b in states] == ["closed", "chosen", "closed"]
+    hub_reply = [m for m in thread if m["from"] == "MANAGER"]
+    assert hub_reply[-1]["source"] == "hub" and hub_reply[-1]["author"] == "Rina"
+    assert not any("Diputuskan via Hub" in m["text"] for m in thread)     # dicerminkan ke Telegram, tidak dicatat dua kali
+
+
+def test_telegram_decision_is_recorded_for_the_hub(seeded):
+    from app.hub import approvals
+    transport = H.RecordingTransport()
+    _, _, _, svc, _ = _revision(seeded, transport=transport)
+    [cr] = H.change_requests()
+    svc.handle_button(svc.manager_chat_id, f"cr:{cr.id}:abort")
+    assert transport.edited and transport.edited[-1][2] is None
+    with SessionLocal() as db:
+        card = approvals.get_approval(db, f"cr-{cr.id}")
+    assert card["status"] == "APPROVED" and card["decided_by"] == "Manager via Telegram"
+
+
+def test_parse_rupiah_formats():
+    from configs.tools.po_actions import parse_rupiah
+    cases = {"12500": 12_500, "12.500": 12_500, "Rp 12.500": 12_500, "Rp12.500,00": 12_500, "12500.00": 12_500,
+             "12,500": 12_500, "1.250.000": 1_250_000, "17000": 17_000}
+    assert {raw: parse_rupiah(raw) for raw in cases} == cases
+    for bad in ("", "harga naik", "Rp"):
+        with pytest.raises(ValueError):
+            parse_rupiah(bad)
 
 
 def test_abort_deletes_po_and_notifies_supplier(seeded):
@@ -107,6 +186,16 @@ def test_free_text_manager_reply_needs_confirmation_button(seeded):
     assert confirm[0]["data"] == f"crc:{cr.id}:approve_change" and confirm[1]["data"] == f"crx:{cr.id}"
     svc.handle_button(svc.manager_chat_id, confirm[0]["data"])
     assert H.po(po_id).items[0].qty_ordered == 40
+
+
+def test_stale_yes_button_after_cancel_does_nothing(seeded):
+    po_id, _, _, svc, _ = _revision(seeded, ManagerDecisionOutput=F.decision("approve_change"))
+    svc.handle_inbound(svc.manager_chat_id, "setujui saja")
+    yes, no = H.messages("MANAGER_OUT")[-1].buttons
+    svc.handle_button(svc.manager_chat_id, no["data"])
+    svc.handle_button(svc.manager_chat_id, yes["data"])
+    assert H.po(po_id).items[0].qty_ordered == 50 and H.change_requests()[0].status.value == "PENDING_MANAGER"
+    assert "sudah tidak berlaku" in H.messages("MANAGER_OUT")[-1].text
 
 
 def test_po_changed_meanwhile_fails_safely(client, seeded):

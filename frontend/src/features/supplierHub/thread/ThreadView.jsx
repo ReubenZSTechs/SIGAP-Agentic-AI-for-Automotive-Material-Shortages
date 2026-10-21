@@ -110,6 +110,7 @@ export default function ThreadView({ id }) {
                   <MessageBubble m={m} supplier={t.supplier} busy={busy}
                     onOpenApproval={(aid) => navigate(`/supplier-hub?item=${aid}`)}
                     onOpenMission={(mid) => navigate(`/supplier-hub/missions/${mid}`)}
+                    onOpenManager={() => navigate('/supplier-hub/manager')}
                     onOpenAttachment={setPreview}
                     onSendDraft={(msg, text) => run(`send-${msg.id}`, () => hubService.sendDraft(msg.outbox_id, text, me), 'Draf dikirim ke supplier')}
                     onDiscard={(msg) => run(`discard-${msg.id}`, () => hubService.discardDraft(msg.outbox_id, me), 'Draf dibuang')}

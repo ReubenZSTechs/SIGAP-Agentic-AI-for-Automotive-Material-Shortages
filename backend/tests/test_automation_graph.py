@@ -146,3 +146,61 @@ def test_user_can_cancel_a_pending_request(seeded):
     final = svc.run("batal saja", "thread-auto-9")
     assert "cancelled" in final["blocks"][0]["text"]          # REWRITE fixture -> language "en"
     assert _pos() == []
+
+
+# ------------------------------ supplier references & stale drafts ------------------------------
+def _clarify_from_options(question: str):
+    return lambda p: F.clarify(question, [{"label": o["label"], "value": o["value"]}
+                                          for a in p["ambiguous"] for o in a["options"]])
+
+
+def test_supplier_label_with_code_and_name_resolves(seeded):
+    svc, _ = _service({"AutomationParserOutput": F.parsed(items=[F.item("Rangka Besi Dudukan Jok", 150)],
+                                                          supplier_query="SUP-CPT CV Cipta Logam")})
+    card = svc.run("buatlah PO untuk supplier tersebut, 150 biji", "thread-sup-1")
+    table = card["actions"][_action_id(card)]["tables"][0]
+    assert table["title"].startswith("SUP-CPT CV Cipta Logam") and table["rows"][0][0] == "RM-SBR-01"
+
+
+def test_unknown_supplier_is_clarified_with_supplier_options(seeded):
+    svc, _ = _service({"AutomationParserOutput": F.parsed(items=[F.item("Rangka Besi Dudukan Jok", 150)],
+                                                          supplier_query="Toko Antah"),
+                       "AutomationClarifierOutput": _clarify_from_options("Supplier mana?")})
+    out = svc.run("buat PO 150 rangka besi dari Toko Antah", "thread-sup-2")
+    options = next(b for b in out["blocks"] if b["type"] == "options")["options"]
+    assert [o["value"] for o in options] == ["SUP-CPT"]
+
+
+def test_new_request_does_not_inherit_a_failed_supplier(seeded):
+    stale = F.parsed(items=[F.item("Rangka Besi Dudukan Jok", 150)], supplier_query="Toko Antah")
+    merged_by_mistake = F.parsed(items=[F.item("Ban Luar Karet", 50)], supplier_query="Toko Antah")
+    svc, _ = _service({"AutomationParserOutput": [stale, merged_by_mistake],
+                       "AutomationClarifierOutput": _clarify_from_options("Supplier mana?")})
+    svc.run("buat PO 150 rangka besi dari Toko Antah", "thread-sup-3")
+    card = svc.run("Buat PO 50 Ban Luar Karet", "thread-sup-3")
+    table = card["actions"][_action_id(card)]["tables"][0]
+    assert table["rows"][0][0] == "RM-RUB-01" and "Toko Antah" not in table["title"]
+
+
+def test_new_request_flag_resets_clarification_rounds(seeded):
+    unknown = F.parsed(items=[F.item("Rangka Besi Dudukan Jok", 150)], supplier_query="Toko Antah")
+    svc, _ = _service({"AutomationParserOutput": [unknown, unknown, unknown,
+                                                  F.parsed(items=[F.item("Ban Luar Karet")], is_new_request=True)],
+                       "AutomationClarifierOutput": _clarify_from_options("Berapa jumlahnya?")})
+    for _ in range(3):
+        svc.run("dari Toko Antah", "thread-sup-4")                    # 3 putaran klarifikasi (batas)
+    out = svc.run("Buat PO Ban Luar Karet", "thread-sup-4")          # permintaan baru tanpa qty
+    text = " ".join(b.get("text") or "" for b in out["blocks"])
+    assert "Berapa jumlahnya?" in text and "belum lengkap" not in text
+
+
+def test_rewriter_sees_what_a_proposal_card_contained(seeded):
+    svc, fake = _service({"AutomationParserOutput": F.parsed(items=[F.item("Rangka Besi Dudukan Jok", 100)]),
+                          "RouterOutput": [F.ROUTE_AUTO, {"intent": "smalltalk", "reason": "thanks"}],
+                          "DirectResponderOutput": {"blocks": [{"type": "text", "text": "Sama-sama"}]}})
+    svc.run("Buat PO 100 rangka besi", "thread-sup-5")
+    svc.run("terima kasih", "thread-sup-5")
+    import json
+    history = json.loads([c for c in fake.calls if c["agent"] == "PromptRewriterOutput"][-1]["messages"][-1]["content"])
+    card_line = next(h["content"] for h in history["conversation_history"] if "[Kartu usulan PO" in h["content"])
+    assert "RM-SBR-01 Rangka Besi Dudukan Jok 100 Buah" in card_line and "SUP-CPT" in card_line

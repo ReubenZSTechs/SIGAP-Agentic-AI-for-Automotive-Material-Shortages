@@ -9,20 +9,20 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.core.exceptions import AppError
 from app.database import engine
-from app.models import (AutomationAction, Material, POChangeRequest, POSupplierConfirmation, PurchaseOrder,
-                        Supplier, SupplierConversation)
+from app.models import (AutomationAction, Material, POChangeRequest, PORevision, POSupplierConfirmation,
+                        PurchaseOrder, Supplier, SupplierConversation)
 from app.models.enums import (ChangeRequestStatus, ConversationPurpose, ConversationStatus, ItemCategory,
-                              POSource, POStatus, SupplierConfirmationStatus)
+                              PORevisionStatus, POSource, POStatus, SupplierConfirmationStatus)
 from app.services import master_service, po_service
 from configs.tools.curated import resolve_materials
 
-CS, CRS, SCS = ConversationStatus, ChangeRequestStatus, SupplierConfirmationStatus
+CS, CRS, SCS, RS = ConversationStatus, ChangeRequestStatus, SupplierConfirmationStatus, PORevisionStatus
 ACTIVE_CONVERSATION = (CS.AWAITING_SUPPLIER, CS.REVISION_REQUESTED)
 OPEN_CONVERSATION = (CS.QUEUED, *ACTIVE_CONVERSATION)
 EDITABLE = (POStatus.DRAFT, POStatus.REJECTED)
@@ -89,6 +89,31 @@ def po_summary_text(snap: dict) -> str:
         lines.append(f"{n}. {it['sku']} {it['name']} — {fmt_qty(it['qty_ordered'])} {it['uom']} × "
                      f"{rupiah(it['unit_price'])} = {rupiah(it['line_total'])}{need}")
     lines.append(f"Total: {rupiah(snap['total_amount'])} · Termin: Net {snap.get('payment_term_days', 0)}")
+    return "\n".join(lines)
+
+
+FIELD_LABEL = {"qty_ordered": "qty", "unit_price": "harga satuan", "needed_by_date": "tanggal kebutuhan"}
+
+
+def change_value(field: str, v) -> str:
+    if field == "unit_price":
+        return rupiah(v)
+    if field == "qty_ordered":
+        return fmt_qty(v)
+    return str(v)
+
+
+def describe_change(c: dict) -> str:
+    """`{sku, name, field, old, new}` -> "RM-RUB-01 Ban Luar Karet: qty 50 → 40" (exact, never LLM-written)."""
+    return (f"{c['sku']} {c['name']}: {FIELD_LABEL.get(c['field'], c['field'])} {change_value(c['field'], c['old'])} → "
+            f"{change_value(c['field'], c['new'])}")
+
+
+def revision_diff_text(changes: list[dict], total_before: int, total_after: int) -> str:
+    """What changed in an approved revision (sent to the supplier instead of the full PO again)."""
+    lines = ["Perubahan yang disetujui:", *[f"- {describe_change(c)}" for c in changes]]
+    if total_before != total_after:
+        lines.append(f"Total: {rupiah(total_before)} → {rupiah(total_after)}")
     return "\n".join(lines)
 
 
@@ -176,12 +201,35 @@ def find_pos(db: Session, ref: str) -> list[PurchaseOrder]:
 
 
 def _find_suppliers(db: Session, term: str) -> list[Supplier]:
+    """Active suppliers by exact code, a code inside a label ("SUP-CPT CV Cipta Logam"), part of a
+    code/name ("Cipta"), or a label that contains the full name ("supplier CV Cipta Logam")."""
     term = term.strip()
-    exact = db.scalars(select(Supplier).where(func.lower(Supplier.code) == term.lower(), Supplier.is_active)).all()
+    active = Supplier.is_active
+    exact = db.scalars(select(Supplier).where(func.lower(Supplier.code) == term.lower(), active)).all()
     if exact:
         return list(exact)
-    return list(db.scalars(select(Supplier).where(Supplier.is_active, (Supplier.code.ilike(f"%{term}%"))
-                                                  | (Supplier.name.ilike(f"%{term}%"))).limit(MAX_OPTIONS)))
+    codes = {c.lower() for c in re.findall(r"[A-Za-z]{2,}-[A-Za-z0-9]+", term)}
+    if codes:
+        hits = db.scalars(select(Supplier).where(func.lower(Supplier.code).in_(codes), active)).all()
+        if hits:
+            return list(hits)
+    hits = db.scalars(select(Supplier).where(active, Supplier.code.ilike(f"%{term}%") | Supplier.name.ilike(f"%{term}%"))
+                      .limit(MAX_OPTIONS)).all()
+    if hits:
+        return list(hits)
+    return list(db.scalars(select(Supplier).where(active, literal(term).ilike(func.concat("%", Supplier.name, "%")))
+                           .order_by(Supplier.code).limit(MAX_OPTIONS)))
+
+
+def _supplier_options(db: Session, materials: list[Material]) -> list[dict]:
+    """Active suppliers of every given material, as clarification options."""
+    by_code = {}
+    for m in materials:
+        for l in active_links(db, m.id):
+            detail = f" ({rupiah(l['unit_price'])}, {l['lead_time_days']} hari)" if len(materials) == 1 else ""
+            by_code.setdefault(l["supplier_code"], {"label": f"{l['supplier_code']} {l['supplier_name']}{detail}",
+                                                    "value": l["supplier_code"]})
+    return list(by_code.values())[:MAX_OPTIONS]
 
 
 def _parse_date(value: str | None, field: str, out: dict, not_before: date) -> str | None:
@@ -210,6 +258,12 @@ def _resolve_material(db: Session, query: str, field: str, out: dict) -> Materia
     return mats[0]
 
 
+def material_ids(db: Session, items: list[dict]) -> set[int]:
+    """Ids of every purchasable material an item list may refer to (all candidates of each query)."""
+    return {m.id for it in items or [] for m in resolve_materials(db, it.get("material_query") or "",
+                                                                  (ItemCategory.PURCHASED,), limit=MAX_OPTIONS)}
+
+
 def _resolve_po_ref(db: Session, draft: dict, out: dict) -> PurchaseOrder | None:
     ref = draft.get("po_reference")
     if not ref:
@@ -232,11 +286,11 @@ def _resolve_create(db: Session, draft: dict, out: dict, today: date) -> None:
     if not items:
         out["missing"].append({"field": "items", "message": "Which material(s) and how many?"})
         return
-    supplier = None
+    supplier, supplier_missing = None, False
     if draft.get("supplier_query"):
         sups = _find_suppliers(db, draft["supplier_query"])
         if not sups:
-            out["errors"].append({"field": "supplier", "message": f"Supplier '{draft['supplier_query']}' was not found."})
+            supplier_missing = True                         # opsi supplier ditambahkan setelah material diketahui
         elif len(sups) > 1:
             out["ambiguous"].append({"field": "supplier", "message": "Several suppliers match.",
                                      "options": [{"label": f"{s.code} {s.name}", "value": s.code} for s in sups]})
@@ -244,8 +298,11 @@ def _resolve_create(db: Session, draft: dict, out: dict, today: date) -> None:
             supplier = sups[0]
     needed_by = _parse_date(draft.get("needed_by_date"), "needed_by_date", out, today)
     merged: dict[int, tuple[Material, float]] = {}
+    found: dict[int, Material] = {}
     for n, it in enumerate(items):
         m = _resolve_material(db, it.get("material_query") or "", f"items.{n}.material", out)
+        if m is not None:
+            found[m.id] = m
         qty = it.get("qty")
         if qty is None or qty <= 0:
             what = m.name if m else (it.get("material_query") or "this material")
@@ -253,6 +310,15 @@ def _resolve_create(db: Session, draft: dict, out: dict, today: date) -> None:
             continue
         if m is not None:
             merged[m.id] = (m, merged.get(m.id, (m, 0))[1] + qty)
+    if supplier_missing:
+        options = _supplier_options(db, list(found.values()))
+        message = f"Supplier '{draft['supplier_query']}' was not found."
+        if options:
+            out["ambiguous"].append({"field": "supplier", "message": f"{message} Choose one of the active suppliers "
+                                                                     "for this material.", "options": options})
+        else:
+            out["errors"].append({"field": "supplier", "message": message})
+        return
     lines, warnings = [], []
     for m, qty in merged.values():
         links = active_links(db, m.id)
@@ -436,6 +502,30 @@ def queue_conversation(db: Session, po: PurchaseOrder, purpose: ConversationPurp
     return conv
 
 
+def ensure_confirm_conversation(db: Session, po: PurchaseOrder, action_id: str | None = None) -> SupplierConversation | None:
+    """Queues CONFIRM_ORDER for an ISSUED PO unless one is already open (any path that issues a PO)."""
+    if po.status != POStatus.ISSUED:
+        return None
+    busy = db.scalar(select(SupplierConversation.id).where(SupplierConversation.po_id == po.id,
+                                                           SupplierConversation.status.in_(OPEN_CONVERSATION)))
+    if busy:
+        return None
+    confirmation(db, po.id).status = SCS.PENDING
+    return queue_conversation(db, po, ConversationPurpose.CONFIRM_ORDER, action_id)
+
+
+def start_supplier_conversation(db: Session, po: PurchaseOrder, purpose: str) -> SupplierConversation:
+    """Manual start from the PO page / API: ask an ISSUED PO's supplier to confirm or to agree to a cancellation."""
+    if po.status != POStatus.ISSUED:
+        raise AppError(409, f"Hanya PO ISSUED yang dapat dikonfirmasi/dibatalkan via supplier (status {po.status.value})")
+    if purpose == ConversationPurpose.CONFIRM_ORDER.value:
+        conv = ensure_confirm_conversation(db, po)
+        if conv is None:
+            raise AppError(409, f"Percakapan untuk {po.po_number} masih berjalan")
+        return conv
+    return request_po_cancellation(db, {"po": po_snapshot(po)}, None)
+
+
 def close_conversation(conv: SupplierConversation, status: ConversationStatus, **outcome) -> None:
     conv.status = status
     conv.closed_at = now()
@@ -493,6 +583,41 @@ def note_action(db: Session, action_id: str | None, status=None, **info) -> None
     action.result = {**(action.result or {}), **info}
 
 
+# ------------------------------------- PO versions -------------------------------------
+def revisions(db: Session, po_id: int) -> list[PORevision]:
+    return list(db.scalars(select(PORevision).where(PORevision.po_id == po_id).order_by(PORevision.version)))
+
+
+def _add_revision(db: Session, po: PurchaseOrder, snapshot: dict, changes: list[dict], actor: str | None,
+                  change_request_id: int | None = None) -> PORevision:
+    existing = revisions(db, po.id)
+    for r in existing:
+        if r.status != RS.SUPERSEDED:
+            r.status = RS.SUPERSEDED
+    rev = PORevision(po_id=po.id, po_number=po.po_number, version=(existing[-1].version + 1) if existing else 1,
+                     snapshot=snapshot, changes=changes, change_request_id=change_request_id,
+                     status=RS.CURRENT, created_by=actor)
+    db.add(rev)
+    db.flush()
+    return rev
+
+
+def record_initial_revision(db: Session, po: PurchaseOrder, snapshot: dict | None = None) -> PORevision:
+    """v1 = the PO as first sent to the supplier (no-op when the PO already has versions)."""
+    existing = revisions(db, po.id)
+    if existing:
+        return existing[-1]
+    return _add_revision(db, po, snapshot or po_snapshot(po), [], po.decided_by)
+
+
+def finalize_po_revision(db: Session, po: PurchaseOrder) -> PORevision:
+    """The supplier confirmed without further changes: the latest version becomes FINAL."""
+    rev = record_initial_revision(db, po)
+    rev.snapshot, rev.status, rev.finalized_at = po_snapshot(po), RS.FINAL, now()
+    db.flush()
+    return rev
+
+
 # ---------------------------------- supplier revisions ----------------------------------
 def _match_line(po: PurchaseOrder, ref: str):
     ref = (ref or "").strip().lower()
@@ -505,6 +630,23 @@ def _match_line(po: PurchaseOrder, ref: str):
     return po.items[0] if len(po.items) == 1 else None
 
 
+def parse_rupiah(raw: str) -> int:
+    """Supplier-written Rupiah amount -> integer Rupiah; raises ValueError when it is not a price.
+
+    Examples the agent may pass on: "12500", "12.500", "Rp 12.500,00", "12500.00", "12,500".
+    """
+    s = re.sub(r"(?i)^\s*rp\.?|\s", "", str(raw))
+    if not re.fullmatch(r"\d[\d.,]*", s) or s[-1] in ".,":
+        raise ValueError("price is not a number")
+    # Separator terakhir diikuti tepat dua digit = sen ("12.500,00", "12500.00"); separator lain = ribuan
+    # ("12.500", "12,500", "1.250.000"). Rupiah dibulatkan ke rupiah penuh.
+    whole, cents = s, "0"
+    m = re.fullmatch(r"(.*\d)[.,](\d{2})", s)
+    if m:
+        whole, cents = m.groups()
+    return int(re.sub(r"[.,]", "", whole)) + (1 if int(cents) >= 50 else 0)
+
+
 def _parse_change(field: str, raw: str, po: PurchaseOrder):
     raw = str(raw).strip()
     if field == "qty_ordered":
@@ -513,10 +655,7 @@ def _parse_change(field: str, raw: str, po: PurchaseOrder):
             raise ValueError("qty must be > 0")
         return value
     if field == "unit_price":
-        digits = re.sub(r"\D", "", raw.split(",")[0])
-        if not digits:
-            raise ValueError("price is not a number")
-        return int(digits)
+        return parse_rupiah(raw)
     value = date.fromisoformat(raw)
     if value < po.po_date:
         raise ValueError("date is before the PO date")
@@ -575,7 +714,7 @@ def open_change_request(db: Session, conv: SupplierConversation, proposed: list[
             line["line_total"] = round(line["qty_ordered"] * line["unit_price"])
             after.append(line)
         options.append({"key": "approve_change", "label": "Setujui perubahan",
-                        "effect": f"{po.po_number} direvisi lalu dikirim ulang ke supplier untuk konfirmasi.",
+                        "effect": f"{po.po_number} direvisi; supplier menerima daftar perubahannya untuk dikonfirmasi.",
                         "items_after": after, "total_before": po.total_amount,
                         "total_after": sum(i["line_total"] for i in after)})
     alternatives = find_alternative_suppliers(db, po)
@@ -615,6 +754,10 @@ def apply_change_request(db: Session, cr: POChangeRequest, choice: str, actor: s
     if choice == "approve_change":
         po_service.apply_supplier_revision(db, po, [{"po_item_id": c["po_item_id"], "field": c["field"],
                                                      "new": c["new"]} for c in cr.proposed_changes])
+        if not revisions(db, po.id):                          # PO dikirim sebelum riwayat versi ada
+            _add_revision(db, po, cr.po_snapshot, [], None)
+        rev = _add_revision(db, po, po_snapshot(po), cr.proposed_changes, actor, change_request_id=cr.id)
+        result["revision"] = {"id": rev.id, "version": rev.version}
         conf = confirmation(db, po.id)
         conf.revision_round += 1
         conf.status = SCS.PENDING
@@ -657,6 +800,8 @@ WRITE_TOOLS = {
     "delete_po": delete_po,
     "request_po_cancellation": request_po_cancellation,
     "queue_conversation": queue_conversation,
+    "ensure_confirm_conversation": ensure_confirm_conversation,
+    "finalize_po_revision": finalize_po_revision,
     "record_supplier_confirmation": record_supplier_confirmation,
     "record_supplier_decline": record_supplier_decline,
     "open_change_request": open_change_request,

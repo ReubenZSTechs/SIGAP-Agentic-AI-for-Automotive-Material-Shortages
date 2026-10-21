@@ -14,6 +14,7 @@ import ManualPoPage from '../pages/ManualPoPage';
 import SupplierHubPage from '../pages/SupplierHubPage';
 import HubApprovals from '../pages/supplierHub/HubApprovals';
 import HubConversations from '../pages/supplierHub/HubConversations';
+import HubManagerChat from '../pages/supplierHub/HubManagerChat';
 import HubMissions from '../pages/supplierHub/HubMissions';
 import HubDocuments from '../pages/supplierHub/HubDocuments';
 import HubSettings from '../pages/supplierHub/HubSettings';
@@ -39,6 +40,7 @@ export default function AppRoutes() {
           <Route index element={<HubApprovals />} />
           <Route path="conversations" element={<HubConversations />} />
           <Route path="conversations/:id" element={<HubConversations />} />
+          <Route path="manager" element={<HubManagerChat />} />
           <Route path="missions" element={<HubMissions />} />
           <Route path="missions/:id" element={<HubMissions />} />
           <Route path="documents" element={<HubDocuments />} />

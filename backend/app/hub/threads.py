@@ -114,6 +114,14 @@ def _chips(out: dict | None, cr_by_conv: dict, conv_id: int | None) -> list[dict
     return chips
 
 
+def _po_pdf(out: dict) -> list[dict]:
+    """PDF PO final yang dikirim agent ke supplier (disimpan di `po_revisions`, bukan di Dokumen)."""
+    if out.get("source") != "po_pdf" or not out.get("po_id"):
+        return []
+    return [{"id": f"rev-{out['revision_id']}", "kind": "pdf", "name": out.get("file_name") or "PO.pdf",
+             "size": "PDF", "po_id": out["po_id"], "revision_id": out["revision_id"], "outbound": True}]
+
+
 def _approval_from_buttons(buttons: list | None) -> str | None:
     for b in buttons or []:
         parts = str(b.get("data", "")).split(":")
@@ -137,10 +145,11 @@ def thread_messages(db: Session, sup: Supplier) -> list[dict]:
         if m.direction == MD.MANAGER_OUT:
             first = (m.text or "").strip().splitlines()[0][:140] if m.text else ""
             items.append({"id": str(m.id), "from": "SYSTEM", "at": C.iso(m.created_at), "kind": "manager",
-                          "text": f"Agent menghubungi manajer: {first}", "approval_id": _approval_from_buttons(m.buttons)})
+                          "text": f"Agent menghubungi manajer: {first}", "approval_id": _approval_from_buttons(m.buttons),
+                          "manager_message_id": m.id})
             continue
         view = {"id": str(m.id), "message_id": m.id, "at": C.iso(m.created_at), "text": m.text,
-                "attachments": docs.get(m.id, []), "extracted": [], "conversation_id": m.conversation_id}
+                "attachments": docs.get(m.id, []) + _po_pdf(out), "extracted": [], "conversation_id": m.conversation_id}
         if m.direction == MD.IN:
             view.update({"from": "SUPPLIER", "status": None})
             last_in = view

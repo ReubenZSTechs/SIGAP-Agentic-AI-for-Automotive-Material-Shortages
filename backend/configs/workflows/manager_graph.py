@@ -18,7 +18,6 @@ from configs.tools import po_actions as A
 
 CRS = ChangeRequestStatus
 PENDING = (CRS.PENDING_MANAGER, CRS.AWAITING_MANAGER_CONFIRM)
-FIELD_LABEL = {"qty_ordered": "qty", "unit_price": "harga satuan", "needed_by_date": "tanggal kebutuhan"}
 
 
 class ManagerTurn(TypedDict, total=False):
@@ -33,22 +32,13 @@ class ManagerTurn(TypedDict, total=False):
     result: dict
 
 
-def _value(field: str, v) -> str:
-    if field == "unit_price":
-        return A.rupiah(v)
-    if field == "qty_ordered":
-        return A.fmt_qty(v)
-    return str(v)
-
-
 def change_request_details(cr: POChangeRequest) -> str:
     """Exact text of what the supplier asked for and what each option does (no LLM numbers)."""
     snap = cr.po_snapshot
     lines = [f"Permintaan revisi #{cr.id} — {cr.po_number} ({snap['supplier_name']}), total saat ini {A.rupiah(snap['total_amount'])}"]
     if cr.proposed_changes:
         lines.append("Perubahan diminta:")
-        lines += [f"- {c['sku']} {c['name']}: {FIELD_LABEL[c['field']]} {_value(c['field'], c['old'])} → "
-                  f"{_value(c['field'], c['new'])}" for c in cr.proposed_changes]
+        lines += [f"- {A.describe_change(c)}" for c in cr.proposed_changes]
     if cr.invalid_changes:
         lines.append("Tidak dapat diproses otomatis: " + "; ".join(
             f"{c.get('material_ref')} {c.get('field')}={c.get('new_value')} ({c.get('error')})" for c in cr.invalid_changes))
@@ -64,6 +54,13 @@ def change_request_details(cr: POChangeRequest) -> str:
                 f"{max(i['lead_time_days'] for i in g['items'])} hari)" for g in o["purchase_orders"])
         lines.append(f"{n}. {o['label']} — {detail}")
     return "\n".join(lines)
+
+
+def confirm_pending(cr_id: int, choice: str) -> bool:
+    """A `crc:` (Ya) button is valid only while that exact free-text choice still waits for confirmation."""
+    with SessionLocal() as db:
+        cr = db.get(POChangeRequest, cr_id)
+        return cr is not None and cr.status == CRS.AWAITING_MANAGER_CONFIRM and cr.pending_choice == choice
 
 
 def build_manager_graph(svc):
@@ -102,8 +99,12 @@ def build_manager_graph(svc):
                 if cr is not None and cr.status == CRS.AWAITING_MANAGER_CONFIRM:
                     cr.status, cr.pending_choice = CRS.PENDING_MANAGER, None
                     db.commit()
+            svc.close_manager_buttons(cr_id)                   # tombol Ya/Tidak lama tidak berlaku lagi
             return {"sends": [svc.manager_send(f"Baik, belum ada perubahan untuk permintaan revisi #{cr_id}.")],
                     "execute": False, "result": {"cancelled": cr_id}}
+        if kind == "crc" and len(parts) == 3 and not confirm_pending(cr_id, parts[2]):
+            return {"sends": [svc.manager_send(f"Konfirmasi ini sudah tidak berlaku untuk permintaan revisi #{cr_id}.")],
+                    "execute": False, "result": {"handled": True, "stale_confirmation": cr_id}}
         if kind in ("cr", "crc") and len(parts) == 3:
             return {"change_request_id": cr_id, "choice": parts[2], "execute": True, "sends": []}
         return {"sends": [], "execute": False, "result": {"handled": False, "reason": "bad button"}}
@@ -148,6 +149,10 @@ def build_manager_graph(svc):
                     raise AppError(404, f"Permintaan revisi #{cr_id} tidak ditemukan")
                 actor = state.get("actor") or cfg.get("manager_actor", "Manager via Telegram")
                 result = A.apply_change_request(db, cr, choice, actor)
+                if not state.get("actor"):                     # dari Telegram: catat seperti keputusan Hub
+                    from app.hub.common import audit
+                    audit(db, actor, "choose", "change_request", cr_id, choice=choice, po_number=cr.po_number,
+                          source="telegram")
                 notices = [svc.withdrawal_send(db, n["supplier_id"], n["snapshot"], n["conversation_id"])
                            for n in result.pop("notices")]
         except AppError as e:
@@ -159,11 +164,13 @@ def build_manager_graph(svc):
                     if conv is not None and conv.status == ConversationStatus.REVISION_REQUESTED:
                         A.close_conversation(conv, ConversationStatus.ESCALATED, reason=e.detail)
                 db.commit()
+            svc.close_manager_buttons(cr_id)
             return {"sends": [svc.manager_send(f"Tidak dapat menjalankan pilihan untuk permintaan #{cr_id}: {e.detail}")],
                     "result": {"handled": True, "error": e.detail}}
+        svc.close_manager_buttons(cr_id)
         if choice == "approve_change":
-            text = (f"Revisi {result['po_number']} disetujui; total baru {A.rupiah(result['total_after'])}. "
-                    "Supplier diminta mengonfirmasi PO revisi.")
+            text = (f"Revisi {result['po_number']} disetujui (versi {result['revision']['version']}); total baru "
+                    f"{A.rupiah(result['total_after'])}. Supplier menerima daftar perubahan untuk dikonfirmasi.")
         elif choice == "abort":
             text = f"{result['po_number']} dibatalkan dan dihapus; supplier telah diberi tahu."
         else:

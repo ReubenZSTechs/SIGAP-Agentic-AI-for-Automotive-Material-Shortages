@@ -32,10 +32,38 @@ def draft_po(client, seeded, sku: str, supplier_code: str, qty: float) -> dict:
     return r.json()
 
 
-def supplier_service(script: dict, **cfg) -> tuple[SupplierChatService, F.FakeLLM]:
+class RecordingTransport(SandboxTransport):
+    """Sandbox transport that returns message ids (like Telegram) and records sends, documents and edits."""
+
+    def __init__(self):
+        self.sent, self.documents, self.edited, self._next = [], [], [], 100
+
+    def _id(self) -> int:
+        self._next += 1
+        return self._next
+
+    def send(self, chat_id, text, buttons=None):
+        self.sent.append((chat_id, text, buttons))
+        return self._id()
+
+    def send_document(self, chat_id, filename, content, caption=None):
+        self.documents.append((chat_id, filename, content, caption))
+        return self._id()
+
+    def edit_buttons(self, chat_id, message_id, buttons):
+        self.edited.append((chat_id, message_id, buttons))
+
+
+def supplier_service(script: dict, transport=None, **cfg) -> tuple[SupplierChatService, F.FakeLLM]:
     agents, fake, registry = F.fake_agents(script)
-    return SupplierChatService(agents, {**registry.supplier_chat, **cfg}, SandboxTransport(),
+    return SupplierChatService(agents, {**registry.supplier_chat, **cfg}, transport or SandboxTransport(),
                                SANDBOX_MANAGER_CHAT_ID), fake
+
+
+def revisions(po_id: int) -> list:
+    from app.models import PORevision
+    with SessionLocal() as db:
+        return list(db.scalars(select(PORevision).where(PORevision.po_id == po_id).order_by(PORevision.version)))
 
 
 def link(svc: SupplierChatService, seeded, supplier_code: str) -> int:

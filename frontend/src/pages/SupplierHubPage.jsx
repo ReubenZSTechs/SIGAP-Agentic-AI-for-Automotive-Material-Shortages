@@ -14,6 +14,7 @@ import { toast } from '../store/toastStore';
 const SECTIONS = [
   { id: '', label: 'Persetujuan', count: (s) => s.pending },
   { id: 'conversations', label: 'Percakapan', count: (s) => s.counts.threads },
+  { id: 'manager', label: 'Chat Manajer', count: (s) => s.counts.manager },
   { id: 'missions', label: 'Misi', count: (s) => s.counts.missions },
   { id: 'documents', label: 'Dokumen', count: (s) => s.counts.documents },
   { id: 'settings', label: 'Pengaturan' },

@@ -5,12 +5,13 @@ Semua tabel baru (tanpa mengubah tabel lama) agar `create_all` cukup tanpa migra
 """
 from datetime import date, datetime
 
-from sqlalchemy import JSON, BigInteger, Date, DateTime, Enum, ForeignKey, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import (JSON, BigInteger, Date, DateTime, Enum, ForeignKey, LargeBinary, String, Text,
+                        UniqueConstraint, func)
+from sqlalchemy.orm import Mapped, deferred, mapped_column, relationship
 
 from app.database import Base
 from app.models.enums import (ChangeRequestStatus, ConversationPurpose, ConversationStatus,
-                              MessageDirection, SupplierConfirmationStatus)
+                              MessageDirection, PORevisionStatus, SupplierConfirmationStatus)
 
 
 def _enum(e):
@@ -116,3 +117,27 @@ class POChangeRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     supplier: Mapped["Supplier"] = relationship()
+
+
+class PORevision(Base):
+    """Versi PO yang dibahas dengan supplier: v1 = yang pertama dikirim, v2+ = revisi yang disetujui manajer.
+
+    Versi yang dikonfirmasi supplier menjadi FINAL dan menyimpan PDF yang dikirim ke supplier.
+    """
+    __tablename__ = "po_revisions"
+    __table_args__ = (UniqueConstraint("po_id", "version", name="uq_po_revisions_po_version"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    po_id: Mapped[int | None] = mapped_column(ForeignKey("purchase_orders.id", ondelete="SET NULL"),
+                                              index=True, default=None)
+    po_number: Mapped[str] = mapped_column(String(24), index=True)
+    version: Mapped[int] = mapped_column(default=1)
+    snapshot: Mapped[dict] = mapped_column(JSON)
+    changes: Mapped[list] = mapped_column(JSON, default=list)          # [{sku, name, field, old, new}] vs versi sebelumnya
+    change_request_id: Mapped[int | None] = mapped_column(default=None)
+    status: Mapped[PORevisionStatus] = mapped_column(_enum(PORevisionStatus), default=PORevisionStatus.CURRENT)
+    created_by: Mapped[str | None] = mapped_column(String(80), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    pdf: Mapped[bytes | None] = deferred(mapped_column(LargeBinary, default=None))
+    pdf_message_id: Mapped[int | None] = mapped_column(default=None)

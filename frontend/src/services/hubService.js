@@ -18,6 +18,11 @@ export const hubService = {
     ? api.post(`/hub/approvals/${id}/choose`, { approver: body.approver, choice: body.choice })
     : api.post(`/hub/approvals/${id}/${ENDPOINT[mode]}`, body)),
 
+  // chat manajer (cermin chat Telegram manajer; tombol & balasan tersinkron dua arah)
+  managerMessages: () => api.get('/hub/manager/messages'),
+  managerSend: (text, approver) => api.post('/hub/manager/messages', { text, approver }, { timeout: 120000 }),
+  managerPress: (data, approver) => api.post('/hub/manager/buttons', { data, approver }, { timeout: 120000 }),
+
   // percakapan (id thread = id supplier)
   listThreads: () => api.get('/hub/threads'),
   getThread: (id) => api.get(`/hub/threads/${id}`),
@@ -40,6 +45,7 @@ export const hubService = {
   closeMission: (id, approver) => api.post(`/hub/missions/${id}/close`, who(approver)),
   cancelMission: (id, approver) => api.post(`/hub/missions/${id}/cancel`, who(approver)),
   poContext: (poId) => api.get(`/hub/po/${poId}/context`),
+  startSupplierConversation: (poId, purpose, approver) => api.post(`/hub/po/${poId}/supplier-conversation`, { purpose, approver }, { timeout: 120000 }),
 
   // dokumen
   listDocuments: () => api.get('/hub/documents'),

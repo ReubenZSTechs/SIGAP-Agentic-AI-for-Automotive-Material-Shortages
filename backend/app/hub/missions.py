@@ -12,6 +12,7 @@ from datetime import timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.chatbot.tracing import trace_scope
 from app.core.exceptions import AppError
 from app.database import SessionLocal
 from app.models import (HubMission, HubMissionTarget, HubOutbox, HubProposal, Material, MaterialSupplier,
@@ -301,12 +302,12 @@ def _item_values(m: HubMission) -> dict:
 
 
 def compose(m: HubMission, sup: Supplier, template: str | None = None) -> str:
-    """Isi template + blok data deterministik (daftar item tanpa harga, atau ringkasan PO untuk supplier PO)."""
+    """Isi template + blok data deterministik (daftar item tanpa harga, atau nomor PO untuk supplier PO)."""
     values = {"waktu": C.greeting(), "kontak": C.contact_name(sup), "supplier": sup.name, "perusahaan": C.COMPANY,
               "tenggat": deadline_text(m.deadline), "po": (m.po_snapshot or {}).get("po_number", ""), **_item_values(m)}
     text = C.fill(template or m.message_template, values)
-    if m.scenario in PO_SUPPLIER_ONLY and m.po_snapshot:
-        return f"{text}\n\n{A.po_summary_text(m.po_snapshot)}"
+    if m.scenario in PO_SUPPLIER_ONLY and m.po_snapshot:              # rincian PO sudah dikirim sekali; cukup nomornya
+        return f"{text}\n\nRef: {m.po_snapshot['po_number']}"
     if m.scenario in (SC.PRICE_QUOTE, SC.STOCK_CHECK) and (len(m.items) > 1 or m.po_snapshot):
         lines = [f"{n}. {it['sku']} {it['name']} — {A.fmt_qty(it['qty'])} {it['uom']}"
                  + (f" · dibutuhkan {it['needed_by']}" if it.get("needed_by") else "")
@@ -342,6 +343,11 @@ def _busy_with_other_mission(db: Session, t: HubMissionTarget) -> bool:
 # -------------------------------------------- tick --------------------------------------------
 def tick(svc) -> dict:
     """Satu putaran dispatcher Hub (worker / POST /hub/dispatch / setelah misi dibuat)."""
+    with trace_scope("hub_mission"):
+        return _tick(svc)
+
+
+def _tick(svc) -> dict:
     sends, notices, counts = [], [], {"sent": 0, "drafted": 0, "paused": 0, "reminded": 0, "no_reply": 0, "summarized": 0}
     with SessionLocal() as db:
         paused = C.is_paused(db)
@@ -490,6 +496,11 @@ def waiting_target(db: Session, supplier_id: int) -> HubMissionTarget | None:
 
 def route_reply(svc, supplier_id: int, chat_id: int, text: str, message_id: int) -> dict | None:
     """Balasan supplier tanpa percakapan PO aktif -> misi yang sedang menunggu jawabannya (bila ada)."""
+    with trace_scope("hub_mission", supplier_id=supplier_id):
+        return _route_reply(svc, supplier_id, chat_id, text, message_id)
+
+
+def _route_reply(svc, supplier_id: int, chat_id: int, text: str, message_id: int) -> dict | None:
     if "mission_reply_agent" not in svc.agents:
         return None
     with SessionLocal() as db:

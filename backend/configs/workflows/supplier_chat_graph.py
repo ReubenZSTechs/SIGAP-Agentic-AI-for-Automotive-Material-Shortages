@@ -14,6 +14,8 @@ from app.models.enums import AutomationStatus, ConversationPurpose, Conversation
 from configs.tools import po_actions as A
 
 CS, P = ConversationStatus, ConversationPurpose
+FINAL_CAPTION = ("{po} final telah dikonfirmasi. Terlampir PDF PO final untuk pemeriksaan Anda; "
+                 "balas di chat ini bila ada yang tidak sesuai.")
 FULFILLABLE = (POStatus.ISSUED, POStatus.PARTIALLY_RECEIVED)
 
 
@@ -62,7 +64,7 @@ def build_supplier_reply_graph(svc):
         """Deterministic mapping of the agent's decision to DB tools (see docs/SUPPLIER_TELEGRAM.md)."""
         ctx, a = state["context"], state["analysis"]
         purpose, decision, reply = ctx["purpose"], a["decision"], a["reply_text"]
-        escalation, cr_id, result = None, None, {"decision": decision}
+        escalation, cr_id, result, final_rev = None, None, {"decision": decision}, None
         with A.write_session() as db:
             conv = db.get(SupplierConversation, ctx["conversation_id"])
             po = db.get(PurchaseOrder, conv.po_id) if conv.po_id else None
@@ -73,8 +75,11 @@ def build_supplier_reply_graph(svc):
             elif purpose in (P.CONFIRM_ORDER.value, P.REVISION_CONFIRM.value):
                 if decision == "confirmed":
                     A.record_supplier_confirmation(db, conv, a.get("promised_delivery_date"), a.get("supplier_reference"))
+                    rev = A.finalize_po_revision(db, po)              # tanpa perubahan lagi -> versi FINAL + PDF
+                    final_rev = {"id": rev.id, "version": rev.version}
+                    result["final_revision"] = final_rev
                     A.note_action(db, conv.automation_action_id, AutomationStatus.EXECUTED,
-                                  supplier_outcome=f"{po.po_number} dikonfirmasi supplier")
+                                  supplier_outcome=f"{po.po_number} dikonfirmasi supplier (versi final {rev.version})")
                 elif decision == "declined":
                     A.record_supplier_decline(db, conv, a["reason"])
                     A.note_action(db, conv.automation_action_id, supplier_outcome=f"{po.po_number} ditolak supplier")
@@ -112,6 +117,11 @@ def build_supplier_reply_graph(svc):
             result["conversation_status"] = conv.status.value
         sends = [{"chat_id": ctx["chat_id"], "text": reply, "direction": MessageDirection.OUT,
                   "conversation_id": ctx["conversation_id"], "supplier_id": ctx["supplier_id"], "agent_output": a}]
+        if final_rev is not None:
+            sends.append({"chat_id": ctx["chat_id"], "direction": MessageDirection.OUT,
+                          "text": FINAL_CAPTION.format(po=ctx["po"]["po_number"]),
+                          "conversation_id": ctx["conversation_id"], "supplier_id": ctx["supplier_id"],
+                          "document": {"revision_id": final_rev["id"]}})
         return {"sends": sends, "escalation": escalation, "change_request_id": cr_id, "result": result}
 
     def escalate(state: SupplierTurn) -> SupplierTurn:

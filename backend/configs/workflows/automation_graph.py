@@ -138,8 +138,25 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
             return {"automation_draft": None, "draft": _text_draft(_t(state["language"], "cancelled")),
                     "automation_step": "done"}
         request = {k: out[k] for k in ("operation", "po_reference", "items", "supplier_query", "needed_by_date", "notes")}
+        if out["is_new_request"]:
+            rounds = 0                                         # permintaan baru: hitungan klarifikasi mulai lagi
+        else:
+            request = _drop_stale_supplier(request, pending.get("request"))
         return {"automation_draft": {"request": request, "rounds": rounds, "last_clarification": None},
                 "automation_step": "resolve"}
+
+    def _drop_stale_supplier(request: dict, previous: dict | None) -> dict:
+        """Safety net if the parser merged a new request into the old draft: a supplier carried over from
+        a draft about other materials does not apply (the user can still name one again)."""
+        old_sup = (previous or {}).get("supplier_query")
+        if not old_sup or request.get("supplier_query") != old_sup or not request.get("items") \
+                or not previous.get("items"):
+            return request
+        with SessionLocal() as db:
+            now_ids, then_ids = A.material_ids(db, request["items"]), A.material_ids(db, previous["items"])
+        if now_ids and then_ids and not now_ids & then_ids:
+            return {**request, "supplier_query": None}
+        return request
 
     def auto_resolve(state):
         emit("auto_resolve", state["language"])

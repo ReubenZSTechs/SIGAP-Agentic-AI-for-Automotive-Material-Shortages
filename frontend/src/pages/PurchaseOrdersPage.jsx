@@ -6,6 +6,7 @@ import Button from '../components/common/Button';
 import Icon from '../components/common/Icon';
 import PoTable from '../features/procurement/PoTable';
 import useFetch from '../hooks/useFetch';
+import usePolling from '../hooks/usePolling';
 import { purchaseOrderService } from '../services/purchaseOrderService';
 import { PO_SOURCE, PO_STATUS } from '../utils/constants';
 
@@ -47,8 +48,9 @@ export default function PurchaseOrdersPage() {
   const navigate = useNavigate();
   const [status, setStatus] = useState('');
   const [source, setSource] = useState('');
-  const { data, loading, error } = useFetch(
+  const { data, loading, error, reload } = useFetch(
     () => purchaseOrderService.list({ status: status || undefined, source: source || undefined }), [status, source]);
+  usePolling(reload, 30000); // total/status bisa berubah lewat agent Telegram
   const activeCount = (status ? 1 : 0) + (source ? 1 : 0);
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);

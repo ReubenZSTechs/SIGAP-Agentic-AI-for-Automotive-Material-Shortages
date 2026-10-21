@@ -92,6 +92,12 @@ class SupplierConfirmationStatus(str, enum.Enum):
     REVISION_PENDING = "REVISION_PENDING"
 
 
+class PORevisionStatus(str, enum.Enum):
+    CURRENT = "CURRENT"          # versi yang sedang dibahas dengan supplier
+    SUPERSEDED = "SUPERSEDED"    # digantikan revisi yang disetujui manajer
+    FINAL = "FINAL"              # dikonfirmasi supplier tanpa perubahan lagi (PDF final dikirim)
+
+
 class ChangeRequestStatus(str, enum.Enum):
     PENDING_MANAGER = "PENDING_MANAGER"
     AWAITING_MANAGER_CONFIRM = "AWAITING_MANAGER_CONFIRM"   # pilihan teks bebas menunggu tombol konfirmasi

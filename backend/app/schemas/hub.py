@@ -88,3 +88,11 @@ class TemplateIn(BaseModel):
     name: str = Field(min_length=3, max_length=80)
     scenario: str = Field(min_length=3, max_length=24)
     body: str = Field(min_length=10, max_length=2000)
+
+
+class ManagerButtonIn(ActorIn):
+    data: str = Field(min_length=3, max_length=64)
+
+
+class SupplierConversationIn(ActorIn):
+    purpose: Literal["CONFIRM_ORDER", "CANCEL_ORDER"]

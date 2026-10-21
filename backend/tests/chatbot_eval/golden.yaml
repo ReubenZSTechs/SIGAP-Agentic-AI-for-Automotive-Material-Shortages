@@ -27,4 +27,4 @@
 - question: Halo, kamu bisa bantu apa saja?
   expect_intent: smalltalk
 - question: Tolong buatkan PO untuk Ban Luar Karet sebanyak 100
-  expect_intent: write_request
+  expect_intent: po_automation

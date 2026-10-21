@@ -29,9 +29,17 @@ class Transport(Protocol):
     def ack_button(self, callback_id: str, text: str | None = None) -> None:
         ...
 
+    def edit_buttons(self, chat_id: int, message_id: int, buttons: list[dict] | None) -> None:
+        """Replaces (None = removes) the inline keyboard of a message sent earlier."""
+        ...
+
+    def send_document(self, chat_id: int, filename: str, content: bytes, caption: str | None = None) -> int | None:
+        """Sends a file (e.g. the final PO PDF); returns the provider message id."""
+        ...
+
 
 class SandboxTransport:
-    """No network: the `supplier_messages` table is the inbox; replies are injected via the API/Streamlit."""
+    """No network: the `supplier_messages` table is the inbox; replies are injected from the Hub (or the API)."""
     name = "sandbox"
 
     def send(self, chat_id, text, buttons=None):
@@ -44,6 +52,12 @@ class SandboxTransport:
         return None
 
     def download(self, file_id):
+        return None
+
+    def edit_buttons(self, chat_id, message_id, buttons):
+        return None
+
+    def send_document(self, chat_id, filename, content, caption=None):
         return None
 
 
@@ -67,13 +81,27 @@ class TelegramTransport:
             raise TelegramError(f"{method}: {data.get('description', resp.status_code)}")
         return data["result"]
 
+    @staticmethod
+    def _markup(buttons):
+        if not buttons:
+            return None
+        return {"inline_keyboard": [[{"text": b["label"][:64], "callback_data": b["data"][:64]}] for b in buttons]}
+
     def send(self, chat_id, text, buttons=None):
-        markup = None
-        if buttons:
-            markup = {"inline_keyboard": [[{"text": b["label"][:64], "callback_data": b["data"][:64]}]
-                                          for b in buttons]}
-        result = self._call("sendMessage", chat_id=chat_id, text=text[:4096], reply_markup=markup)
+        result = self._call("sendMessage", chat_id=chat_id, text=text[:4096], reply_markup=self._markup(buttons))
         return result["message_id"]
+
+    def edit_buttons(self, chat_id, message_id, buttons):
+        self._call("editMessageReplyMarkup", chat_id=chat_id, message_id=message_id,
+                   reply_markup=self._markup(buttons) or {"inline_keyboard": []})
+
+    def send_document(self, chat_id, filename, content, caption=None):
+        resp = self._http.post("sendDocument", data={"chat_id": str(chat_id), **({"caption": caption[:1024]} if caption else {})},
+                               files={"document": (filename, content, "application/pdf")})
+        data = resp.json()
+        if not data.get("ok"):
+            raise TelegramError(f"sendDocument: {data.get('description', resp.status_code)}")
+        return data["result"]["message_id"]
 
     def poll(self, offset, timeout):
         updates = self._call("getUpdates", offset=offset, timeout=timeout,

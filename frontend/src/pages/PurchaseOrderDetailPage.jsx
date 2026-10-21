@@ -9,14 +9,17 @@ import PoItemsTable from '../features/procurement/PoItemsTable';
 import GoodsReceiptForm from '../features/procurement/GoodsReceiptForm';
 import ReceiptResultTable from '../features/procurement/ReceiptResultTable';
 import PoMovementHistory from '../features/procurement/PoMovementHistory';
+import PoRevisionHistory from '../features/procurement/PoRevisionHistory';
 import PoHubPanel from '../features/supplierHub/PoHubPanel';
 import useFetch from '../hooks/useFetch';
+import usePolling from '../hooks/usePolling';
 import { purchaseOrderService } from '../services/purchaseOrderService';
 
 export default function PurchaseOrderDetailPage() {
   const { id } = useParams();
   const { data: po, loading, error, reload } = useFetch(() => purchaseOrderService.get(id), [id]);
   const [result, setResult] = useState(null); // respons POST …/receipts
+  usePolling(reload, 15000, !!po); // revisi supplier / pembatalan via Telegram mengubah PO tanpa aksi di halaman ini
 
   if (loading && !po) return <Spinner />;
   if (error) {
@@ -47,7 +50,8 @@ export default function PurchaseOrderDetailPage() {
         {['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'].includes(po.status) && (
           <p className="text-sm text-slate-500">Penerimaan barang tersedia setelah PO diterbitkan.</p>
         )}
-        <PoHubPanel po={po} />
+        <PoRevisionHistory po={po} />
+        <PoHubPanel po={po} onChanged={reload} />
       </div>
     </>
   );

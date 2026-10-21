@@ -9,6 +9,7 @@ import logging
 import time
 
 from app.chatbot.service import ChatUnavailable
+from app.chatbot.tracing import purge_old
 from app.config import settings
 from app.hub import hooks as hub_hooks
 from app.supplier_chat.service import get_supplier_chat_service
@@ -16,6 +17,7 @@ from app.supplier_chat.service import get_supplier_chat_service
 log = logging.getLogger("supplier_chat.worker")
 
 TIMEOUT_EVERY_S = 60
+PURGE_EVERY_S = 24 * 3600                       # retensi agent_runs (AGENT_TRACE_RETENTION_DAYS)
 
 
 def run_forever() -> None:
@@ -29,7 +31,7 @@ def run_forever() -> None:
     cfg = svc.cfg
     live = settings.telegram_live
     log.info("supplier worker started (mode=%s, manager chat=%s)", svc.transport.name, svc.manager_chat_id)
-    offset, last_tick, backoff = None, 0.0, 1
+    offset, last_tick, last_purge, backoff = None, 0.0, 0.0, 1
     while True:
         try:
             if live:
@@ -46,6 +48,9 @@ def run_forever() -> None:
             if time.monotonic() - last_tick > TIMEOUT_EVERY_S:
                 svc.tick_timeouts()
                 last_tick = time.monotonic()
+            if time.monotonic() - last_purge > PURGE_EVERY_S:
+                log.info("purged %s old agent runs", purge_old())
+                last_purge = time.monotonic()
             backoff = 1
         except Exception:  # noqa: BLE001
             log.exception("worker loop error; retrying in %ss", backoff)

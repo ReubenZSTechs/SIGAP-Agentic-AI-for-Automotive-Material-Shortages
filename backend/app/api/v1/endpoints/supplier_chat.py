@@ -1,4 +1,4 @@
-"""Supplier Telegram agent API (backend only; used by the Streamlit test harness and ops tools)."""
+"""Supplier Telegram agent API (backend/ops level; the frontend uses the Hub API `/hub`, which builds on this)."""
 from typing import Literal
 
 from fastapi import APIRouter, Depends
@@ -14,7 +14,7 @@ from app.core.exceptions import AppError
 from app.database import SessionLocal
 from app.models import (POChangeRequest, POSupplierConfirmation, PurchaseOrder, Supplier, SupplierConversation,
                         SupplierMessage, SupplierTelegramLink)
-from app.models.enums import ConversationPurpose, ConversationStatus, MessageDirection, POStatus
+from app.models.enums import ConversationStatus, MessageDirection
 from app.supplier_chat.service import (SupplierChatService, deep_link, ensure_link, get_supplier_chat_service,
                                        manager_chat_id)
 from app.supplier_chat.transport import sandbox_chat_id
@@ -112,17 +112,7 @@ def start_conversation(body: StartConversation, svc: SupplierChatService = Depen
         po = db.get(PurchaseOrder, body.po_id)
         if po is None:
             raise AppError(404, "Purchase Order tidak ditemukan")
-        if po.status != POStatus.ISSUED:
-            raise AppError(409, f"Hanya PO ISSUED yang dapat dikonfirmasi/dibatalkan via supplier (status {po.status.value})")
-        busy = db.scalar(select(SupplierConversation.id).where(SupplierConversation.po_id == po.id,
-                                                               SupplierConversation.status.in_(A.OPEN_CONVERSATION)))
-        if body.purpose == "CONFIRM_ORDER":
-            if busy:
-                raise AppError(409, f"Percakapan untuk {po.po_number} masih berjalan (#{busy})")
-            conv = A.queue_conversation(db, po, ConversationPurpose.CONFIRM_ORDER)
-        else:
-            conv = A.request_po_cancellation(db, {"po": A.po_snapshot(po)}, None)
-        cid = conv.id
+        cid = A.start_supplier_conversation(db, po, body.purpose).id
     svc.dispatch_queued()
     with SessionLocal() as db:
         return _conv(db.get(SupplierConversation, cid))

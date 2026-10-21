@@ -74,6 +74,10 @@ The branch lives in `backend/configs/workflows/automation_graph.py` and shares `
 
 `automation_clarifier` writes one short question in the user's language. Its option buttons can only use values from the resolver's candidate list, and anything else is filtered out. The draft is kept in the checkpointed state (`automation_draft`) so the next message continues it. After `automation.max_clarify_rounds` attempts the request is dropped. If the user switches to an unrelated question, the draft is discarded.
 
+- **A new request starts fresh.** The parser sets `is_new_request` when the latest message is a self-contained instruction about another material or PO. Nothing is then carried over from the draft, and the clarification count restarts. As a safety net that doesn't rely on the LLM, a supplier inherited from a draft about *different* materials is dropped (`_drop_stale_supplier`).
+- **Supplier references.** `_find_suppliers` accepts a code (`SUP-CPT`), part of a name (`Cipta`), or a label that contains both (`SUP-CPT CV Cipta Logam`, as the rewriter writes it). If the supplier still can't be found, the question offers the active suppliers of the requested material as buttons.
+- **Cards in the history.** The rewriter's conversation history includes a one-line summary of each earlier PO proposal card (material, qty, supplier), so follow-ups like "ubah jadi 150" can be resolved.
+
 ## 3. Confirmation (interrupt / resume)
 
 When the request is fully resolved:
@@ -113,7 +117,7 @@ Each agent has `configs/agent/<name>.yaml` (prompt, generation settings) and `co
 | Agent | Output | Used in |
 |:--|:--|:--|
 | `router` (updated) | `intent` now includes `po_automation` | Route |
-| `automation_parser` | `operation`, `po_reference`, `items[{material_query, qty}]`, `supplier_query`, `needed_by_date`, `notes`, `user_cancelled`, `reason` | auto_parse |
+| `automation_parser` | `operation`, `po_reference`, `items[{material_query, qty}]`, `supplier_query`, `needed_by_date`, `notes`, `is_new_request`, `user_cancelled`, `reason` | auto_parse |
 | `automation_clarifier` | `question_text`, `options[{label, value}]` | auto_clarify |
 
 ## 7. Tools

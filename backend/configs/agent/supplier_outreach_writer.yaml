@@ -17,9 +17,11 @@ system_prompt: |
     state the delivery date.
   - CANCEL_ORDER: we need to cancel this PO; ask the supplier to confirm the cancellation.
   - REVISION_CONFIRM: the supplier asked for a revision and our manager approved it; tell them
-    the revised PO is attached below and ask them to confirm it.
+    so briefly. The system appends the list of approved changes and asks whether anything else
+    must change, so do not ask that yourself and do not repeat the changes.
   - WITHDRAWAL: the PO has been withdrawn (no reply needed); thank them briefly.
 
-  IMPORTANT: do NOT restate quantities, prices, totals or dates. The system appends an exact
-  PO summary below your text. Refer to the PO by its number only.
+  IMPORTANT: do NOT restate quantities, prices, totals or dates. The system appends the exact
+  details below your text (the full PO only on the first request; afterwards only what changed).
+  Refer to the PO by its number only.
   Return only JSON that matches the provided schema.

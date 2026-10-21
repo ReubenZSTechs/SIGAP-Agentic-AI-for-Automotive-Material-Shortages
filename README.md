@@ -33,7 +33,6 @@ docker compose up --build
 | Backend | <http://localhost:8000/docs> | otomatis di-seed (`--demo-schedules`) saat start pertama |
 | Postgres | `localhost:5433` (user/pass `mrp`) | DB `mrp` (aplikasi) & `mrp_test` (pytest); role `mrp_chat_ro` hanya SELECT |
 | Supplier worker | — | agent Telegram supplier (`python -m app.supplier_chat.worker`): dispatch percakapan, long polling, pengingat |
-| Telegram Lab | <http://localhost:8501> | opsional, `docker compose --profile lab up`: uji agent Telegram (Streamlit) |
 
 - `DATABASE_URL` di `backend/.env` **ditimpa** ke Postgres lokal; hanya kredensial `AICORE_*` yang dipakai dari file itu. Tanpa `AICORE_*`, aplikasi tetap jalan dan chatbot mengembalikan 503.
 - Tes backend di dalam container: `docker compose exec backend pytest -q`.
@@ -42,7 +41,9 @@ docker compose up --build
 ## Otomasi PO & Agent Telegram Supplier
 
 - **Otomasi PO** ([`docs/AUTOMATION.md`](docs/AUTOMATION.md)): dari chat Dashboard, mis. *"Buat PO 50 Ban Luar Karet"* atau *"Hapus PO 12"*. Agent mengklarifikasi sampai permintaan cocok dengan database, menampilkan **kartu konfirmasi**, lalu menjalankan CRUD PO lewat tool (`configs/tools/po_actions.py`) dan menghubungi supplier.
-- **Agent Telegram supplier** ([`docs/SUPPLIER_TELEGRAM.md`](docs/SUPPLIER_TELEGRAM.md)): loop latar belakang yang meminta konfirmasi/pembatalan PO ke supplier sampai jelas, lalu memperbarui database. Bila supplier minta **revisi**, manajer menerima opsi via Telegram: batalkan PO, setujui perubahan, atau pesan ke supplier lain. Uji tanpa bot sungguhan dengan `TELEGRAM_MODE=sandbox` + Streamlit **Telegram Lab** (`streamlit run backend/streamlit_app/telegram_lab.py`).
+- **Agent Telegram supplier** ([`docs/SUPPLIER_TELEGRAM.md`](docs/SUPPLIER_TELEGRAM.md)): loop latar belakang yang meminta konfirmasi/pembatalan PO ke supplier sampai jelas, lalu memperbarui database. Rincian PO dikirim **sekali**; tiap revisi yang disetujui hanya mengirim daftar perubahannya, dan setelah supplier mengonfirmasi tanpa perubahan lagi, versi itu disimpan sebagai **FINAL** (`po_revisions`) dan PDF PO final dikirim ke supplier. Bila supplier minta **revisi**, manajer memilih opsi (batalkan PO, setujui perubahan, atau pesan ke supplier lain) di Telegram **atau** di Hub Supplier (*Persetujuan* / *Chat Manajer*); keduanya tersinkron. Semua pesan bot ↔ supplier dan bot ↔ manajer tampil di **Hub Supplier**; uji tanpa bot sungguhan dengan `TELEGRAM_MODE=sandbox` langsung dari Hub.
+
+- **Agent Hub (pelacakan LLM)** ([`docs/AGENT_TRACKING.md`](docs/AGENT_TRACKING.md)): setiap panggilan agent LLM (prompt, input, output, percobaan ulang, latensi, token) dicatat di `agent_runs` dan bisa ditelusuri per trace di Streamlit: `docker compose --profile tools up --build agent-hub` → <http://localhost:8501>.
 
 ## Chatbot MRP (Dashboard)
 

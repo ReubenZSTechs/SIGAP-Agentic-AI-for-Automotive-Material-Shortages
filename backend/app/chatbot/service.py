@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
+from app.chatbot import tracing
 from app.chatbot.config_loader import load_registry
 from app.chatbot.llm import build_agents, build_sap_clients
 from app.config import settings
@@ -47,6 +48,7 @@ class ChatService:
         `message` while a card is pending first marks that proposal as superseded.
         """
         config = self._config(thread_id)
+        trace = tracing.new_trace("chat", thread_id=thread_id)     # semua agent dalam giliran ini satu trace
         try:
             pending = self.pending_action(thread_id)
             if resume is not None:
@@ -59,7 +61,12 @@ class ChatService:
                 if pending:
                     self.graph.invoke(Command(resume={"decision": "superseded", "action_id": pending}), config)
                 graph_input = new_turn(message, thread_id)
-            for event in self.graph.stream(graph_input, config, stream_mode="custom"):
+            events = iter(self.graph.stream(graph_input, config, stream_mode="custom"))
+            while True:                                           # trace aktif per langkah, tidak melewati yield
+                with tracing.activate(trace):
+                    event = next(events, None)
+                if event is None:
+                    break
                 yield event
             final = self.graph.get_state(config).values.get("final")
             yield {"type": "final", **final}

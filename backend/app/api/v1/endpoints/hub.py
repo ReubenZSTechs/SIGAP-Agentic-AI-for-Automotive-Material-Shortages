@@ -12,14 +12,15 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.config import settings
 from app.core.exceptions import AppError
-from app.hub import approvals, common as C, documents, missions, threads
-from app.models import (HubAuditLog, HubDocument, HubMessageTemplate, HubMission, Supplier, SupplierMessage,
-                        SupplierTelegramLink)
+from app.database import SessionLocal
+from app.hub import approvals, common as C, documents, manager, missions, threads
+from app.models import (HubAuditLog, HubDocument, HubMessageTemplate, HubMission, POChangeRequest, PurchaseOrder, Supplier,
+                        SupplierConversation, SupplierMessage, SupplierTelegramLink)
 from app.models.enums import MessageDirection
 from app.models.hub import DocumentStatus, MissionStatus
 from app.schemas.hub import (ActorIn, ApproveIn, ArchiveIn, ChooseIn, DecideIn, DocumentPatchIn, EscalateIn,
-                             MessageIn, MissionIn, OutboxSendIn, RemindIn, SandboxAttachmentIn, SandboxReplyIn,
-                             TemplateIn)
+                             ManagerButtonIn, MessageIn, MissionIn, OutboxSendIn, RemindIn, SandboxAttachmentIn,
+                             SandboxReplyIn, SupplierConversationIn, TemplateIn)
 from app.supplier_chat.service import SupplierChatService, deep_link, ensure_link
 from app.supplier_chat.transport import sandbox_chat_id
 from configs.tools import po_actions as A
@@ -57,6 +58,7 @@ def status(db: Session = Depends(get_db)):
             "threads": sum(1 for t in thread_rows if t["unread"] or t["drafts"] or t["failed"]),
             "missions": db.query(HubMission).filter(HubMission.status == MissionStatus.ACTIVE).count(),
             "documents": db.query(HubDocument).filter(HubDocument.status == DocumentStatus.NEEDS_REVIEW).count(),
+            "manager": db.query(POChangeRequest).filter(POChangeRequest.status.in_(approvals.CR_PENDING)).count(),
         },
     }
     db.commit()
@@ -126,6 +128,28 @@ def choose(approval_id: str, body: ChooseIn, service: SupplierChatService = Depe
     if kind != "cr":
         raise AppError(422, "Pilihan opsi hanya untuk revisi PO")
     result = approvals.choose_change_request(service, num, body.choice, body.approver)
+    return jsonable_encoder({k: v for k, v in result.items() if k != "sends"})
+
+
+# ------------------------------------------- manager chat -------------------------------------------
+@router.get("/manager/messages")
+def manager_messages(db: Session = Depends(get_db)):
+    return jsonable_encoder(manager.manager_thread(db))
+
+
+@router.post("/manager/messages")
+def manager_message(body: MessageIn, service: SupplierChatService = Depends(svc)):
+    """Balasan teks manajer dari Hub (dicerminkan ke chat Telegram manajer)."""
+    result = manager.send_text(service, body.text, body.approver)
+    return jsonable_encoder({k: v for k, v in result.items() if k != "sends"})
+
+
+@router.post("/manager/buttons")
+def manager_button(body: ManagerButtonIn, service: SupplierChatService = Depends(svc)):
+    """Tombol opsi dari Chat Manajer: sama dengan menekan tombol di Telegram."""
+    result = manager.press_button(service, body.data, body.approver)
+    if result.get("error"):
+        raise AppError(409, result["error"])
     return jsonable_encoder({k: v for k, v in result.items() if k != "sends"})
 
 
@@ -245,6 +269,22 @@ def cancel(mission_id: int, body: ActorIn, db: Session = Depends(get_db)):
 @router.get("/po/{po_id}/context")
 def po_context(po_id: int, db: Session = Depends(get_db)):
     return jsonable_encoder(missions.po_context(db, po_id))
+
+
+@router.post("/po/{po_id}/supplier-conversation", status_code=201)
+def start_supplier_conversation(po_id: int, body: SupplierConversationIn, service: SupplierChatService = Depends(svc)):
+    """Kirim PO ISSUED ke supplier (konfirmasi) atau minta persetujuan pembatalan, dari halaman detail PO."""
+    with A.write_session() as db:
+        po = db.get(PurchaseOrder, po_id)
+        if po is None:
+            raise AppError(404, "Purchase Order tidak ditemukan")
+        conv = A.start_supplier_conversation(db, po, body.purpose)
+        C.audit(db, body.approver, "start_conversation", "po", po_id, purpose=body.purpose)
+        cid = conv.id
+    service.dispatch_queued()
+    with SessionLocal() as db:
+        conv = db.get(SupplierConversation, cid)
+        return {"id": conv.id, "status": conv.status.value, "purpose": conv.purpose.value}
 
 
 # --------------------------------------------- documents ---------------------------------------------

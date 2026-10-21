@@ -12,11 +12,14 @@ from datetime import date, timedelta
 
 from sqlalchemy import select
 
+from app.chatbot.tracing import trace_scope
 from app.config import settings
 from app.database import SessionLocal
-from app.models import (POChangeRequest, PurchaseOrder, Supplier, SupplierConversation, SupplierMessage,
+from app.models import (POChangeRequest, PORevision, PurchaseOrder, Supplier, SupplierConversation, SupplierMessage,
                         SupplierTelegramLink)
-from app.models.enums import ChangeRequestStatus, ConversationPurpose, ConversationStatus, MessageDirection, POStatus
+from app.models.enums import (ChangeRequestStatus, ConversationPurpose, ConversationStatus, MessageDirection,
+                              PORevisionStatus, POStatus)
+from app.supplier_chat.po_pdf import pdf_file_name, render_po_pdf
 from app.supplier_chat.transport import SANDBOX_MANAGER_CHAT_ID, Transport, build_transport, sandbox_chat_id
 from configs.tools import po_actions as A
 
@@ -29,9 +32,10 @@ COMPANY = "SIGAP"
 FALLBACK_OPENING = {
     "CONFIRM_ORDER": "Halo {supplier}, kami telah menerbitkan {po}. Mohon konfirmasi kesanggupan dan tanggal pengirimannya.",
     "CANCEL_ORDER": "Halo {supplier}, kami perlu membatalkan {po}. Mohon konfirmasi bahwa pembatalan ini dapat diterima.",
-    "REVISION_CONFIRM": "Halo {supplier}, revisi {po} sesuai permintaan Anda telah disetujui. Mohon konfirmasi PO revisi berikut.",
+    "REVISION_CONFIRM": "Halo {supplier}, revisi {po} sesuai permintaan Anda telah disetujui.",
     "WITHDRAWAL": "Halo {supplier}, {po} kami tarik kembali dan tidak perlu diproses. Terima kasih atas kerja samanya.",
 }
+REVISION_ASK = "Masih ada perubahan lain? Bila tidak, mohon balas konfirmasi; PO final (PDF) akan kami kirim setelahnya."
 
 
 class SupplierChatService:
@@ -49,19 +53,36 @@ class SupplierChatService:
 
     # ------------------------------------------ messaging ------------------------------------------
     def send(self, db, chat_id: int | None, text: str, *, direction: MessageDirection, conversation_id=None,
-             supplier_id=None, buttons=None, agent_output=None) -> SupplierMessage:
-        """Sends through the transport and logs the message (delivery errors are logged, not raised)."""
+             supplier_id=None, buttons=None, agent_output=None, document=None) -> SupplierMessage:
+        """Sends through the transport and logs the message (delivery errors are logged, not raised).
+
+        `document={"revision_id": n}` sends the PDF of that PO version, with `text` as its caption.
+        """
+        rev = db.get(PORevision, document["revision_id"]) if document else None
+        if rev is not None:
+            if rev.pdf is None:
+                rev.pdf = render_po_pdf(rev.snapshot, rev.version, final=rev.status == PORevisionStatus.FINAL,
+                                        finalized_at=rev.finalized_at)
+            agent_output = {**(agent_output or {}), "source": "po_pdf", "revision_id": rev.id, "po_id": rev.po_id,
+                            "file_name": pdf_file_name(rev.po_number, rev.version)}
         msg = SupplierMessage(conversation_id=conversation_id, supplier_id=supplier_id, chat_id=chat_id,
                               direction=direction, text=text, buttons=buttons, agent_output=agent_output)
         if chat_id is None:
             msg.error = "chat belum terhubung / TELEGRAM_MANAGER_CHAT_ID kosong"
         else:
             try:
-                msg.telegram_message_id = self.transport.send(chat_id, text, buttons)
+                if rev is not None:
+                    msg.telegram_message_id = self.transport.send_document(
+                        chat_id, pdf_file_name(rev.po_number, rev.version), rev.pdf, text)
+                else:
+                    msg.telegram_message_id = self.transport.send(chat_id, text, buttons)
             except Exception as e:  # noqa: BLE001
                 log.exception("send to chat %s failed", chat_id)
                 msg.error = f"{type(e).__name__}: {e}"[:300]
         db.add(msg)
+        if rev is not None:
+            db.flush()
+            rev.pdf_message_id = msg.id
         return msg
 
     def deliver(self, sends: list[dict]) -> None:
@@ -78,6 +99,42 @@ class SupplierChatService:
         """A send dict addressed to the manager."""
         return {"chat_id": self.manager_chat_id, "text": text, "direction": MD.MANAGER_OUT, "buttons": buttons,
                 "agent_output": agent_output, "conversation_id": conversation_id}
+
+    def mirror_to_manager(self, text: str) -> int | None:
+        """Shows an action taken in the Hub in the manager's Telegram chat (not logged again: the caller
+        already logged it as MANAGER_IN, so the Hub's Chat Manajer does not show it twice)."""
+        if self.manager_chat_id is None:
+            return None
+        try:
+            return self.transport.send(self.manager_chat_id, text)
+        except Exception:  # noqa: BLE001  (sinkronisasi tidak boleh menggagalkan keputusan)
+            log.exception("mirror to manager chat failed")
+            return None
+
+    def close_manager_buttons(self, cr_id: int) -> int:
+        """Removes, from the manager's Telegram messages, the option buttons of a change request that was
+        decided (in Telegram, the Hub card or Chat Manajer), expired or failed. Buttons of other change
+        requests that are still pending stay. Returns the number of messages edited."""
+        mine = (f"cr:{cr_id}:", f"crc:{cr_id}:", f"crx:{cr_id}")
+        edited = 0
+        with SessionLocal() as db:
+            pending = set(db.scalars(select(POChangeRequest.id).where(POChangeRequest.status.in_(
+                (ChangeRequestStatus.PENDING_MANAGER, ChangeRequestStatus.AWAITING_MANAGER_CONFIRM)))))
+            rows = db.scalars(select(SupplierMessage).where(SupplierMessage.direction == MD.MANAGER_OUT,
+                                                            SupplierMessage.telegram_message_id.isnot(None))
+                              .order_by(SupplierMessage.id.desc()).limit(200))
+            for m in rows:
+                buttons = m.buttons or []
+                if not any(str(b.get("data", "")).startswith(mine) for b in buttons):
+                    continue
+                keep = [b for b in buttons if not str(b.get("data", "")).startswith(mine)
+                        and button_cr_id(b.get("data")) in pending]
+                try:
+                    self.transport.edit_buttons(m.chat_id, m.telegram_message_id, keep or None)
+                    edited += 1
+                except Exception as e:  # noqa: BLE001  (pesan lama / sudah diedit: tidak kritis)
+                    log.warning("edit buttons of message %s failed: %s", m.id, e)
+        return edited
 
     def usable_chat_id(self, link: SupplierTelegramLink | None) -> int | None:
         """The link's chat id, ignoring simulated sandbox chats when running on real Telegram."""
@@ -146,7 +203,7 @@ class SupplierChatService:
                                                                      SupplierMessage.direction == MD.OUT)))
                 if chat_id is None or any(m.error is None for m in outs):
                     continue
-                text, out = self.compose_supplier_message(conv.purpose.value, conv.po_snapshot)
+                text, out = self.opening(db, conv)
                 self.send(db, chat_id, text, direction=MD.OUT, conversation_id=conv.id, supplier_id=supplier_id,
                           agent_output=out)
                 conv.last_activity_at = A.now()
@@ -155,8 +212,15 @@ class SupplierChatService:
         return resent
 
     # ------------------------------------------- outreach -------------------------------------------
-    def compose_supplier_message(self, purpose: str, snapshot: dict) -> tuple[str, dict | None]:
-        """LLM-written greeting/ask + the exact, deterministic PO summary."""
+    def compose_supplier_message(self, purpose: str, snapshot: dict, *, detail: str | None = None,
+                                 with_summary: bool | None = None) -> tuple[str, dict | None]:
+        """LLM-written greeting/ask + exact details written by code.
+
+        The full PO summary goes out once, with the first request for a PO (`with_summary` defaults to
+        CONFIRM_ORDER only). A revision carries only `detail` (what changed); a withdrawal only the PO number.
+        """
+        if with_summary is None:
+            with_summary = purpose == ConversationPurpose.CONFIRM_ORDER.value
         try:
             out = self.run_agent("supplier_outreach_writer", {"purpose": purpose, "supplier_name": snapshot["supplier_name"],
                                                               "po_number": snapshot["po_number"], "po": snapshot})
@@ -164,10 +228,30 @@ class SupplierChatService:
         except Exception:  # noqa: BLE001  (pesan tetap terkirim dengan template)
             log.exception("supplier_outreach_writer failed; using template")
             out, body = None, FALLBACK_OPENING[purpose].format(supplier=snapshot["supplier_name"], po=snapshot["po_number"])
-        return f"{body}\n\n{A.po_summary_text(snapshot)}", out
+        tail = A.po_summary_text(snapshot) if with_summary else detail
+        return (f"{body}\n\n{tail}" if tail else body), out
+
+    def opening(self, db, conv: SupplierConversation) -> tuple[str, dict | None]:
+        """First message of a conversation: full PO (confirm), only the changes (revision), or a
+        cancellation request that repeats the PO only if the supplier never received it."""
+        purpose = conv.purpose.value
+        if conv.purpose == ConversationPurpose.REVISION_CONFIRM:
+            cr = db.get(POChangeRequest, conv.change_request_id) if conv.change_request_id else None
+            diff = A.revision_diff_text(cr.proposed_changes, cr.po_snapshot["total_amount"],
+                                        conv.po_snapshot["total_amount"]) if cr else None
+            return self.compose_supplier_message(purpose, conv.po_snapshot,
+                                                 detail="\n\n".join(t for t in (diff, REVISION_ASK) if t))
+        if conv.purpose == ConversationPurpose.CANCEL_ORDER:
+            sent_before = conv.po_id is not None and bool(A.revisions(db, conv.po_id))
+            return self.compose_supplier_message(purpose, conv.po_snapshot, with_summary=not sent_before)
+        return self.compose_supplier_message(purpose, conv.po_snapshot)
 
     def dispatch_queued(self) -> list[int]:
         """Starts queued conversations, at most one active conversation per supplier."""
+        with trace_scope("supplier_outreach"):
+            return self._dispatch_queued()
+
+    def _dispatch_queued(self) -> list[int]:
         if not self._dispatch_lock.acquire(blocking=False):
             return []
         started = []
@@ -215,7 +299,9 @@ class SupplierChatService:
                 A.close_conversation(conv, CS.CLOSED, reason="po_deleted_before_dispatch")
                 db.commit()
                 return None
-            text, out = self.compose_supplier_message(conv.purpose.value, conv.po_snapshot)
+            text, out = self.opening(db, conv)
+            if po is not None and conv.purpose == ConversationPurpose.CONFIRM_ORDER:
+                A.record_initial_revision(db, po, conv.po_snapshot)      # v1 = PO yang dikirim ke supplier
             conv.status, conv.started_at, conv.last_activity_at = CS.AWAITING_SUPPLIER, A.now(), A.now()
             chat_id, supplier_id = link.chat_id, conv.supplier_id
             db.commit()
@@ -223,7 +309,7 @@ class SupplierChatService:
                  "supplier_id": supplier_id, "agent_output": out}]
 
     def withdrawal_send(self, db, supplier_id: int, snapshot: dict, conversation_id: int | None) -> dict:
-        text, out = self.compose_supplier_message("WITHDRAWAL", snapshot)
+        text, out = self.compose_supplier_message("WITHDRAWAL", snapshot, with_summary=False)
         return {"chat_id": self.supplier_chat_id(db, supplier_id), "text": text, "direction": MD.OUT,
                 "conversation_id": conversation_id, "supplier_id": supplier_id, "agent_output": out}
 
@@ -263,15 +349,44 @@ class SupplierChatService:
         return {"handled": False}
 
     def handle_button(self, chat_id: int, data: str) -> dict:
+        with trace_scope("manager", button=data):
+            return self._handle_button(chat_id, data)
+
+    def _handle_button(self, chat_id: int, data: str) -> dict:
         if chat_id != self.manager_chat_id:
             return {"handled": False, "reason": "buttons are manager-only"}
         with SessionLocal() as db:
-            db.add(SupplierMessage(chat_id=chat_id, direction=MD.MANAGER_IN, text=f"[tombol] {data}"))
+            db.add(SupplierMessage(chat_id=chat_id, direction=MD.MANAGER_IN, text=f"[tombol] {data}",
+                                   agent_output={"source": "telegram", "button": data}))
             db.commit()
         return self.manager_graph.invoke({"kind": "button", "data": data}) or {}
 
+    def handle_manager_text(self, text: str, message_id: int | None = None, author: str | None = None) -> dict:
+        """Free-text manager reply, from Telegram or (with `author`) from the Hub's Chat Manajer.
+
+        Both go through the same `manager_graph` text path; a Hub reply is also shown in Telegram so
+        the two stay in sync.
+        """
+        with trace_scope("manager", author=author):
+            return self._handle_manager_text(text, message_id, author)
+
+    def _handle_manager_text(self, text: str, message_id: int | None, author: str | None) -> dict:
+        mirrored = self.mirror_to_manager(f"💬 {author} via Hub: {text}") if author else None
+        with SessionLocal() as db:
+            db.add(SupplierMessage(chat_id=self.manager_chat_id, direction=MD.MANAGER_IN, text=text,
+                                   telegram_message_id=message_id if author is None else mirrored,
+                                   agent_output={"source": "hub", "author": author} if author else {"source": "telegram"}))
+            db.commit()
+        return self.manager_graph.invoke({"kind": "text", "text": text}) or {}
+
     def handle_inbound(self, chat_id: int, text: str, message_id: int | None = None,
                        attachments: list[dict] | None = None) -> dict:
+        manager = self.manager_chat_id is not None and chat_id == self.manager_chat_id
+        with trace_scope("manager" if manager else "supplier", chat_id=None if manager else chat_id):
+            return self._handle_inbound(chat_id, text, message_id, attachments)
+
+    def _handle_inbound(self, chat_id: int, text: str, message_id: int | None = None,
+                        attachments: list[dict] | None = None) -> dict:
         text = (text or "").strip()
         if attachments and chat_id != self.manager_chat_id:      # foto/PDF supplier -> Agent Hub (dokumen)
             from app.hub import hooks as hub_hooks
@@ -287,11 +402,7 @@ class SupplierChatService:
                     "sebagai supplier. Buka tautan supplier dari akun Telegram lain, atau pakai grup Telegram "
                     "sebagai chat manajer.")])
                 return {"handled": True, "linked": False, "reason": "manager_chat"}
-            with SessionLocal() as db:
-                db.add(SupplierMessage(chat_id=chat_id, direction=MD.MANAGER_IN, text=text,
-                                       telegram_message_id=message_id))
-                db.commit()
-            return self.manager_graph.invoke({"kind": "text", "text": text}) or {}
+            return self.handle_manager_text(text, message_id)
         if text.startswith("/start"):
             return self._link_from_start(chat_id, text)
         with SessionLocal() as db:
@@ -310,6 +421,10 @@ class SupplierChatService:
             db.commit()
             supplier_id, msg_id = link.supplier_id, msg.id
             conv_id, conv_status, po_number = (conv.id, conv.status, conv.po_number) if conv else (None, None, None)
+        with trace_scope("supplier", supplier_id=supplier_id, conversation_id=conv_id):
+            return self._route_supplier_message(chat_id, text, supplier_id, msg_id, conv_id, conv_status, po_number)
+
+    def _route_supplier_message(self, chat_id, text, supplier_id, msg_id, conv_id, conv_status, po_number) -> dict:
         from app.hub import hooks as hub_hooks
         if hub_hooks.is_human_mode(supplier_id):                # admin mengambil alih di Agent Hub: tidak dibalas agent
             return {"handled": True, "human_mode": True, "conversation_id": conv_id}
@@ -361,11 +476,15 @@ class SupplierChatService:
     # ------------------------------------------- timeouts -------------------------------------------
     def tick_timeouts(self) -> dict:
         """Reminders, no-response escalation, and expiry of change requests the manager ignored."""
+        with trace_scope("supplier_outreach"):
+            return self._tick_timeouts()
+
+    def _tick_timeouts(self) -> dict:
         now = A.now()
         remind_at = now - timedelta(hours=self.cfg.get("reminder_after_hours", 24))
         escalate_at = now - timedelta(hours=self.cfg.get("escalate_after_hours", 72))
         expire_at = now - timedelta(hours=self.cfg.get("change_request_ttl_hours", 48))
-        sends, escalations, counts = [], [], {"reminded": 0, "escalated": 0, "expired": 0}
+        sends, escalations, expired, counts = [], [], [], {"reminded": 0, "escalated": 0, "expired": 0}
         with SessionLocal() as db:
             for conv in db.scalars(select(SupplierConversation).where(SupplierConversation.status == CS.AWAITING_SUPPLIER)):
                 last = conv.last_activity_at or conv.started_at or conv.created_at
@@ -377,14 +496,15 @@ class SupplierChatService:
                     conv.reminded_at = now
                     sends.append({"chat_id": self.supplier_chat_id(db, conv.supplier_id), "direction": MD.OUT,
                                   "conversation_id": conv.id, "supplier_id": conv.supplier_id,
-                                  "text": f"Pengingat: mohon tanggapan Anda untuk {conv.po_number}.\n\n"
-                                          f"{A.po_summary_text(conv.po_snapshot)}"})
+                                  "text": f"Pengingat: mohon tanggapan Anda untuk {conv.po_number} "
+                                          "(rincian ada di pesan kami sebelumnya)."})
                     counts["reminded"] += 1
             for cr in db.scalars(select(POChangeRequest).where(
                     POChangeRequest.status.in_((ChangeRequestStatus.PENDING_MANAGER,
                                                 ChangeRequestStatus.AWAITING_MANAGER_CONFIRM)),
                     POChangeRequest.created_at < expire_at)):
                 cr.status = ChangeRequestStatus.EXPIRED
+                expired.append(cr.id)
                 conv = db.get(SupplierConversation, cr.conversation_id) if cr.conversation_id else None
                 if conv is not None and conv.status == CS.REVISION_REQUESTED:
                     A.close_conversation(conv, CS.ESCALATED, reason="change_request_expired")
@@ -393,6 +513,8 @@ class SupplierChatService:
                 counts["expired"] += 1
             db.commit()
         self.deliver(sends)
+        for cr_id in expired:
+            self.close_manager_buttons(cr_id)
         for situation, snap, supplier_id, cid in escalations:
             self.deliver([self.escalation_send(situation, snap, supplier_id, self.messages(cid), cid)])
         return counts
@@ -403,6 +525,14 @@ class SupplierChatService:
             rows = db.scalars(select(SupplierMessage).where(SupplierMessage.conversation_id == conversation_id)
                               .order_by(SupplierMessage.id.desc()).limit(limit))
             return [{"direction": m.direction.value, "text": m.text} for m in rows][::-1]
+
+
+def button_cr_id(data) -> int | None:
+    """Change request id of a manager button (`cr:<id>:<choice>`, `crc:<id>:<choice>`, `crx:<id>`)."""
+    parts = str(data or "").split(":")
+    if len(parts) >= 2 and parts[0] in ("cr", "crc", "crx") and parts[1].isdigit():
+        return int(parts[1])
+    return None
 
 
 def ensure_link(db, supplier_id: int) -> SupplierTelegramLink:

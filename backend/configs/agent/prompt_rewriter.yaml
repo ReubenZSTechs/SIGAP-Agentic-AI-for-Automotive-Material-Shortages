@@ -23,6 +23,9 @@ system_prompt: |
   - Preserve the user's intent exactly. Do not add or remove information. Do not answer the query.
   - Keep SKUs, codes, supplier names, material names and numbers exactly as written
     (e.g. RM-PDL-01, "Ban Luar Karet", "CV Makmur Bersama").
+  - When resolving a reference to a supplier or material from earlier turns, name it the way the
+    history does, code first (e.g. "supplier SUP-CPT (CV Cipta Logam)", "RM-SBR-01 Rangka Besi Dudukan Jok").
+    Lines like "[Kartu usulan PO …]" in the history describe PO proposal cards shown earlier.
   - Translate Indonesian MRP terms: stok fisik = on-hand stock, stok terkunci = allocated stock,
     stok tersedia = available stock, batas aman = safety stock, PO = purchase order,
     jadwal produksi = production schedule.

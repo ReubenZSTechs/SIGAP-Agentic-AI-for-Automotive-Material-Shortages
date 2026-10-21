@@ -6,10 +6,10 @@ A background agent talks to suppliers on **Telegram** about purchase orders. It 
 |:--|:--|:--|
 | A PO was issued (e.g. by [PO automation](AUTOMATION.md)) | asks the supplier to **confirm** the order and its delivery date | confirmed → PO confirmation `CONFIRMED` (with promised date / supplier reference) |
 | A user asked to delete an ISSUED PO | asks the supplier to agree to the **cancellation** | agreed → PO **deleted** and stock reverted; refused → **manager notified** |
-| The supplier asks to **revise** a PO (qty, price, delivery date), during a chat or in a new chat later | sends the manager the options **abort / approve change / re-source** | manager approves → PO updated and sent back for supplier confirmation; re-source → new PO to another supplier |
+| The supplier asks to **revise** a PO (qty, price, delivery date), during a chat or in a new chat later | sends the manager the options **abort / approve change / re-source** (Telegram buttons **and** the Hub) | manager approves → PO updated, a new PO version is saved, and the supplier gets **only the changes** to confirm; re-source → new PO to another supplier |
 | No response, unclear answers, a refusal | sends reminders, then escalates to the manager with the full context | — |
 
-There is no frontend for this yet. It is tested with the **Telegram Lab** Streamlit app (section 9).
+Everything the bot sends to suppliers and to the manager is mirrored in the frontend **Hub Supplier** (`/supplier-hub`): supplier threads under *Percakapan*, the manager chat under *Chat Manajer*, and revision decisions under *Persetujuan*. A decision taken in Telegram shows up in the Hub, and a decision taken in the Hub removes the stale buttons in Telegram (section 9).
 
 ---
 
@@ -23,7 +23,7 @@ There is no frontend for this yet. It is tested with the **Telegram Lab** Stream
 6. [Decision mapping](#6-decision-mapping)
 7. [Agents](#agents)
 8. [Data model](#8-data-model)
-9. [Telegram Lab (Streamlit)](#9-telegram-lab-streamlit)
+9. [Frontend (Hub Supplier) and sync](#9-frontend-hub-supplier-and-sync)
 10. [API](#10-api)
 11. [Running the worker](#11-running-the-worker)
 12. [Configuration](#12-configuration)
@@ -39,10 +39,12 @@ There is no frontend for this yet. It is tested with the **Telegram Lab** Stream
 flowchart LR
     subgraph Triggers
       DA[Dashboard PO automation]
-      ST[Streamlit / API]
+      PO[PO page: Terbitkan → ISSUED]
+      HUB[Hub Supplier]
     end
     DA -- "queue CONFIRM / CANCEL" --> Q[(supplier_conversations<br/>QUEUED)]
-    ST -- "queue" --> Q
+    PO -- "queue CONFIRM" --> Q
+    HUB -- "send / cancel, decisions, manager replies" --> S
     W[Worker<br/>app.supplier_chat.worker] -- "dispatch_queued()" --> Q
     W -- "getUpdates long poll" --> TG[(Telegram Bot API)]
     TG -- "supplier / manager messages, button presses" --> W
@@ -66,7 +68,7 @@ flowchart LR
 
 | `TELEGRAM_MODE` | Delivery | Inbound | Use for |
 |:--|:--|:--|:--|
-| `sandbox` (default) | stored in `supplier_messages` only | `POST /supplier-chat/sandbox/inbound` and `/sandbox/manager` (Telegram Lab) | local testing without a bot token |
+| `sandbox` (default) | stored in `supplier_messages` only | Hub: *Simulasi supplier* box in a thread, and *Chat Manajer* (buttons + replies); or `POST /supplier-chat/sandbox/*` | local testing without a bot token |
 | `telegram` | Bot API `sendMessage` (inline keyboards for manager options) | worker long-polls `getUpdates` (messages + `callback_query`) | real suppliers |
 
 Both use exactly the same service and workflows. Only `transport.py` differs (`SandboxTransport` / `TelegramTransport`).
@@ -104,7 +106,17 @@ Purposes: `CONFIRM_ORDER`, `CANCEL_ORDER`, `REVISION_CONFIRM` (an approved revis
 
 **One active conversation per supplier.** A supplier with several POs gets them one after another, so a reply like "ok siap" always refers to exactly one PO. When a conversation closes, the next queued one starts.
 
-Opening messages are written by `supplier_outreach_writer` (greeting + request). The **exact PO details are appended by code** (`po_actions.po_summary_text`), so the AI never states quantities or prices.
+Opening messages are written by `supplier_outreach_writer` (greeting + request). Exact figures are always **appended by code**, so the AI never states quantities or prices. The PO is sent **once**:
+
+| Message | Appended by code |
+|:--|:--|
+| CONFIRM_ORDER opening (first send of a PO) | full PO summary (`po_summary_text`) |
+| REVISION_CONFIRM opening | only the approved changes (`revision_diff_text`) + "anything else? otherwise confirm" |
+| CANCEL_ORDER opening | PO number; the full summary only if the PO never reached the supplier |
+| Reminders, withdrawal notices, Hub missions about a PO | PO number only |
+| Final confirmation | the **PDF of the final PO version** (`sendDocument`) |
+
+**Every PO that becomes ISSUED is sent automatically**: from the Dashboard card (automation), from the PO page (*Terbitkan*, `PATCH /purchase-orders/{id}/status`), or as a re-source replacement. `po_actions.ensure_confirm_conversation` never queues a second open conversation for the same PO. The PO detail page can also resend it (*Kirim ke supplier*, e.g. after an escalation) or ask for a cancellation (*Minta pembatalan*).
 
 ## 5. Revision flow
 
@@ -121,10 +133,11 @@ sequenceDiagram
     A->>M: briefing + exact diff + buttons [Batalkan PO] [Setujui perubahan] [Pesan ke supplier lain]
     alt Approve change
         M->>A: button cr:<id>:approve_change
-        A->>DB: apply_supplier_revision (qty/price/date, totals, stale runs)
-        A-->>S: revised PO, "mohon konfirmasi" (REVISION_CONFIRM)
-        S->>A: "Oke, konfirmasi"
-        A->>DB: confirmation CONFIRMED
+        A->>DB: apply_supplier_revision (qty/price/date, totals, stale runs) + po_revisions v(n+1)
+        A-->>S: only the changes, "ada perubahan lain?" (REVISION_CONFIRM)
+        S->>A: "Oke, tidak ada perubahan lagi"
+        A->>DB: confirmation CONFIRMED, current version → FINAL
+        A-->>S: PDF of the final PO
     else Abort
         M->>A: button cr:<id>:abort
         A->>DB: delete_po (stock reverted)
@@ -143,13 +156,25 @@ sequenceDiagram
 | Option | Offered when | Effect |
 |:--|:--|:--|
 | `abort` | always | hard delete (see [AUTOMATION.md §5](AUTOMATION.md#5-stock--planning-effects-of-a-delete)) + withdrawal notice |
-| `approve_change` | every requested change maps to a line of this PO and is valid (qty > 0, price ≥ 0, date ≥ PO date); PO still ISSUED with no receipts; revision rounds < `max_revision_rounds` | PO lines updated (new totals shown up front), supplier asked to re-confirm |
+| `approve_change` | every requested change maps to a line of this PO and is valid (qty > 0, price ≥ 0, date ≥ PO date); PO still ISSUED with no receipts; revision rounds < `max_revision_rounds` | PO lines updated (new totals shown up front), new PO version saved, supplier gets the list of changes to confirm |
 | `resource` | `find_alternative_suppliers()` finds another active supplier for **every** line (same `pick_supplier` policy as PO automation) | new ISSUED PO(s) per alternative supplier (`decided_by = "Manager via Telegram"`), original deleted, old supplier notified, new supplier asked to confirm |
 
 - **New chats are picked up.** If a supplier writes while no conversation is open (e.g. a revision after confirming), `supplier_inbound_triage` matches the message to one of their open POs and opens a conversation for it, which then runs the same flow. If the PO is unclear, the agent asks which PO number.
 - **Free-text manager replies** (e.g. "setujui saja") go through `manager_decision_agent`. They never run directly: the agent asks for one confirmation button first (`crc:<id>:<choice>` / `crx:<id>`).
 - **Stale decisions are refused.** Before writing, the PO is compared with the snapshot taken when the change request was created. If goods were received or the PO changed meanwhile, the request becomes `FAILED`, the manager is told why, and the supplier is unblocked.
 - A change request the manager ignores expires after `change_request_ttl_hours`.
+- **The PO changes only when the manager approves.** Until then the PO and the frontend show the original values. If any requested change is invalid (e.g. a line that is not on the PO), `approve_change` is not offered; the manager can abort or re-source, or talk to the supplier.
+- While a change request waits for the manager, further supplier messages get a "being reviewed" reply. They are still logged and visible in the thread.
+
+### PO versions (`po_revisions`)
+
+| Version | Written when | Status |
+|:--|:--|:--|
+| v1 | the first CONFIRM_ORDER is dispatched (exactly what the supplier received) | `CURRENT`, later `SUPERSEDED` |
+| v2, v3, … | the manager approves a revision (`changes` = the diff, `change_request_id`) | `CURRENT`, later `SUPERSEDED` |
+| the latest | the supplier confirms without further changes | `FINAL` + stored PDF (`pdf`, `pdf_message_id`) |
+
+The PO row always holds the latest values; `po_revisions` keeps the history and the final agreed version. The PO detail page shows it under *Riwayat versi PO*, with a PDF per version.
 
 ## 6. Decision mapping
 
@@ -157,7 +182,7 @@ sequenceDiagram
 
 | Purpose | `confirmed` | `declined` | `change_requested` | `question` / `unclear` |
 |:--|:--|:--|:--|:--|
-| CONFIRM_ORDER / REVISION_CONFIRM | `record_supplier_confirmation` → CONFIRMED | `record_supplier_decline` → DECLINED + manager notice | `open_change_request` → manager options (if nothing concrete: ask for specifics) | reply, keep waiting; escalate after `max_turns` |
+| CONFIRM_ORDER / REVISION_CONFIRM | `record_supplier_confirmation` → CONFIRMED, `finalize_po_revision` → FINAL, final PDF sent | `record_supplier_decline` → DECLINED + manager notice | `open_change_request` → manager options (if nothing concrete: ask for specifics) | reply, keep waiting; escalate after `max_turns` |
 | CANCEL_ORDER | re-check PO (ISSUED, no receipts) → `delete_po` → CANCEL_CONFIRMED | restore previous confirmation → DECLINED + manager asked to call the supplier | treated as refusal | reply, keep waiting; escalate after `max_turns` |
 
 If the PO is gone or no longer ISSUED/PARTIALLY_RECEIVED when a reply arrives, the conversation closes and the manager is notified (`po_changed`).
@@ -187,25 +212,34 @@ All new tables. `create_all` creates them, and no existing table is altered.
 | `supplier_messages` | every message in/out (supplier & manager), buttons, agent JSON output, delivery errors. In sandbox mode this is the inbox. |
 | `po_supplier_confirmations` | per PO: `PENDING`, `CONFIRMED`, `DECLINED`, `CANCEL_PENDING`, `REVISION_PENDING` + promised date, reference, `revision_round` |
 | `po_change_requests` | validated changes, invalid changes, options, manager choice, result |
+| `po_revisions` | PO versions discussed with the supplier (v1 sent, v2+ approved revisions, FINAL confirmed) with the final PDF |
 
-## 9. Telegram Lab (Streamlit)
+## 9. Frontend (Hub Supplier) and sync
 
-```bash
-pip install -r backend/requirements-streamlit.txt
-SIGAP_API_URL=http://localhost:8000/api/v1 streamlit run backend/streamlit_app/telegram_lab.py
-# or, with Docker:  docker compose --profile lab up   → http://localhost:8501
-```
+The Streamlit Telegram Lab was removed; everything runs from the React frontend.
 
-1. **Tautan supplier**: in sandbox mode, link suppliers with one click. In telegram mode, the page shows each supplier's deep link.
-2. **Percakapan**: pick an ISSUED PO, start *Minta konfirmasi* / *Minta pembatalan*, and watch the transcript (with each agent's JSON output and the PO / confirmation status). In sandbox mode you type the supplier's replies. A free-text box sends a "new chat" message from a supplier with no open conversation.
-3. **Kotak masuk manajer**: pending change requests with their diff and options, the manager chat with clickable option buttons (sandbox), and a free-text reply box.
+| Need | Where |
+|:--|:--|
+| Link suppliers (sandbox one click, or deep link + QR) | Hub → *Pengaturan* → *Koneksi Telegram* |
+| Send an ISSUED PO / ask for a cancellation | automatic on ISSUED; PO detail → *Kirim ke supplier* / *Minta pembatalan* |
+| Bot ↔ supplier messages (incl. the final PDF), take over, sandbox supplier replies | Hub → *Percakapan* → supplier thread |
+| Bot ↔ manager messages, option buttons, free-text replies | Hub → *Chat Manajer* |
+| Revision options with diff, evidence and impact | Hub → *Persetujuan* |
+| PO versions and the final PDF | PO detail → *Riwayat versi PO* |
+
+**Two-way sync of manager decisions.** Option buttons always run the same `manager_graph` path, whether pressed in Telegram, on a Hub approval card, or in *Chat Manajer*:
+
+- Telegram → Hub: the change request status changes, and the decision is written to the Hub audit log (`decided_by` = `Manager via Telegram`). The Hub pages poll (approvals 15 s, Chat Manajer 5 s, PO detail 15 s).
+- Hub → Telegram: the manager's Telegram chat gets "Diputuskan via Hub oleh …", and `close_manager_buttons` removes the option buttons of that change request from the earlier Telegram messages (`editMessageReplyMarkup`). This also happens after a failed or expired request.
+- Free-text replies typed in *Chat Manajer* are mirrored to Telegram ("💬 … via Hub") and then interpreted by `manager_decision_agent`, exactly like a Telegram reply (always followed by a confirm button).
 
 A typical sandbox session:
 
-1. Dashboard: *"Buat PO 50 Ban Luar Karet"* → confirm the card. The PO becomes ISSUED and a conversation is queued.
-2. Lab → link *SUP-KRT* → the opening message appears.
-3. Reply *"Maaf, kami hanya sanggup 40 buah"* → the manager inbox shows three options.
-4. Press **Pesan ke supplier lain** → a new PO to *CV Rubber Indonesia* is issued and the original is deleted. Link *SUP-RBR* to see its confirmation request.
+1. Hub → *Pengaturan* → *Koneksi Telegram* → link *SUP-KRT*.
+2. Dashboard: *"Buat PO 50 Ban Luar Karet"* → confirm the card. The PO becomes ISSUED, and its thread shows the opening with the full PO summary.
+3. In the thread's *Simulasi supplier* box: *"Maaf, kami hanya sanggup 40 buah"*. *Chat Manajer* shows the briefing and three buttons.
+4. Press **Setujui perubahan**. The PO detail shows qty 40 and version 2, and the supplier receives only the change.
+5. Reply *"Oke, tidak ada perubahan lagi"*. Version 2 becomes FINAL, and the thread shows the PDF sent to the supplier.
 
 ## 10. API
 
@@ -224,6 +258,17 @@ Prefix `/api/v1/supplier-chat`:
 | `GET /manager-inbox` | manager messages |
 | `GET /change-requests`, `GET /change-requests/{id}` | change requests with options and results |
 | `POST /dispatch` | one worker iteration (dispatch + timeouts) without polling |
+
+Used by the frontend (`/api/v1`):
+
+| Method & path | Purpose |
+|:--|:--|
+| `GET /hub/manager/messages` | manager chat with button states (`active` / `chosen` / `closed`) |
+| `POST /hub/manager/messages` `{text, approver}` | free-text manager reply from the Hub (mirrored to Telegram) |
+| `POST /hub/manager/buttons` `{data, approver}` | press an option button (`cr:` / `crc:` / `crx:`) from the Hub |
+| `POST /hub/po/{po_id}/supplier-conversation` `{purpose, approver}` | send an ISSUED PO to the supplier, or ask for a cancellation |
+| `GET /purchase-orders/{id}/revisions` | PO versions with diffs and status |
+| `GET /purchase-orders/{id}/revisions/{rev_id}/pdf` | PDF of a version (the stored final PDF for FINAL) |
 
 Endpoints that run agents return **503** when `AICORE_*` is not configured.
 
@@ -298,6 +343,9 @@ Scripted fake LLMs, real test Postgres, sandbox transport:
   - free-text manager reply with a confirm button
   - PO changed meanwhile → FAILED
   - supplier buttons ignored
+  - PO versions (v1 → v2 → FINAL), diff-only revision message, final PDF
+  - Hub ↔ Telegram button sync (`edit_buttons`)
+  - `parse_rupiah` price formats
 
 ```bash
 docker compose exec backend pytest -q tests/test_supplier_chat.py tests/test_supplier_revision.py

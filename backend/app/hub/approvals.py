@@ -184,10 +184,11 @@ def choose_change_request(svc, cr_id: int, choice: str, actor: str) -> dict:
             raise AppError(422, f"Opsi '{choice}' tidak tersedia untuk permintaan revisi #{cr_id}")
         po_number = cr.po_number
         db.add(SupplierMessage(chat_id=svc.manager_chat_id, direction=MessageDirection.MANAGER_IN,
-                               text=f"[Hub] {actor}: {CHOICE_LABEL.get(choice, choice)} ({po_number})"))
+                               text=f"[Hub] {actor}: {CHOICE_LABEL.get(choice, choice)} ({po_number})",
+                               agent_output={"source": "hub", "author": actor, "button": f"cr:{cr_id}:{choice}"}))
         C.audit(db, actor, "choose", "change_request", cr_id, choice=choice, po_number=po_number)
         db.commit()
-    svc.deliver([svc.manager_send(f"Diputuskan via Hub oleh {actor}: {CHOICE_LABEL.get(choice, choice)} untuk {po_number}.")])
+    svc.mirror_to_manager(f"Diputuskan via Hub oleh {actor}: {CHOICE_LABEL.get(choice, choice)} untuk {po_number}.")
     result = svc.manager_graph.invoke({"kind": "button", "data": f"cr:{cr_id}:{choice}", "actor": f"{actor} via Hub"})
     if result.get("error"):
         raise AppError(409, result["error"])

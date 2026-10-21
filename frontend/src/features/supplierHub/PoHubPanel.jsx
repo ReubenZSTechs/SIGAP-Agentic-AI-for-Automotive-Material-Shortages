@@ -1,29 +1,52 @@
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
 import Icon from '../../components/common/Icon';
 import StateBadge from './StateBadge';
-import { DECISION, MISSION_STATUS, SCENARIO, dayTime } from './meta';
+import { DECISION, MISSION_STATUS, SCENARIO, approverName, dayTime } from './meta';
 import useFetch from '../../hooks/useFetch';
 import { hubService } from '../../services/hubService';
+import { toast } from '../../store/toastStore';
 import { formatDate } from '../../utils/formatters';
 
 const CONF = { PENDING: 'Menunggu konfirmasi supplier', CONFIRMED: 'Dikonfirmasi supplier', DECLINED: 'Ditolak supplier',
   CANCEL_PENDING: 'Menunggu persetujuan pembatalan', REVISION_PENDING: 'Supplier minta revisi' };
 const CONV = { CONFIRM_ORDER: 'Konfirmasi PO', CANCEL_ORDER: 'Pembatalan PO', REVISION_CONFIRM: 'Konfirmasi revisi' };
+const OPEN_CONV = ['QUEUED', 'AWAITING_SUPPLIER', 'REVISION_REQUESTED'];
 const CONV_STATUS = { QUEUED: 'antre', AWAITING_SUPPLIER: 'menunggu supplier', REVISION_REQUESTED: 'menunggu keputusan revisi',
   CONFIRMED: 'dikonfirmasi', CANCEL_CONFIRMED: 'pembatalan disetujui', DECLINED: 'ditolak supplier', ESCALATED: 'dieskalasi', CLOSED: 'selesai' };
 
-// Panel read-only di detail PO: konfirmasi supplier, percakapan Telegram, misi Hub, dan ajuan terkait.
-// Data PO dipakai untuk membuat misi; misi tidak pernah mengubah PO.
-export default function PoHubPanel({ po }) {
+// Panel di detail PO: konfirmasi supplier, percakapan Telegram, misi Hub, dan ajuan terkait. PO ISSUED dikirim
+// otomatis ke supplier; tombol di sini mengirim ulang (mis. setelah eskalasi) atau meminta persetujuan pembatalan.
+export default function PoHubPanel({ po, onChanged }) {
   const navigate = useNavigate();
-  const { data, error } = useFetch(() => hubService.poContext(po.id), [po.id, po.status]);
+  const lines = po.items.map((i) => `${i.qty_ordered}x${i.unit_price}`).join(',');
+  const { data, error, reload } = useFetch(() => hubService.poContext(po.id), [po.id, po.status, po.total_amount, lines]);
+  const [busy, setBusy] = useState(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const canMission = po.status !== 'CANCELLED';
+  const open = (data?.conversations ?? []).some((c) => OPEN_CONV.includes(c.status));
+  const canSend = po.status === 'ISSUED' && data && !open && data.confirmation?.status !== 'CONFIRMED'; // kirim ulang setelah ditolak/eskalasi
+  const cancelPending = (data?.conversations ?? []).some((c) => c.purpose === 'CANCEL_ORDER' && OPEN_CONV.includes(c.status));
+
+  const start = async (purpose) => {
+    setBusy(purpose);
+    try {
+      await hubService.startSupplierConversation(po.id, purpose, approverName());
+      toast.success(purpose === 'CONFIRM_ORDER' ? 'PO dikirim ke supplier via Telegram' : 'Permintaan pembatalan dikirim ke supplier');
+      reload(); onChanged?.();
+    } catch (e) { toast.error(e.message); } finally { setBusy(null); setConfirmCancel(false); }
+  };
 
   return (
     <Card title="Misi & komunikasi supplier" actions={canMission && (
-      <Button size="sm" variant="secondary" onClick={() => navigate(`/supplier-hub/missions?new=1&po=${po.id}`)}><Icon name="flag" /> Buat misi dari PO ini</Button>
+      <span className="inline-flex flex-wrap gap-2">
+        {canSend && <Button size="sm" variant="secondary" loading={busy === 'CONFIRM_ORDER'} onClick={() => start('CONFIRM_ORDER')}><Icon name="send" /> Kirim ke supplier</Button>}
+        {po.status === 'ISSUED' && data && !cancelPending && <Button size="sm" variant="ghost" className="text-red-600" onClick={() => setConfirmCancel(true)}>Minta pembatalan</Button>}
+        <Button size="sm" variant="secondary" onClick={() => navigate(`/supplier-hub/missions?new=1&po=${po.id}`)}><Icon name="flag" /> Buat misi dari PO ini</Button>
+      </span>
     )}>
       {error ? <p className="text-sm text-slate-500">Data Agent Hub tidak tersedia ({error.message}).</p> : !data ? <p className="text-sm text-slate-500">Memuat…</p> : (
         <div className="space-y-4 text-sm">
@@ -77,6 +100,9 @@ export default function PoHubPanel({ po }) {
           )}
         </div>
       )}
+      <ConfirmDialog open={confirmCancel} title="Minta pembatalan PO" confirmLabel="Kirim permintaan"
+        message={`Agent meminta ${po.supplier_name} menyetujui pembatalan ${po.po_number} via Telegram. PO dihapus setelah supplier setuju; bila menolak, manajer diberi tahu.`}
+        loading={busy === 'CANCEL_ORDER'} onConfirm={() => start('CANCEL_ORDER')} onCancel={() => setConfirmCancel(false)} />
     </Card>
   );
 }

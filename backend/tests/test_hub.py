@@ -124,7 +124,7 @@ def test_po_revision_listed_and_decided_from_hub(hub, seeded):
     assert r.status_code == 200, r.text
     assert H.po(po_id).items[0].qty_ordered == 40
     assert H.change_requests()[0].status.value == "CHANGE_APPROVED"
-    assert any("Diputuskan via Hub oleh Rina" in m.text for m in H.messages("MANAGER_OUT"))
+    assert any("Rina: Setujui perubahan" in m.text for m in H.messages("MANAGER_IN"))
     with SessionLocal() as db:
         assert db.get(PurchaseOrder, po_id).decided_by != "Rina via Hub"     # approve_change tidak membuat PO baru
     again = client.post(f"{API}/approvals/cr-{cr.id}/choose", json={**WHO, "choice": "abort"})
@@ -405,3 +405,48 @@ def test_telegram_attachment_update_is_stored(seeded):
     result = svc.handle_update(update)
     assert result["handled"] is True and len(result["documents"]) == 1
     assert H.messages("IN", chat)[-1].text == "[lampiran] foto_7.jpg"
+
+
+# ------------------------------------------------- manager chat -------------------------------------------------
+def test_manager_chat_buttons_and_free_text_from_hub(hub, seeded):
+    client, make = hub
+    reply = F.reply("change_requested", "Kami teruskan.", changes=[F.change("RM-RUB-01", "qty", "40")])
+    svc, _ = make({"SupplierReplyOutput": reply, "ManagerDecisionOutput": F.decision("approve_change")})
+    po_id = H.issue_po(seeded, "RM-RUB-01", "SUP-KRT", 50)
+    chat = H.link(svc, seeded, "SUP-KRT")
+    H.start(svc, po_id)
+    svc.handle_inbound(chat, "Hanya 40")
+    [cr] = H.change_requests()
+
+    data = client.get(f"{API}/manager/messages").json()
+    assert data["pending"] == 1 and data["messages"][-1]["approval_ids"] == [f"cr-{cr.id}"]
+    r = client.post(f"{API}/manager/messages", json={**WHO, "text": "setujui saja"})
+    assert r.status_code == 200 and r.json()["awaiting_confirmation"] == cr.id
+    msgs = client.get(f"{API}/manager/messages").json()["messages"]
+    assert msgs[-2]["from"] == "MANAGER" and msgs[-2]["source"] == "hub" and msgs[-2]["text"] == "setujui saja"
+    yes, no = msgs[-1]["buttons"]
+    assert (yes["state"], no["state"]) == ("active", "active")
+
+    r = client.post(f"{API}/manager/buttons", json={**WHO, "data": no["data"]})
+    assert r.status_code == 200 and H.change_requests()[0].status.value == "PENDING_MANAGER"
+    assert client.post(f"{API}/manager/buttons", json={**WHO, "data": yes["data"]}).status_code == 409   # sudah dibatalkan
+    r = client.post(f"{API}/manager/buttons", json={**WHO, "data": f"cr:{cr.id}:approve_change"})
+    assert r.status_code == 200 and H.po(po_id).items[0].qty_ordered == 40
+    assert client.get(f"{API}/status").json()["counts"]["manager"] == 0
+
+
+def test_send_po_to_supplier_from_po_page(hub, seeded):
+    client, make = hub
+    svc, _ = make({})
+    po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 5)
+    H.link(svc, seeded, "SUP-KRT")
+    r = client.post(f"{API}/po/{po_id}/supplier-conversation", json={**WHO, "purpose": "CONFIRM_ORDER"})
+    assert r.status_code == 201 and r.json()["status"] == "AWAITING_SUPPLIER"
+    again = client.post(f"{API}/po/{po_id}/supplier-conversation", json={**WHO, "purpose": "CONFIRM_ORDER"})
+    assert again.status_code == 409
+    revs = client.get(f"/api/v1/purchase-orders/{po_id}/revisions").json()
+    assert [(v["version"], v["status"]) for v in revs] == [(1, "CURRENT")]
+    pdf = client.get(f"/api/v1/purchase-orders/{po_id}/revisions/{revs[0]['id']}/pdf")
+    assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")
+    r = client.post(f"{API}/po/{po_id}/supplier-conversation", json={**WHO, "purpose": "CANCEL_ORDER"})
+    assert r.status_code == 201 and H.confirmation_status(po_id) == "CANCEL_PENDING"

@@ -14,8 +14,10 @@ from app.models.planning import PlanningRun, PlanningLine  # noqa: F401
 from app.models.purchase_order import PurchaseOrder, POItem  # noqa: F401
 from app.models.supplier_chat import (  # noqa: F401
     SupplierTelegramLink, SupplierConversation, SupplierMessage, POSupplierConfirmation, POChangeRequest,
+    PORevision,
 )
 from app.models.automation import AutomationAction  # noqa: F401
+from app.models.agent_run import AgentRun  # noqa: F401
 from app.models.hub import (  # noqa: F401
     HubSettings, HubMessageTemplate, HubSupplierControl, HubMission, HubMissionTarget, HubOutbox, HubProposal,
     HubDocument, HubAuditLog,

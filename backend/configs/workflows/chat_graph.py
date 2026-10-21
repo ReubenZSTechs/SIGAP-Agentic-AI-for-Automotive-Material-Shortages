@@ -71,10 +71,27 @@ def new_turn(message: str, thread_id: str = "") -> ChatState:
                      automation_decision=None, pending_action=None)
 
 
+def _card_summary(card: dict) -> str:
+    """One line per PO proposal card, so later turns can refer to what it proposed."""
+    parts = []
+    for t in card.get("tables") or []:
+        rows = "; ".join(" ".join(str(c) for c in r[:3]) for r in t.get("rows") or [])
+        parts.append(f"{t.get('title', '')}: {rows}")
+    return f"[Kartu usulan PO: {card.get('title', '')} — " + " | ".join(parts) + "]"
+
+
 def _history(messages: list[AnyMessage], turns: int) -> list[dict]:
-    """Previous turns (excluding the latest user message) as plain role/content dicts."""
-    out = [{"role": "user" if isinstance(m, HumanMessage) else "assistant", "content": str(m.content)}
-           for m in messages[:-1] if isinstance(m, (HumanMessage, AIMessage))]
+    """Previous turns (excluding the latest user message) as plain role/content dicts.
+
+    PO proposal cards are only in `additional_kwargs`, so their content is appended as a summary line.
+    """
+    out = []
+    for m in messages[:-1]:
+        if isinstance(m, HumanMessage):
+            out.append({"role": "user", "content": str(m.content)})
+        elif isinstance(m, AIMessage):
+            cards = [_card_summary(c) for c in (m.additional_kwargs.get("actions") or {}).values()]
+            out.append({"role": "assistant", "content": "\n".join([str(m.content), *cards])})
     return out[-turns * 2:]
 
 

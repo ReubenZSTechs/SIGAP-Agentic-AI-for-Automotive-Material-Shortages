@@ -11,6 +11,7 @@
     "supplier_query",
     "needed_by_date",
     "notes",
+    "is_new_request",
     "user_cancelled",
     "reason"
   ],
@@ -77,6 +78,10 @@
         "null"
       ],
       "description": "Free-text note for the PO if the user gave one."
+    },
+    "is_new_request": {
+      "type": "boolean",
+      "description": "True when the latest message is a new, self-contained PO instruction rather than an answer to / continuation of current_draft."
     },
     "user_cancelled": {
       "type": "boolean",

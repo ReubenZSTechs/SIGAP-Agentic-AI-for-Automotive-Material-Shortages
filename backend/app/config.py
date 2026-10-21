@@ -73,12 +73,16 @@ class Settings(BaseSettings):
     def _chat_db(cls, v: str | None) -> str | None:
         return normalize_db_url(v.strip()) if v and v.strip() else None
 
-    # Supplier Telegram: "sandbox" (pesan hanya disimpan di DB, supplier/manajer diperankan via
-    # Streamlit) atau "telegram" (Bot API sungguhan, long polling oleh worker).
+    # Supplier Telegram: "sandbox" (pesan hanya disimpan di DB, supplier/manajer diperankan dari
+    # Hub Supplier di frontend) atau "telegram" (Bot API sungguhan, long polling oleh worker).
     TELEGRAM_MODE: Literal["sandbox", "telegram"] = "sandbox"
     TELEGRAM_BOT_TOKEN: str | None = None
     TELEGRAM_BOT_USERNAME: str | None = None        # untuk deep link t.me/<username>?start=<token>
     TELEGRAM_MANAGER_CHAT_ID: int | None = None     # chat manajer penerima eskalasi & opsi revisi
+
+    # Pencatatan setiap panggilan agent LLM (tabel agent_runs, dibaca Agent Hub Streamlit).
+    AGENT_TRACE_ENABLED: bool = True
+    AGENT_TRACE_RETENTION_DAYS: int = 30
 
     @property
     def telegram_live(self) -> bool:

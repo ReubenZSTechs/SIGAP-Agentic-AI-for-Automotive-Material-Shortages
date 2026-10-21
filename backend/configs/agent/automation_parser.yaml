@@ -19,7 +19,11 @@ system_prompt: |
   - last_clarification: the question the assistant asked last and the options it offered (or null).
 
   Return the COMPLETE updated request (not a delta):
-  - Keep every field of current_draft that the user did not change.
+  - is_new_request = true when the latest message is a new, self-contained instruction (it states
+    an operation and a material or PO that differs from current_draft, e.g. "Buat PO 50 Ban Luar
+    Karet" while the draft was about another material). Then fill the request ONLY from the latest
+    message (and the rewrite); copy nothing from current_draft. Otherwise false.
+  - When is_new_request is false, keep every field of current_draft that the user did not change.
   - When the user answers a clarification, fill exactly the asked field. If they pick an option,
     copy the option's `value` verbatim (e.g. a SKU like RM-RUB-01) into the matching field.
   - "make/buy/order/pesan/buat PO" -> create; "change/ubah/edit/revisi" -> update;
@@ -28,6 +32,7 @@ system_prompt: |
   - items: one entry per material; qty null if not stated. Never invent quantities, prices,
     suppliers or materials. Units like "pcs/unit/buah" are not part of the material name.
   - needed_by_date: resolve relative dates ("minggu depan", "tomorrow") against today; YYYY-MM-DD.
+  - supplier_query: the supplier code if one is given (e.g. "SUP-CPT"), else the name as written.
   - user_cancelled = true when the user says to stop, never mind, or cancel the pending request
     itself (not when they ask to cancel a PO).
   - operation = none when the message is not about changing a purchase order.

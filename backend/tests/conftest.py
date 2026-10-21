@@ -84,6 +84,14 @@ def _clean_tables(engine):
         c.execute(text(f"TRUNCATE TABLE {names} RESTART IDENTITY CASCADE"))
 
 
+@pytest.fixture(autouse=True)
+def _no_background_dispatch(monkeypatch):
+    """`PATCH /status ISSUED` memulai dispatch di thread latar (layanan live). Di test, dispatch dijalankan
+    eksplisit dengan layanan fake; thread latar akan memegang lock baris dan memblokir TRUNCATE test berikutnya."""
+    import app.supplier_chat.service as chat_service
+    monkeypatch.setattr(chat_service, "dispatch_in_background", lambda: None)
+
+
 @pytest.fixture()
 def Session(engine):
     return sessionmaker(autoflush=False, bind=engine)

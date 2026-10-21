@@ -1,17 +1,21 @@
-from fastapi import APIRouter, Depends, status as http_status
+import logging
+
+from fastapi import APIRouter, Depends, Response, status as http_status
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer
 
 from app.api.deps import get_db
 from app.core.exceptions import AppError
-from app.models import PurchaseOrder
-from app.models.enums import POSource, POStatus
+from app.models import PORevision, PurchaseOrder
+from app.models.enums import PORevisionStatus, POSource, POStatus
 from app.schemas.purchase_order import (ApproveRequest, GoodsReceiptOut, GoodsReceiptRequest,
                                         ManualPOCreate, ManualPOUpdate, POStatusUpdate,
                                         PurchaseOrderOut, RejectRequest)
 from app.services import inventory_service, po_service
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 
 def _get_po(db: Session, po_id: int) -> PurchaseOrder:
@@ -69,9 +73,57 @@ def reject_po(po_id: int, body: RejectRequest, db: Session = Depends(get_db)):
     return po_service.reject(db, _get_po(db, po_id), body.rejected_by, body.reason)
 
 
+def _send_to_supplier(po_id: int) -> None:
+    """PO yang baru ISSUED dikirim ke supplier via Telegram (sama seperti PO dari kartu Dashboard)."""
+    from app.supplier_chat.service import dispatch_in_background
+    from configs.tools import po_actions as A
+    try:
+        with A.write_session() as db:
+            conv = A.ensure_confirm_conversation(db, db.get(PurchaseOrder, po_id))
+        if conv is not None:
+            dispatch_in_background()
+    except Exception:  # noqa: BLE001  (status PO sudah tersimpan; worker/Hub dapat mengirim ulang)
+        log.exception("queueing supplier confirmation for PO %s failed", po_id)
+
+
 @router.patch("/{po_id}/status", response_model=PurchaseOrderOut)
 def update_po_status(po_id: int, body: POStatusUpdate, db: Session = Depends(get_db)):
-    return po_service.change_status(db, _get_po(db, po_id), POStatus(body.status))
+    po = po_service.change_status(db, _get_po(db, po_id), POStatus(body.status))
+    if po.status == POStatus.ISSUED:
+        _send_to_supplier(po.id)
+        db.refresh(po)
+    return po
+
+
+# ------------------- Versi PO yang dibahas dengan supplier -------------------
+def _revision_out(r: PORevision) -> dict:
+    from configs.tools import po_actions as A
+    return {"id": r.id, "version": r.version, "status": r.status.value, "total_amount": r.snapshot["total_amount"],
+            "items": r.snapshot["items"], "changes": [{**c, "text": A.describe_change(c)} for c in r.changes or []],
+            "change_request_id": r.change_request_id, "created_by": r.created_by, "created_at": r.created_at,
+            "finalized_at": r.finalized_at, "pdf_sent": r.pdf_message_id is not None}
+
+
+@router.get("/{po_id}/revisions")
+def list_revisions(po_id: int, db: Session = Depends(get_db)):
+    """v1 = PO yang pertama dikirim ke supplier, v2+ = revisi yang disetujui; FINAL = dikonfirmasi supplier."""
+    _get_po(db, po_id)
+    rows = db.scalars(select(PORevision).where(PORevision.po_id == po_id).order_by(PORevision.version))
+    return jsonable_encoder([_revision_out(r) for r in rows])
+
+
+@router.get("/{po_id}/revisions/{revision_id}/pdf")
+def revision_pdf(po_id: int, revision_id: int, db: Session = Depends(get_db)):
+    """PDF yang dikirim ke supplier (versi FINAL), atau dibuat saat itu juga untuk versi lain."""
+    from app.supplier_chat.po_pdf import pdf_file_name, render_po_pdf
+    rev = db.scalar(select(PORevision).options(undefer(PORevision.pdf))
+                    .where(PORevision.id == revision_id, PORevision.po_id == po_id))
+    if rev is None:
+        raise AppError(404, "Versi PO tidak ditemukan")
+    content = rev.pdf or render_po_pdf(rev.snapshot, rev.version, final=rev.status == PORevisionStatus.FINAL,
+                                       finalized_at=rev.finalized_at)
+    return Response(content, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{pdf_file_name(rev.po_number, rev.version)}"'})
 
 
 # ------------------- Phase 5: Goods Receipt (loop penutup) -------------------

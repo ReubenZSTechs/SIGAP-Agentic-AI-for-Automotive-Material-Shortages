@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (materials, products, suppliers, inventory, bom, production_lines,
-                                  schedules, planning, purchase_orders, chat, supplier_chat, hub)
+                                  schedules, planning, purchase_orders, chat, supplier_chat, hub, agent_runs)
 
 api_router = APIRouter()
 api_router.include_router(materials.router,       prefix="/materials",       tags=["Master Material Beli"])
@@ -16,4 +16,5 @@ api_router.include_router(purchase_orders.router, prefix="/purchase-orders", tag
 api_router.include_router(chat.router,            prefix="/chat",            tags=["Chatbot"])
 api_router.include_router(supplier_chat.router,   prefix="/supplier-chat",   tags=["Supplier Telegram Agent"])
 api_router.include_router(hub.router,             prefix="/hub",             tags=["Agent Hub"])
+api_router.include_router(agent_runs.router,      prefix="/agent-runs",      tags=["Agent Runs (tracking)"])
 # auth.py / users.py dibiarkan non-aktif: autentikasi di luar scope MVP.

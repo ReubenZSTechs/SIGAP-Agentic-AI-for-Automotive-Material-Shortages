@@ -59,10 +59,10 @@ services:
     command: ["python", "-m", "app.supplier_chat.worker"]
     restart: unless-stopped
 
-  # Streamlit "Telegram Lab" (opsional): docker compose --profile lab up
-  telegram-lab:
+  # Agent Hub (Streamlit, opsional): riwayat setiap panggilan agent LLM. docker compose --profile tools up agent-hub
+  agent-hub:
     build: ./backend
-    profiles: ["lab"]
+    profiles: ["tools"]
     depends_on:
       backend:
         condition: service_healthy
@@ -70,9 +70,9 @@ services:
       DATABASE_URL: postgresql://mrp:mrp@db:5432/mrp
       CORS_ORIGINS: http://localhost:8080
       SIGAP_API_URL: http://backend:8000/api/v1
-    command: ["sh", "-c", "pip install -q -r requirements-streamlit.txt && streamlit run streamlit_app/telegram_lab.py --server.address 0.0.0.0 --server.port 8501"]
+    command: ["sh", "-c", "pip install -q -r requirements-streamlit.txt && streamlit run streamlit_app/agent_hub.py --server.address 0.0.0.0 --server.port 8501 --server.headless true"]
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"          # hanya lokal: isi prompt memuat data bisnis & pesan supplier
 
   frontend:
     build: ./frontend

@@ -68,11 +68,11 @@ ROUTE_AUTO = {"intent": "po_automation", "reason": "asks to change a PO"}
 
 
 def parsed(operation="create", items=None, po_reference=None, supplier_query=None, needed_by_date=None,
-           notes=None, user_cancelled=False) -> dict:
+           notes=None, user_cancelled=False, is_new_request=False) -> dict:
     """AutomationParserOutput with every key present."""
     return {"operation": operation, "po_reference": po_reference, "items": items or [],
             "supplier_query": supplier_query, "needed_by_date": needed_by_date, "notes": notes,
-            "user_cancelled": user_cancelled, "reason": "test"}
+            "is_new_request": is_new_request, "user_cancelled": user_cancelled, "reason": "test"}
 
 
 def item(material_query: str, qty=None) -> dict:

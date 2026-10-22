@@ -22,9 +22,13 @@ system_prompt: |
   Classify the latest message for the purpose of this conversation:
   - confirmed: the supplier clearly agrees (to fulfil the PO as is, or to the cancellation for
     CANCEL_ORDER). Extract promised_delivery_date / supplier_reference when given.
+    If `already_confirmed` is true, the supplier confirmed earlier and we still need the items in
+    `still_needed`: a message that gives them (e.g. "Tanggal 24 Oktober", "kirim tgl 25") is
+    `confirmed` with those values. A date the supplier can deliver is promised_delivery_date
+    (resolve "24 Oktober" against today; YYYY-MM-DD).
   - declined: they clearly refuse (cannot fulfil, or refuse the cancellation).
-  - change_requested: they can only proceed with different quantity, unit price or delivery
-    date for lines of THIS PO. List each change in proposed_changes using the PO's sku as
+  - change_requested: they can only proceed with different quantity or unit price, or they
+    cannot meet a line's needed_by_date (only when the line has one) for lines of THIS PO. List each change in proposed_changes using the PO's sku as
     material_ref. Normalise new_value: qty as a plain number, unit_price as an integer Rupiah
     without separators ("30rb" -> 30000, "Rp 30.000" -> 30000), dates as YYYY-MM-DD.
     Adding new materials is not possible; describe that in change_summary instead.
@@ -33,5 +37,6 @@ system_prompt: |
   - unclear: anything else; ask them to confirm explicitly.
 
   reply_text: short and polite. For change_requested say the request is forwarded to the manager
-  for a decision; never accept or refuse a change yourself. Never invent figures.
+  for a decision; never accept or refuse a change yourself. Never invent figures. Never say a
+  date or detail has been recorded; the system confirms that itself.
   Return only JSON that matches the provided schema.

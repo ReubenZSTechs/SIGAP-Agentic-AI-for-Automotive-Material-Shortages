@@ -24,7 +24,8 @@ Scope: **Purchase Orders only.** Other change requests (stock, planning, master 
 2. [Clarification](#2-clarification)
 3. [Confirmation (interrupt / resume)](#3-confirmation-interrupt--resume)
 4. [What each operation does](#4-what-each-operation-does)
-5. [Stock & planning effects of a delete](#5-stock--planning-effects-of-a-delete)
+5. [Production requests (schedule + multi-PO)](#5-production-requests-schedule--multi-po)
+   - [Stock & planning effects of a delete](#5b-stock--planning-effects-of-a-delete)
 6. [Agents](#agents)
 7. [Tools](#7-tools)
 8. [Audit trail](#8-audit-trail)
@@ -95,12 +96,38 @@ When the request is fully resolved:
 | **Create** | Every item resolved | For each supplier group: `create_manual` → `submit` → `approve` (*"Agent MRP (dikonfirmasi pengguna)"*) → `ISSUED`. Then a `CONFIRM_ORDER` supplier conversation is queued and Telegram dispatch starts. |
 | **Update** | MANUAL PO in DRAFT / REJECTED | `po_service.update_manual` (quantities, extra lines priced from the PO's supplier, needed-by date, notes) |
 | **Delete**, PO never sent | DRAFT, PENDING_APPROVAL, APPROVED, REJECTED, CANCELLED | Hard delete right away |
-| **Delete**, PO already issued | ISSUED | A `CANCEL_ORDER` conversation is queued and the confirmation becomes `CANCEL_PENDING`. The PO is deleted **only after the supplier agrees** on Telegram. If they refuse, the manager is notified. |
+| **Delete**, PO already issued | ISSUED | A `CANCEL_ORDER` conversation is queued and the confirmation becomes `CANCEL_PENDING`. The PO is **cancelled** (status `CANCELLED`, *Dibatalkan*, kept on record) **only after the supplier agrees** on Telegram. If they refuse, the manager is notified. |
+| **Produce** (production request) | finished product + qty + date resolved, complete BOM | One transaction: a new MPS schedule (`schedule_service.create_schedule`, which recalculates allocated stock and marks planning runs stale), then one ISSUED PO per chosen supplier (`needed_by_date` = the date, notes = batch code) + a queued `CONFIRM_ORDER` conversation each. Refused if stock, open POs or prices changed since the card was shown. |
 | **Delete**, goods received | PARTIALLY_RECEIVED, RECEIVED | Refused (received stock needs a return process) |
 
 All writes of one approval run inside `po_actions.write_session()`. It is a single transaction, and the `commit()` calls inside `po_service` only release savepoints, so a failure halfway leaves nothing behind. Every update or delete first checks that the PO still matches the snapshot shown on the card.
 
-## 5. Stock & planning effects of a delete
+## 5. Production requests (schedule + multi-PO)
+
+*"Saya membutuhkan 100 sepeda gunung, besok harus ada materialnya"* → `operation=produce` (items = finished products, `needed_by_date` = production date). `po_actions._resolve_produce`:
+
+1. **Requirement.** `allocation_service.requirement` explodes the BOM. An incomplete BOM is an error.
+2. **Stock check per BUY material:**
+   - `available_after = on_hand − allocated − requirement`;
+   - `incoming_in_time` = open PO lines expected by the date (supplier's promised date, else the line's needed-by date; undated or late lines don't count);
+   - `shortfall = max(0, safety_stock − (available_after + incoming_in_time))`, the same rule as the MRP run, ordering back up to the safety stock.
+3. **Suppliers, cross-checked over all short materials** (`assign_suppliers`):
+   - Only links that arrive in time are candidates. If none can, the fastest link is used, with a *paling cepat tiba …* warning.
+   - A greedy cover then chooses the supplier that can supply the most remaining materials. Ties go to: no MOQ shortfall, preferred links, lower cost, shorter lead time.
+   - A supplier that sells several of the materials gets them on **one PO**. The card shows the extra cost compared with cheapest-per-material and how many POs it saved.
+   - The order qty is `max(shortfall, moq)`.
+   - `create` requests without a named supplier use the same consolidation.
+4. **Card.** A material check table, plus one table per supplier PO. With enough stock, it proposes the schedule only.
+
+**Pages that change on approval** (all derived, no manual sync):
+
+- MPS & Planning: the new batch, and DRAFT runs marked stale;
+- Inventory / Materials: `allocated` from the new schedule, and `on_order` from the new POs;
+- Purchase Orders: the ISSUED POs;
+- Hub Supplier: the queued Telegram conversations;
+- Dashboard chat: the result message with the batch code and PO numbers.
+
+## 5b. Stock & planning effects of a delete
 
 `po_service.delete_po()`:
 
@@ -117,7 +144,7 @@ Each agent has `configs/agent/<name>.yaml` (prompt, generation settings) and `co
 | Agent | Output | Used in |
 |:--|:--|:--|
 | `router` (updated) | `intent` now includes `po_automation` | Route |
-| `automation_parser` | `operation`, `po_reference`, `items[{material_query, qty}]`, `supplier_query`, `needed_by_date`, `notes`, `is_new_request`, `user_cancelled`, `reason` | auto_parse |
+| `automation_parser` | `operation` (create / update / delete / **produce** / none), `po_reference`, `items[{material_query, qty}]`, `supplier_query`, `needed_by_date`, `notes`, `is_new_request`, `user_cancelled`, `reason` | auto_parse |
 | `automation_clarifier` | `question_text`, `options[{label, value}]` | auto_clarify |
 
 ## 7. Tools

@@ -1,5 +1,6 @@
 """Scripted LLM doubles for chatbot tests (keyed by the agent schema `title`)."""
 import json
+from datetime import date, timedelta
 
 from app.chatbot.config_loader import load_registry
 from app.chatbot.llm import build_agents
@@ -86,6 +87,9 @@ def clarify(question="Material yang mana?", options=None) -> dict:
 OUTREACH = {"message_text": "Halo, mohon konfirmasi PO berikut.", "language": "id"}
 
 
+SOON = (date.today() + timedelta(days=7)).isoformat()      # tanggal kirim valid untuk konfirmasi lengkap
+
+
 def reply(decision="confirmed", text="Terima kasih.", promised=None, ref=None, changes=None, summary=None) -> dict:
     """SupplierReplyOutput."""
     return {"decision": decision, "reply_text": text, "promised_delivery_date": promised, "supplier_reference": ref,
@@ -96,8 +100,8 @@ def change(material_ref: str, field: str, new_value: str) -> dict:
     return {"material_ref": material_ref, "field": field, "new_value": new_value, "reason": None}
 
 
-def triage(po_number=None, intent="other", text="Baik.") -> dict:
-    return {"po_number": po_number, "intent": intent, "reply_text": text}
+def triage(po_number=None, intent="other", text="Baik.", promised=None) -> dict:
+    return {"po_number": po_number, "intent": intent, "reply_text": text, "promised_delivery_date": promised}
 
 
 ESCALATION = {"message_text": "Supplier perlu ditindaklanjuti.", "urgency": "normal",

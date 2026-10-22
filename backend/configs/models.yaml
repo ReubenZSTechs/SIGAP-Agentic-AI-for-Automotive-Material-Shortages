@@ -116,3 +116,6 @@ supplier_chat:
   poll_timeout_s: 25            # long polling getUpdates
   idle_sleep_s: 5               # jeda loop worker di mode sandbox
   manager_actor: "Manager via Telegram"
+  # Data yang wajib diberikan supplier sebelum PO dianggap final (PDF final baru dikirim setelah lengkap).
+  # Pilihan: promised_delivery_date, supplier_reference
+  required_confirmation_fields: [promised_delivery_date]

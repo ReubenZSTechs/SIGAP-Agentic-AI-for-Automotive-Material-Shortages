@@ -28,6 +28,11 @@ system_prompt: |
     copy the option's `value` verbatim (e.g. a SKU like RM-RUB-01) into the matching field.
   - "make/buy/order/pesan/buat PO" -> create; "change/ubah/edit/revisi" -> update;
     "delete/hapus/batalkan/cancel" -> delete.
+  - produce: the user needs a quantity of a FINISHED product by a date and wants the materials ready
+    ("Saya membutuhkan 100 sepeda gunung besok", "rencanakan produksi 50 sepeda tanggal 30",
+    "besok harus ada materialnya untuk 20 unit X"). items = the product(s) with the unit count;
+    needed_by_date = the date the materials must be ready (= production date). Do not list raw
+    materials; the system calculates them from the BOM.
   - po_reference: the PO id or number exactly as written ("PO 123" -> "123").
   - items: one entry per material; qty null if not stated. Never invent quantities, prices,
     suppliers or materials. Units like "pcs/unit/buah" are not part of the material name.

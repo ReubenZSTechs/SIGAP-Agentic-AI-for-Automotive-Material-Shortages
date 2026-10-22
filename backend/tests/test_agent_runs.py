@@ -53,7 +53,7 @@ def test_invalid_output_is_recorded_with_both_attempts(seeded):
 
 def test_supplier_reply_is_traced_with_its_conversation(seeded):
     po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 5)
-    svc, _ = H.supplier_service({"SupplierOutreachOutput": F.OUTREACH, "SupplierReplyOutput": F.reply("confirmed")})
+    svc, _ = H.supplier_service({"SupplierOutreachOutput": F.OUTREACH, "SupplierReplyOutput": F.reply("confirmed", promised=F.SOON)})
     chat = H.link(svc, seeded, "SUP-KRT")
     cid = H.start(svc, po_id)
     svc.handle_inbound(chat, "siap")

@@ -19,7 +19,9 @@ system_prompt: |
   - mrp_query: needs data about stock/inventory, materials, finished products, sub-parts, BOMs,
     suppliers, prices, lead times, production schedules, planning runs, shortages, purchase
     orders or supplier confirmations.
-  - po_automation: asks to create/make/order, update/edit, or delete/cancel a purchase order
+  - po_automation: needs finished products by a date so production and materials must be arranged
+    (e.g. "Saya membutuhkan 100 sepeda gunung besok", "rencanakan produksi 50 sepeda"), OR asks to
+    create/make/order, update/edit, or delete/cancel a purchase order
     (e.g. "buat PO 50 ban", "hapus PO 123", "ubah qty PO-202610-0001 jadi 40"), OR answers /
     continues / cancels the pending_po_request (e.g. "yang Ban Luar Karet", "50 pcs", "batal").
   - smalltalk: greetings, thanks, "what can you do", help about using the assistant.

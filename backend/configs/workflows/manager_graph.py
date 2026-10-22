@@ -172,7 +172,7 @@ def build_manager_graph(svc):
             text = (f"Revisi {result['po_number']} disetujui (versi {result['revision']['version']}); total baru "
                     f"{A.rupiah(result['total_after'])}. Supplier menerima daftar perubahan untuk dikonfirmasi.")
         elif choice == "abort":
-            text = f"{result['po_number']} dibatalkan dan dihapus; supplier telah diberi tahu."
+            text = f"{result['po_number']} dibatalkan (status Dibatalkan, data tetap tersimpan); supplier telah diberi tahu."
         else:
             text = (f"{result['po_number']} dialihkan ke PO baru: " + "; ".join(
                 f"{p['po_number']} ({p['supplier_name']}, {A.rupiah(p['total_amount'])})" for p in result["new_pos"])

@@ -37,6 +37,10 @@ def render_po_pdf(snapshot: dict, version: int, final: bool = True, finalized_at
     rows = [("Supplier", f"{snapshot.get('supplier_code', '')} {snapshot['supplier_name']}".strip()),
             ("Tanggal PO", snapshot.get("po_date") or "-"),
             ("Termin", f"Net {snapshot.get('payment_term_days', 0)} hari")]
+    if snapshot.get("promised_delivery_date"):
+        rows.append(("Janji kirim", snapshot["promised_delivery_date"]))
+    if snapshot.get("supplier_reference"):
+        rows.append(("Ref. supplier", snapshot["supplier_reference"]))
     if finalized_at:
         local = finalized_at.replace(tzinfo=timezone.utc).astimezone(TZ)      # disimpan sebagai UTC naif
         rows.append(("Dikonfirmasi", local.strftime("%Y-%m-%d %H:%M WIB")))

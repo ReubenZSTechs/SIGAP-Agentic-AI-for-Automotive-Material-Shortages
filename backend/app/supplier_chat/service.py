@@ -457,11 +457,20 @@ class SupplierChatService:
         out = self.run_agent("supplier_inbound_triage", {"supplier_message": text, "open_pos": open_pos,
                                                          "recent_messages": recent})
         po = next((p for p in open_pos if p["po_number"] == out.get("po_number")), None)
-        if po is not None and out["intent"] in ("revision_request", "confirmation"):
+        intent, promised = out["intent"], A.valid_future_date(out.get("promised_delivery_date"))
+        confirmed = po is not None and po["confirmation_status"] == "CONFIRMED"
+        if confirmed and promised and intent in ("delivery_update", "confirmation", "acknowledgement"):
+            return self._record_delivery_update(supplier_id, chat_id, po, promised, out)
+        if confirmed and intent in ("confirmation", "acknowledgement"):   # sudah final: tanpa percakapan / PDF baru
+            self.deliver([{"chat_id": chat_id, "supplier_id": supplier_id, "direction": MD.OUT, "agent_output": out,
+                           "text": f"Terima kasih, {po['po_number']} sudah tercatat terkonfirmasi."}])
+            return {"handled": True, "triage": out, "acknowledged": po["po_number"]}
+        if po is not None and intent in ("revision_request", "confirmation", "delivery_update", "acknowledgement"):
             with A.write_session() as db:
                 conv = A.queue_conversation(db, db.get(PurchaseOrder, po["id"]), ConversationPurpose.CONFIRM_ORDER)
                 conv.status, conv.started_at, conv.last_activity_at = CS.AWAITING_SUPPLIER, A.now(), A.now()
-                conv.outcome = {"opened_by": "supplier_message", "triage": out}
+                conv.outcome = {"opened_by": "supplier_message", "triage": out,
+                                **({"collected": {"promised_delivery_date": promised}} if promised else {})}
                 db.get(SupplierMessage, msg_id).conversation_id = conv.id
                 db.flush()
                 cid = conv.id
@@ -472,6 +481,21 @@ class SupplierChatService:
         self.deliver([{"chat_id": chat_id, "text": reply, "direction": MD.OUT, "supplier_id": supplier_id,
                        "agent_output": out}])
         return {"handled": True, "triage": out}
+
+    def _record_delivery_update(self, supplier_id: int, chat_id: int, po: dict, promised: str, out: dict) -> dict:
+        """New delivery date for an already confirmed PO: recorded, confirmed to the supplier by code."""
+        with A.write_session() as db:
+            row = db.get(PurchaseOrder, po["id"])
+            late = A.update_promised_date(db, row, promised)
+            name = row.supplier_name
+        sends = [{"chat_id": chat_id, "supplier_id": supplier_id, "direction": MD.OUT, "agent_output": out,
+                  "text": f"Terima kasih. Tanggal kirim {po['po_number']} kami catat: {promised}."}]
+        if late:
+            sends.append(self.manager_send(
+                f"{name} memperbarui tanggal kirim {po['po_number']} menjadi {promised}, lebih lambat dari tanggal "
+                "kebutuhan: " + "; ".join(f"{l['sku']} {l['name']} (dibutuhkan {l['needed_by_date']})" for l in late)))
+        self.deliver(sends)
+        return {"handled": True, "triage": out, "promised_delivery_date": promised, "late_lines": late}
 
     # ------------------------------------------- timeouts -------------------------------------------
     def tick_timeouts(self) -> dict:

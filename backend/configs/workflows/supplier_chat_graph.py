@@ -33,6 +33,7 @@ class SupplierTurn(TypedDict, total=False):
 def build_supplier_reply_graph(svc):
     """`svc` is the `SupplierChatService` (agents, config, transport, delivery)."""
     cfg = svc.cfg
+    required = cfg.get("required_confirmation_fields", ["promised_delivery_date"])
 
     def load_context(state: SupplierTurn) -> SupplierTurn:
         cid = state["conversation_id"]
@@ -40,7 +41,11 @@ def build_supplier_reply_graph(svc):
             conv = db.get(SupplierConversation, cid)
             conv.turn_count += 1
             po = db.get(PurchaseOrder, conv.po_id) if conv.po_id else None
+            outcome = conv.outcome or {}
+            collected = outcome.get("collected") or {}
             ctx = {"conversation_id": cid, "purpose": conv.purpose.value, "turn_count": conv.turn_count,
+                   "already_confirmed": bool(outcome.get("confirmed_pending")),
+                   "still_needed": [f for f in required if not collected.get(f)],
                    "supplier_id": conv.supplier_id, "supplier_name": db.get(Supplier, conv.supplier_id).name,
                    "po": A.po_snapshot(po) if po else conv.po_snapshot, "po_exists": po is not None,
                    "po_status": po.status.value if po else None, "action_id": conv.automation_action_id,
@@ -58,6 +63,9 @@ def build_supplier_reply_graph(svc):
                           "lines": [{k: it[k] for k in ("sku", "name", "uom", "qty_ordered", "unit_price", "needed_by_date")}
                                     for it in po["items"]]},
                    "conversation": ctx["messages"][:-1], "latest_supplier_message": state["text"]}
+        if ctx["purpose"] != P.CANCEL_ORDER.value:
+            payload["already_confirmed"] = ctx["already_confirmed"]       # konfirmasi tercatat, data belum lengkap
+            payload["still_needed"] = [A.CONFIRMATION_FIELDS[f] for f in ctx["still_needed"]]
         return {"analysis": svc.run_agent("supplier_reply_agent", payload)}
 
     def apply_decision(state: SupplierTurn) -> SupplierTurn:
@@ -73,20 +81,40 @@ def build_supplier_reply_graph(svc):
                 reply = f"Terima kasih. {ctx['po']['po_number']} sudah tidak berlaku lagi; tim kami akan menghubungi Anda bila perlu."
                 escalation = {"situation": "po_changed", "detail": f"Status PO saat ini: {po.status.value if po else 'dihapus'}"}
             elif purpose in (P.CONFIRM_ORDER.value, P.REVISION_CONFIRM.value):
+                proposed = a.get("proposed_changes") or []
+                if decision == "change_requested":                  # tanggal kirim tanpa tanggal kebutuhan = janji
+                    promised, proposed = A.split_promised_dates(po, proposed)
+                    if promised:
+                        a = {**a, "promised_delivery_date": promised}
+                        if not proposed:
+                            decision = "confirmed"
+                if decision in ("question", "unclear") and (conv.outcome or {}).get("confirmed_pending") \
+                        and (a.get("promised_delivery_date") or a.get("supplier_reference")):
+                    decision = "confirmed"                          # melengkapi data konfirmasi sebelumnya
+                result["decision"] = decision
                 if decision == "confirmed":
-                    A.record_supplier_confirmation(db, conv, a.get("promised_delivery_date"), a.get("supplier_reference"))
-                    rev = A.finalize_po_revision(db, po)              # tanpa perubahan lagi -> versi FINAL + PDF
-                    final_rev = {"id": rev.id, "version": rev.version}
-                    result["final_revision"] = final_rev
-                    A.note_action(db, conv.automation_action_id, AutomationStatus.EXECUTED,
-                                  supplier_outcome=f"{po.po_number} dikonfirmasi supplier (versi final {rev.version})")
+                    missing = A.collect_confirmation(conv, a, required)
+                    if missing:                                     # belum final: tanpa PDF, tanyakan yang kurang
+                        conv.outcome = {**conv.outcome, "confirmed_pending": True}
+                        reply = A.missing_fields_text(po.po_number, missing)
+                        result["still_needed"] = missing
+                    else:
+                        got = conv.outcome["collected"]
+                        A.record_supplier_confirmation(db, conv, got.get("promised_delivery_date"),
+                                                       got.get("supplier_reference"))
+                        rev = A.finalize_po_revision(db, po)        # lengkap -> versi FINAL + PDF
+                        final_rev = {"id": rev.id, "version": rev.version}
+                        result["final_revision"] = final_rev
+                        A.note_action(db, conv.automation_action_id, AutomationStatus.EXECUTED,
+                                      supplier_outcome=f"{po.po_number} dikonfirmasi supplier (versi final {rev.version})")
                 elif decision == "declined":
                     A.record_supplier_decline(db, conv, a["reason"])
                     A.note_action(db, conv.automation_action_id, supplier_outcome=f"{po.po_number} ditolak supplier")
                     escalation = {"situation": "declined"}
                 elif decision == "change_requested":
-                    cr = A.open_change_request(db, conv, a.get("proposed_changes") or [], state["text"],
-                                               cfg.get("max_revision_rounds", 2))
+                    if a.get("promised_delivery_date"):
+                        A.collect_confirmation(conv, a, required)
+                    cr = A.open_change_request(db, conv, proposed, state["text"], cfg.get("max_revision_rounds", 2))
                     if cr is not None:
                         cr_id = cr.id
                     else:
@@ -95,10 +123,10 @@ def build_supplier_reply_graph(svc):
             elif decision == "confirmed":                       # CANCEL_ORDER disetujui supplier
                 try:
                     A.close_conversation(conv, CS.CANCEL_CONFIRMED, reason=a["reason"])
-                    snap = A.delete_po(db, po.id)
+                    snap = A.cancel_po(db, po.id, "pembatalan disetujui supplier")
                     A.note_action(db, conv.automation_action_id, AutomationStatus.EXECUTED,
-                                  supplier_outcome=f"Pembatalan disetujui supplier; {snap['po_number']} dihapus")
-                    result["deleted_po"] = snap["po_number"]
+                                  supplier_outcome=f"Pembatalan disetujui supplier; {snap['po_number']} dibatalkan")
+                    result["cancelled_po"] = snap["po_number"]
                 except AppError as e:
                     A.close_conversation(conv, CS.ESCALATED, reason=e.detail)
                     escalation = {"situation": "po_changed", "detail": e.detail}

@@ -127,3 +127,12 @@ def test_executor_reads_and_refuses_writes(seeded):
     assert cols == ["sku", "name"] and rows[0]["sku"] == "RM-PDL-01"
     with pytest.raises(SqlExecutionError, match="read-only"):
         run_select("UPDATE inventory SET on_hand = 0", 5000)
+
+
+def test_list_products_tool_sees_finished_products_without_stock_rows(seeded):
+    ev = run_curated("list_products", {}, "all products", "E1", 50)
+    assert ev["error"] is None and ev["meta"]["product_count"] == 1
+    row = ev["rows"][0]
+    assert row["sku"] == "FG-BIKE-01" and row["selling_price"] == 4_500_000 and row["bom_item_count"] == 4
+    filtered = run_curated("list_products", {"query": "tidak-ada"}, "none", "E2", 50)
+    assert filtered["meta"]["product_count"] == 0

@@ -110,3 +110,19 @@ ESCALATION = {"message_text": "Supplier perlu ditindaklanjuti.", "urgency": "nor
 
 def decision(choice="approve_change", cr_id=None, text="Siap.") -> dict:
     return {"choice": choice, "change_request_id": cr_id, "reply_text": text}
+
+
+# ------------------------------ Master data (produk / material / supplier baru) ------------------------------
+ROUTE_MASTER = {"intent": "master_data", "reason": "asks to add new master data"}
+MASTER_FIELDS = ("sku", "code", "name", "uom", "selling_price", "specification", "contact", "payment_term_days",
+                 "initial_stock", "safety_stock")
+
+
+def master(entity="product", items=None, user_cancelled=False, is_new_request=False, **fields) -> dict:
+    """MasterDataParserOutput with every key present."""
+    return {"entity": entity, "is_new_request": is_new_request, "user_cancelled": user_cancelled,
+            "fields": {k: fields.get(k) for k in MASTER_FIELDS}, "items": items or [], "reason": "test"}
+
+
+def master_item(query: str, qty=None, unit_price=None, lead_time_days=None, moq=None) -> dict:
+    return {"query": query, "qty": qty, "unit_price": unit_price, "lead_time_days": lead_time_days, "moq": moq}

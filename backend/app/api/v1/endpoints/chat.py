@@ -15,10 +15,22 @@ router = APIRouter()
 THREAD_ID = r"^[A-Za-z0-9_-]{8,64}$"
 
 
+MAX_FORM_BYTES = 50_000
+
+
 class ResumeRequest(BaseModel):
-    """Answer to a PO confirmation card."""
+    """Answer to a confirmation card (approve/reject) or to a chat form (submit with `values`, or reject)."""
     action_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    decision: Literal["approve", "reject"]
+    decision: Literal["approve", "reject", "submit"]
+    values: dict | None = None
+
+    @model_validator(mode="after")
+    def _values_only_on_submit(self):
+        if (self.decision == "submit") != (self.values is not None):
+            raise ValueError("values wajib (hanya) untuk decision=submit")
+        if self.values is not None and len(json.dumps(self.values, default=str)) > MAX_FORM_BYTES:
+            raise ValueError("Isian formulir terlalu besar")
+        return self
 
 
 class ChatRequest(BaseModel):

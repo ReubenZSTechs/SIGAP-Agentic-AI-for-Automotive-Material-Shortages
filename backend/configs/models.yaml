@@ -54,6 +54,11 @@ SAP_LLM:
       model: generator
       config: agent/automation_clarifier.yaml
       schema: schema/automation_clarifier.schema.json
+    # --- Master data baru (produk / material / supplier) ---
+    master_data_parser:
+      model: generator
+      config: agent/master_data_parser.yaml
+      schema: schema/master_data_parser.schema.json
     # --- Supplier Telegram ---
     supplier_outreach_writer:
       model: generator

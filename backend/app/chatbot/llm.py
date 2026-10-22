@@ -8,8 +8,6 @@ import time
 from collections.abc import Callable
 from typing import Protocol
 
-from jsonschema import ValidationError
-
 from app.chatbot import tracing
 from app.chatbot.config_loader import AgentSpec, ModelSpec, Registry
 

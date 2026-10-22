@@ -21,6 +21,7 @@ FIXTURES = {
     "direct_responder": {"blocks": [{"type": "text", "text": "Halo"}]},
     "automation_parser": F.parsed(items=[F.item("ban", 50)]),
     "automation_clarifier": F.clarify(options=[{"label": "RM-RUB-01 Ban Luar Karet", "value": "RM-RUB-01"}]),
+    "master_data_parser": F.master("product", name="Sepeda Lipat", items=[F.master_item("Pedal Sepeda", 2)]),
     "supplier_outreach_writer": F.OUTREACH,
     "mission_reply_agent": {"decision": "answered", "reply_text": "Terima kasih.", "promised_date": None,
                             "items": [{"material_ref": "RM-PDL-01", "price_per_unit": 41000, "lead_time_days": 4,

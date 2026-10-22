@@ -14,11 +14,12 @@
       "enum": [
         "mrp_query",
         "po_automation",
+        "master_data",
         "smalltalk",
         "out_of_scope",
         "write_request"
       ],
-      "description": "mrp_query = needs MRP data; po_automation = create/update/delete/cancel a purchase order (or continue a pending PO request); smalltalk = greeting/help/thanks; out_of_scope = unrelated to MRP; write_request = asks to change anything other than purchase orders."
+      "description": "mrp_query = needs MRP data; po_automation = create/update/delete/cancel a purchase order (or continue a pending PO request); master_data = add a NEW finished product, purchased material or supplier (or continue the pending form); smalltalk = greeting/help/thanks; out_of_scope = unrelated to MRP; write_request = asks to change anything else (edit/delete master data, stock, BOM, schedules, planning, goods receipt)."
     },
     "reason": {
       "type": "string",

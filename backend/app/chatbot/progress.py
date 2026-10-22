@@ -21,6 +21,11 @@ LABELS = {
     "auto_clarify": {"id": "Menyiapkan pertanyaan klarifikasi", "en": "Preparing a clarification"},
     "auto_propose": {"id": "Menyiapkan usulan untuk dikonfirmasi", "en": "Preparing the proposal"},
     "auto_execute": {"id": "Menjalankan perubahan PO", "en": "Applying the PO change"},
+    "master_parse": {"id": "Memahami data yang ingin ditambahkan", "en": "Understanding the new data"},
+    "master_form": {"id": "Menyiapkan formulir", "en": "Preparing the form"},
+    "master_check": {"id": "Memeriksa isian formulir", "en": "Checking the form"},
+    "master_propose": {"id": "Menyiapkan ringkasan untuk dikonfirmasi", "en": "Preparing the summary"},
+    "master_execute": {"id": "Menyimpan data baru", "en": "Saving the new data"},
     "supplier_contact": {"id": "Menghubungi supplier via Telegram", "en": "Contacting the supplier on Telegram"},
 }
 

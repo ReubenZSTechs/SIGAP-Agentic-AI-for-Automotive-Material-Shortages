@@ -31,6 +31,7 @@
               "list_suppliers",
               "get_open_purchase_orders",
               "get_latest_planning_run",
+              "list_products",
               "get_bom",
               "get_production_schedules",
               "get_po_supplier_status",

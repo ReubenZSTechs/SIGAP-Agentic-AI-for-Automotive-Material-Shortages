@@ -32,13 +32,14 @@ export const chatService = {
   /**
    * Streams one chat turn. Calls `onEvent` for every `progress`, then `final` or `error` event.
    * Resolves with the last event. Abort with `signal`.
-   * Pass either `message` (new turn) or `resume` ({ actionId, decision: 'approve' | 'reject' })
-   * to answer a pending PO confirmation card.
+   * Pass either `message` (new turn) or `resume` to answer what the agent is waiting for:
+   * a confirmation card ({ actionId, decision: 'approve' | 'reject' }) or a chat form
+   * ({ actionId: formId, decision: 'submit', values } / { actionId: formId, decision: 'reject' }).
    */
   async stream({ message, resume, threadId, onEvent, signal }) {
-    const body = resume
-      ? { thread_id: threadId, resume: { action_id: resume.actionId, decision: resume.decision } }
-      : { thread_id: threadId, message };
+    const answer = resume && { action_id: resume.actionId, decision: resume.decision };
+    if (resume?.values) answer.values = resume.values;
+    const body = resume ? { thread_id: threadId, resume: answer } : { thread_id: threadId, message };
     const res = await fetch(`${BASE}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },

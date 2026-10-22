@@ -256,6 +256,20 @@ def get_po_supplier_status(db: Session, query: str | None = None, supplier: str 
     return rows, {"po_count": len(rows)}
 
 
+def list_products(db: Session, query: str | None = None, **_) -> ToolOutput:
+    """Finished products (Produk Final): price, specification, active flag and number of BOM components.
+
+    Finished products have no stock row, so they never appear in the stock tools.
+    """
+    products = master_service.list_products(db, q=query or None, is_active=None, skip=0, limit=500)
+    rows = [{"sku": p["sku"], "name": p["name"], "uom": p["uom"], "selling_price": p["selling_price"],
+             "specification": p["specification"], "is_active": p["is_active"],
+             "bom_item_count": p["bom_item_count"]} for p in products]
+    active = sum(1 for r in rows if r["is_active"])
+    return rows, {"product_count": len(rows), "active_count": active,
+                  "without_bom": [r["sku"] for r in rows if r["bom_item_count"] == 0]}
+
+
 CURATED = {
     "get_stock_summary": get_stock_summary,
     "get_critical_items": get_critical_items,
@@ -265,6 +279,7 @@ CURATED = {
     "get_open_purchase_orders": get_open_purchase_orders,
     "get_latest_planning_run": get_latest_planning_run,
     "get_bom": get_bom,
+    "list_products": list_products,
     "get_production_schedules": get_production_schedules,
     "get_po_supplier_status": get_po_supplier_status,
 }

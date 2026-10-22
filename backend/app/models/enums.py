@@ -112,6 +112,7 @@ class AutomationOperation(str, enum.Enum):
     CREATE = "CREATE"
     UPDATE = "UPDATE"
     DELETE = "DELETE"
+    PRODUCE = "PRODUCE"      # jadwal produksi baru + PO multi-supplier untuk material yang kurang
 
 
 class AutomationStatus(str, enum.Enum):

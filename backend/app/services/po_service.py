@@ -246,6 +246,26 @@ def delete_po(db: Session, po: PurchaseOrder) -> None:
     db.commit()
 
 
+def cancel_issued(db: Session, po: PurchaseOrder, reason: str) -> PurchaseOrder:
+    """PO yang sudah dikirim ke supplier dibatalkan tanpa dihapus: status CANCELLED, data tetap tersimpan.
+
+    `on_order` turun otomatis (CANCELLED tidak termasuk COUNTED) dan run DRAFT ditandai basi lewat `transition`.
+    Ditolak bila barang sudah diterima (butuh proses retur).
+    """
+    if po.status in NOT_DELETABLE or _has_receipts(po):
+        raise AppError(409, f"PO {po.po_number} sudah menerima barang ({po.status.value}); tidak dapat dibatalkan")
+    transition(db, po, POStatus.CANCELLED)
+    if po.planning_run_id is not None:
+        run = db.get(PlanningRun, po.planning_run_id)
+        if run is not None:
+            run.is_stale = True
+    note = f"Dibatalkan: {reason}"
+    po.notes = (f"{po.notes} · {note}" if po.notes else note)[:500]
+    db.commit()
+    db.refresh(po)
+    return po
+
+
 def apply_supplier_revision(db: Session, po: PurchaseOrder, changes: list[dict]) -> PurchaseOrder:
     """Revisi PO ISSUED (belum ada penerimaan) atas permintaan supplier yang disetujui manajer.
 

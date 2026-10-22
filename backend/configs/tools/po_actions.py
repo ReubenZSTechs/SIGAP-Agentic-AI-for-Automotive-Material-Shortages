@@ -7,19 +7,20 @@ The LLM never calls these with free parameters: callers pass ids taken from DB r
 import re
 from collections import defaultdict
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, literal, select
+from sqlalchemy import and_, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.core.exceptions import AppError
 from app.database import engine
-from app.models import (AutomationAction, Material, POChangeRequest, PORevision, POSupplierConfirmation,
+from app.models import (AutomationAction, Inventory, Material, POChangeRequest, POItem, PORevision,
+                        POSupplierConfirmation,
                         PurchaseOrder, Supplier, SupplierConversation)
 from app.models.enums import (ChangeRequestStatus, ConversationPurpose, ConversationStatus, ItemCategory,
                               PORevisionStatus, POSource, POStatus, SupplierConfirmationStatus)
-from app.services import master_service, po_service
+from app.services import allocation_service, master_service, planning_service, po_service
 from configs.tools.curated import resolve_materials
 
 CS, CRS, SCS, RS = ConversationStatus, ChangeRequestStatus, SupplierConfirmationStatus, PORevisionStatus
@@ -156,6 +157,75 @@ def pick_supplier(links: list[dict], qty: float, exclude_supplier_id: int | None
     # Preferred dulu (kontrak/kesepakatan pembelian), lalu termurah, lalu tercepat, lalu kode (deterministik).
     return min(within_moq, key=lambda l: (not l["is_preferred"], l["unit_price"], l["lead_time_days"],
                                           l["supplier_code"]))
+
+
+def assign_suppliers(db: Session, needs: list[dict], deadline: date | None = None, today: date | None = None,
+                     order_qty=None) -> dict:
+    """Chooses one supplier per material, cross-checked over ALL materials so that fewer POs are needed.
+
+    `needs`: [{material_id, sku, name, uom, qty}]. With `deadline`, only links that can arrive in time
+    (today + lead time <= deadline) are candidates; a material nobody can deliver in time gets its
+    fastest link and a warning. `order_qty(need, link)` gives the quantity ordered from a link
+    (default: the needed qty).
+
+    Greedy cover: repeatedly take the supplier that can supply the most still-unassigned materials
+    (ties: fewer MOQ shortfalls, more preferred links, lower cost, shorter lead time, code), assign
+    those materials to it, repeat. One supplier that sells several of the materials therefore gets
+    them all on one PO, even when another supplier is a little cheaper for one of them.
+
+    Returns {assigned: [(link, need, qty, late)], missing: [need], warnings: [...],
+    extra_cost: consolidated cost - cheapest-per-material cost, saved_pos: POs avoided}.
+    """
+    today = today or date.today()
+    order_qty = order_qty or (lambda need, link: need["qty"])
+    cands, late, missing, warnings = {}, set(), [], []
+    for n, need in enumerate(needs):
+        links = active_links(db, need["material_id"])
+        if not links:
+            missing.append(need)
+            continue
+        ok = [l for l in links if deadline is None or today + timedelta(days=l["lead_time_days"]) <= deadline]
+        if not ok:
+            fastest = min(links, key=lambda l: (l["lead_time_days"], l["unit_price"], l["supplier_code"]))
+            ok, earliest = [fastest], today + timedelta(days=fastest["lead_time_days"])
+            late.add(n)
+            warnings.append(f"{need['sku']}: {fastest['supplier_name']} paling cepat tiba {earliest.isoformat()} "
+                            f"(setelah {deadline.isoformat()})")
+        cands[n] = {l["supplier_id"]: l for l in ok}
+
+    def cost(n, link):
+        return order_qty(needs[n], link) * link["unit_price"]
+
+    unassigned, assigned, chosen_cost = set(cands), [], 0
+    while unassigned:
+        suppliers = {sid for n in unassigned for sid in cands[n]}
+
+        def score(sid):
+            covered = [n for n in unassigned if sid in cands[n]]
+            links = [cands[n][sid] for n in covered]
+            return (-len(covered), sum(needs[n]["qty"] < l["moq"] for n, l in zip(covered, links)),
+                    -sum(l["is_preferred"] for l in links), sum(cost(n, cands[n][sid]) for n in covered),
+                    max(l["lead_time_days"] for l in links), links[0]["supplier_code"])
+        best = min(suppliers, key=score)
+        for n in sorted(n for n in unassigned if best in cands[n]):
+            link = cands[n][best]
+            assigned.append((link, needs[n], order_qty(needs[n], link), n in late))
+            chosen_cost += cost(n, link)
+            unassigned.discard(n)
+    cheapest = sum(min(cost(n, l) for l in cands[n].values()) for n in cands)
+    cheapest_suppliers = {min(cands[n].values(), key=lambda l: (cost(n, l), l["supplier_code"]))["supplier_id"]
+                          for n in cands}
+    used = {a[0]["supplier_id"] for a in assigned}
+    return {"assigned": assigned, "missing": missing, "warnings": warnings,
+            "extra_cost": round(chosen_cost - cheapest), "saved_pos": max(0, len(cheapest_suppliers) - len(used))}
+
+
+def consolidation_note(result: dict) -> str | None:
+    if result["saved_pos"] <= 0:
+        return None
+    extra = result["extra_cost"]
+    cost = f"+{rupiah(extra)} dibanding pemasok termurah per material, " if extra > 0 else ""
+    return f"Material digabung per supplier: {cost}hemat {result['saved_pos']} PO."
 
 
 def _line(link: dict, material: Material | dict, qty: float, needed_by: str | None) -> dict:
@@ -320,9 +390,10 @@ def _resolve_create(db: Session, draft: dict, out: dict, today: date) -> None:
             out["errors"].append({"field": "supplier", "message": message})
         return
     lines, warnings = [], []
-    for m, qty in merged.values():
-        links = active_links(db, m.id)
-        if supplier is not None:
+    if supplier is not None:                                # supplier disebut pengguna: dipakai untuk semua material
+        chosen = []
+        for m, qty in merged.values():
+            links = active_links(db, m.id)
             link = next((l for l in links if l["supplier_id"] == supplier.id), None)
             if link is None:
                 out["ambiguous"].append({
@@ -330,11 +401,18 @@ def _resolve_create(db: Session, draft: dict, out: dict, today: date) -> None:
                     "options": [{"label": f"{l['supplier_code']} {l['supplier_name']} ({rupiah(l['unit_price'])}, "
                                           f"{l['lead_time_days']} hari)", "value": l["supplier_code"]} for l in links]})
                 continue
-        else:
-            link = pick_supplier(links, qty)
-            if link is None:
-                out["errors"].append({"field": "supplier", "message": f"No active supplier can deliver {m.sku} {m.name}."})
-                continue
+            chosen.append((link, m, qty))
+    else:                                                   # pilih supplier lintas material (PO sesedikit mungkin)
+        needs = [{"material_id": m.id, "sku": m.sku, "name": m.name, "uom": m.uom, "qty": qty, "material": m}
+                 for m, qty in merged.values()]
+        pick = assign_suppliers(db, needs)
+        for need in pick["missing"]:
+            out["errors"].append({"field": "supplier",
+                                  "message": f"No active supplier can deliver {need['sku']} {need['name']}."})
+        chosen = [(link, need["material"], qty) for link, need, qty, _ in pick["assigned"]]
+        if consolidation_note(pick):
+            warnings.append(consolidation_note(pick))
+    for link, m, qty in chosen:
         if qty < link["moq"]:
             warnings.append(f"{m.sku}: qty {fmt_qty(qty)} di bawah MOQ {fmt_qty(link['moq'])} {link['supplier_name']}")
         lines.append((link, _line(link, m, qty, needed_by)))
@@ -406,6 +484,108 @@ def _resolve_delete(db: Session, po: PurchaseOrder, out: dict) -> None:
     out["proposal"] = {"operation": "delete", "po": po_snapshot(po), "mode": mode}
 
 
+# ------------------------------ production request (schedule + POs) ------------------------------
+def _incoming_by(db: Session, by: date) -> dict[int, float]:
+    """Open PO quantity per material that is expected by `by`: the supplier's promised delivery date,
+    else the line's needed-by date, must be on or before `by` (undated / late lines do not count)."""
+    counted = or_(*[and_(PurchaseOrder.source == src, PurchaseOrder.status.in_(sts))
+                    for src, sts in planning_service.COUNTED.items()])
+    rows = db.execute(select(POItem.material_id, POItem.qty_ordered - POItem.qty_received, POItem.needed_by_date,
+                             POSupplierConfirmation.promised_delivery_date)
+                      .join(PurchaseOrder, POItem.po_id == PurchaseOrder.id)
+                      .outerjoin(POSupplierConfirmation, POSupplierConfirmation.po_id == PurchaseOrder.id)
+                      .where(counted))
+    out: dict[int, float] = defaultdict(float)
+    for mid, remaining, needed, promised in rows:
+        arrives = promised or needed
+        if arrives is not None and arrives <= by and remaining > 0:
+            out[mid] += remaining
+    return out
+
+
+def _resolve_produce(db: Session, draft: dict, out: dict, today: date) -> None:
+    """"Saya membutuhkan 100 sepeda gunung besok": BOM requirement vs stock, then one PO per supplier for
+    every material that would fall below its safety stock, plus the production schedule itself."""
+    items = draft.get("items") or []
+    if not items:
+        out["missing"].append({"field": "items", "message": "Which product and how many units?"})
+        return
+    when = _parse_date(draft.get("needed_by_date"), "needed_by_date", out, today)
+    if not draft.get("needed_by_date"):
+        out["missing"].append({"field": "needed_by_date", "message": "By which date must the materials be ready "
+                                                                     "(production date)?"})
+    products: dict[int, tuple[Material, int]] = {}
+    for n, it in enumerate(items):
+        found = [m for m in resolve_materials(db, it.get("material_query") or "", (ItemCategory.FINISHED,),
+                                              limit=MAX_OPTIONS) if m.is_active]
+        qty = it.get("qty")
+        if not found:
+            out["errors"].append({"field": f"items.{n}.product",
+                                  "message": f"No finished product matches '{it.get('material_query')}'."})
+        elif len(found) > 1:
+            out["ambiguous"].append({"field": f"items.{n}.product", "message": "Which product?",
+                                     "options": [{"label": f"{m.sku} {m.name}", "value": m.sku} for m in found]})
+        if qty is None or qty <= 0:
+            out["missing"].append({"field": f"items.{n}.qty", "message": "How many units to produce?"})
+        elif float(qty) != int(qty):
+            out["errors"].append({"field": f"items.{n}.qty", "message": "Production quantity must be a whole number."})
+        elif len(found) == 1:
+            m = found[0]
+            products[m.id] = (m, products.get(m.id, (m, 0))[1] + int(qty))
+    if out["missing"] or out["ambiguous"] or out["errors"] or when is None:
+        return
+    need_by = date.fromisoformat(when)
+    requirement: dict[int, float] = defaultdict(float)
+    for m, qty in products.values():
+        try:
+            for mid, q in allocation_service.requirement(db, m.id, qty).items():
+                requirement[mid] += q
+        except AppError as e:
+            out["errors"].append({"field": "bom", "message": f"{m.sku} {m.name}: {e.detail}"})
+    if out["errors"]:
+        return
+    mats = {m.id: m for m in db.scalars(select(Material).where(Material.id.in_(list(requirement))))}
+    invs = {i.material_id: i for i in db.scalars(select(Inventory).where(Inventory.material_id.in_(list(requirement))))}
+    incoming = _incoming_by(db, need_by)
+    check, needs = [], []
+    for mid, req in sorted(requirement.items(), key=lambda kv: mats[kv[0]].sku):
+        m, inv = mats[mid], invs.get(mid)
+        on_hand, allocated, safety = (inv.on_hand, inv.allocated, inv.safety_stock) if inv else (0.0, 0.0, 0.0)
+        available = round(on_hand - allocated, 6)
+        after = round(available - req, 6)
+        arriving = round(incoming.get(mid, 0.0), 6)
+        shortfall = round(max(0.0, safety - (after + arriving)), 6)   # sama dengan rumus run MRP (ke batas aman)
+        check.append({"material_id": mid, "sku": m.sku, "name": m.name, "uom": m.uom, "requirement": req,
+                      "available": available, "available_after": after, "incoming_in_time": arriving,
+                      "safety_stock": safety, "shortfall": shortfall,
+                      "status_without_po": planning_service.classify(after + arriving, safety).value})
+        if shortfall > 0:
+            needs.append({"material_id": mid, "sku": m.sku, "name": m.name, "uom": m.uom, "qty": shortfall})
+    pick = assign_suppliers(db, needs, deadline=need_by, today=today,
+                            order_qty=lambda need, link: max(need["qty"], link["moq"]))
+    for need in pick["missing"]:
+        out["errors"].append({"field": "supplier", "message": f"No active supplier can deliver {need['sku']} {need['name']}."})
+    if out["errors"]:
+        return
+    lines = [(link, _line(link, need, qty, when)) for link, need, qty, _ in pick["assigned"]]
+    pos = _group_by_supplier(db, lines) if lines else []
+    warnings = list(pick["warnings"])
+    if consolidation_note(pick):
+        warnings.append(consolidation_note(pick))
+    schedules = [{"product_id": m.id, "sku": m.sku, "name": m.name, "uom": m.uom, "qty": qty,
+                  "production_date": when} for m, qty in products.values()]
+    out["proposal"] = {"operation": "produce", "request": draft, "schedules": schedules, "materials": check,
+                       "purchase_orders": pos, "grand_total": sum(p["total_amount"] for p in pos),
+                       "needed_by_date": when, "warnings": warnings}
+
+
+def produce_signature(p: dict) -> list:
+    """What must not change between the card and its execution (schedules, PO lines, prices)."""
+    return sorted([("S", s["product_id"], s["qty"], s["production_date"]) for s in p["schedules"]]
+                  + [("L", g["supplier_id"], i["material_id"], i["qty_ordered"], i["unit_price"])
+                     for g in p["purchase_orders"] for i in g["items"]])
+
+
 def resolve_po_request(db: Session, draft: dict, today: date | None = None) -> dict:
     """Matches a parsed request against the DB. Read-only.
 
@@ -417,6 +597,8 @@ def resolve_po_request(db: Session, draft: dict, today: date | None = None) -> d
     out = {"operation": op, "missing": [], "ambiguous": [], "errors": [], "refusal": None, "proposal": None}
     if op == "create":
         _resolve_create(db, draft, out, today)
+    elif op == "produce":
+        _resolve_produce(db, draft, out, today)
     elif op in ("update", "delete"):
         po = _resolve_po_ref(db, draft, out)
         if po is not None:
@@ -487,6 +669,16 @@ def delete_po(db: Session, po_id: int, snapshot: dict | None = None) -> dict:
         _check_snapshot(po, snapshot)
     snap = po_snapshot(po)
     po_service.delete_po(db, po)
+    return snap
+
+
+def cancel_po(db: Session, po_id: int, reason: str, snapshot: dict | None = None) -> dict:
+    """Cancels an issued PO but keeps it (status CANCELLED, "Dibatalkan"); returns the PO snapshot."""
+    po = _get_po(db, po_id)
+    if snapshot is not None:
+        _check_snapshot(po, snapshot)
+    snap = po_snapshot(po)
+    po_service.cancel_issued(db, po, reason)
     return snap
 
 
@@ -611,11 +803,87 @@ def record_initial_revision(db: Session, po: PurchaseOrder, snapshot: dict | Non
 
 
 def finalize_po_revision(db: Session, po: PurchaseOrder) -> PORevision:
-    """The supplier confirmed without further changes: the latest version becomes FINAL."""
+    """The supplier confirmed without further changes: the latest version becomes FINAL, together with
+    the agreed delivery date and supplier reference (shown on the final PDF)."""
     rev = record_initial_revision(db, po)
-    rev.snapshot, rev.status, rev.finalized_at = po_snapshot(po), RS.FINAL, now()
+    conf = confirmation(db, po.id)
+    rev.snapshot = {**po_snapshot(po), "promised_delivery_date": _iso(conf.promised_delivery_date),
+                    "supplier_reference": conf.supplier_reference}
+    rev.status, rev.finalized_at = RS.FINAL, now()
     db.flush()
     return rev
+
+
+# ------------------------------- confirmation details (required) -------------------------------
+CONFIRMATION_FIELDS = {"promised_delivery_date": "tanggal pengiriman",
+                       "supplier_reference": "nomor referensi/pesanan dari pihak Anda"}
+
+
+def collect_confirmation(conv: SupplierConversation, values: dict, required: list[str]) -> list[str]:
+    """Adds the confirmation details given in this message to those collected earlier in the
+    conversation; returns the required fields that are still missing (in `required` order)."""
+    collected = dict((conv.outcome or {}).get("collected") or {})
+    for field in CONFIRMATION_FIELDS:
+        value = (values.get(field) or "").strip() if isinstance(values.get(field), str) else values.get(field)
+        if value:
+            collected[field] = value
+    if collected.get("promised_delivery_date"):
+        try:
+            if date.fromisoformat(collected["promised_delivery_date"]) < date.today():
+                collected.pop("promised_delivery_date")          # tanggal lampau: minta ulang
+        except ValueError:
+            collected.pop("promised_delivery_date")
+    conv.outcome = {**(conv.outcome or {}), "collected": collected}
+    return [f for f in required if not collected.get(f)]
+
+
+def update_promised_date(db: Session, po: PurchaseOrder, promised: str) -> list[dict]:
+    """A supplier gives a (new) delivery date for a confirmed PO: stored on the confirmation and on the
+    FINAL version. Returns the lines whose needed-by date is earlier (the manager is told)."""
+    d = date.fromisoformat(promised)
+    conf = confirmation(db, po.id)
+    conf.promised_delivery_date = d
+    conf.note = f"Tanggal kirim diperbarui supplier: {d.isoformat()}"
+    final = next((r for r in reversed(revisions(db, po.id)) if r.status == RS.FINAL), None)
+    if final is not None:
+        final.snapshot = {**final.snapshot, "promised_delivery_date": d.isoformat()}
+    db.flush()
+    return [{"sku": i.sku, "name": i.name, "needed_by_date": _iso(i.needed_by_date)}
+            for i in po.items if i.needed_by_date and i.needed_by_date < d]
+
+
+def valid_future_date(value) -> str | None:
+    """YYYY-MM-DD from an agent field, or None when missing, invalid or in the past."""
+    try:
+        d = date.fromisoformat(str(value).strip()) if value else None
+    except ValueError:
+        return None
+    return d.isoformat() if d and d >= date.today() else None
+
+
+def missing_fields_text(po_number: str, missing: list[str]) -> str:
+    asks = " dan ".join(CONFIRMATION_FIELDS.get(f, f) for f in missing)
+    return f"Terima kasih atas konfirmasinya untuk {po_number}. Mohon informasikan {asks} agar PO dapat kami finalkan."
+
+
+def split_promised_dates(po: PurchaseOrder, proposed: list[dict]) -> tuple[str | None, list[dict]]:
+    """A delivery date for a line that has no needed-by date is the supplier's promise, not a revision.
+
+    Returns (latest such date as YYYY-MM-DD or None, the remaining proposed changes).
+    """
+    promised, rest = None, []
+    for pc in proposed or []:
+        line = _match_line(po, pc.get("material_ref"))
+        if _FIELD.get(pc.get("field")) == "needed_by_date" and line is not None and line.needed_by_date is None:
+            try:
+                d = date.fromisoformat(str(pc.get("new_value")).strip()).isoformat()
+            except ValueError:
+                rest.append(pc)
+                continue
+            promised = max(promised or d, d)
+            continue
+        rest.append(pc)
+    return promised, rest
 
 
 # ---------------------------------- supplier revisions ----------------------------------
@@ -704,7 +972,8 @@ def open_change_request(db: Session, conv: SupplierConversation, proposed: list[
     conf = confirmation(db, po.id)
     snap = po_snapshot(po)
     options = [{"key": "abort", "label": "Batalkan PO",
-                "effect": f"{po.po_number} dihapus (stok on-order dikembalikan) dan supplier diberi tahu."}]
+                "effect": f"{po.po_number} dibatalkan (status Dibatalkan, data PO tetap tersimpan; stok on-order "
+                          "dikembalikan) dan supplier diberi tahu."}]
     if valid and not invalid and po.status == POStatus.ISSUED and not _has_receipts(po) \
             and conf.revision_round < max_revision_rounds:
         changes = {(c["po_item_id"], c["field"]): c["new"] for c in valid}
@@ -721,7 +990,8 @@ def open_change_request(db: Session, conv: SupplierConversation, proposed: list[
     if alternatives:
         names = ", ".join(g["supplier_name"] for g in alternatives)
         options.append({"key": "resource", "label": "Pesan ke supplier lain",
-                        "effect": f"PO baru diterbitkan ke {names}; {po.po_number} dihapus dan supplier lama diberi tahu.",
+                        "effect": f"PO baru diterbitkan ke {names}; {po.po_number} dibatalkan (tetap tersimpan) dan "
+                                  "supplier lama diberi tahu.",
                         "purchase_orders": alternatives,
                         "grand_total": sum(g["total_amount"] for g in alternatives)})
     cr = POChangeRequest(po_id=po.id, po_number=po.po_number, po_snapshot=snap, conversation_id=conv.id,
@@ -764,13 +1034,16 @@ def apply_change_request(db: Session, cr: POChangeRequest, choice: str, actor: s
         if conv:
             close_conversation(conv, CS.CLOSED, change_request_id=cr.id, result="change_approved")
         new_conv = queue_conversation(db, po, ConversationPurpose.REVISION_CONFIRM, action_id, change_request_id=cr.id)
+        collected = (conv.outcome or {}).get("collected") if conv else None
+        if collected:                                       # mis. tanggal kirim yang sudah disebut supplier
+            new_conv.outcome = {"collected": collected}
         result["queued_conversations"].append(new_conv.id)
         result["total_after"] = po.total_amount
         cr.status = CRS.CHANGE_APPROVED
     elif choice == "abort":
         if conv:
             close_conversation(conv, CS.CLOSED, change_request_id=cr.id, result="aborted")
-        snap = delete_po(db, po.id)
+        snap = cancel_po(db, po.id, "manajer menolak permintaan revisi supplier")
         result["notices"].append({"supplier_id": cr.supplier_id, "conversation_id": cr.conversation_id, "snapshot": snap})
         note_action(db, action_id, supplier_outcome=f"{snap['po_number']} dibatalkan manajer setelah permintaan revisi")
         cr.status = CRS.ABORTED
@@ -783,7 +1056,7 @@ def apply_change_request(db: Session, cr: POChangeRequest, choice: str, actor: s
             result["queued_conversations"].append(new_conv.id)
         if conv:
             close_conversation(conv, CS.CLOSED, change_request_id=cr.id, result="resourced")
-        snap = delete_po(db, po.id)
+        snap = cancel_po(db, po.id, "dialihkan ke " + ", ".join(p["po_number"] for p in result["new_pos"]))
         result["notices"].append({"supplier_id": cr.supplier_id, "conversation_id": cr.conversation_id, "snapshot": snap})
         note_action(db, action_id, supplier_outcome=f"{snap['po_number']} dialihkan ke "
                                                     + ", ".join(p["po_number"] for p in result["new_pos"]))
@@ -798,6 +1071,7 @@ WRITE_TOOLS = {
     "create_and_issue_po": create_and_issue_po,
     "update_draft_po": update_draft_po,
     "delete_po": delete_po,
+    "cancel_po": cancel_po,
     "request_po_cancellation": request_po_cancellation,
     "queue_conversation": queue_conversation,
     "ensure_confirm_conversation": ensure_confirm_conversation,

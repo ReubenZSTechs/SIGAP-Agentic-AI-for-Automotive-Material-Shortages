@@ -1,4 +1,6 @@
 """Supplier Telegram agent in sandbox mode: outreach, confirmation, cancellation, linking, escalation."""
+from datetime import date, timedelta
+
 from app.database import SessionLocal
 from app.models import PlanningRun, PurchaseOrder
 from app.models.enums import ConversationPurpose, PlanningRunStatus
@@ -22,19 +24,19 @@ def test_opening_message_has_exact_po_summary(seeded):
 
 def test_supplier_confirmation_updates_po_confirmation(seeded):
     po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 20)
-    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed", promised="2026-10-25", ref="SO-77")})
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed", promised=F.SOON, ref="SO-77")})
     chat = H.link(svc, seeded, "SUP-KRT")
     cid = H.start(svc, po_id)
     result = svc.handle_inbound(chat, "Siap, kami kirim tanggal 25")
     assert result["conversation_status"] == "CONFIRMED"
     assert H.confirmation_status(po_id) == "CONFIRMED"
     conv = H.conversation(cid)
-    assert conv.status.value == "CONFIRMED" and conv.outcome["promised_delivery_date"] == "2026-10-25"
+    assert conv.status.value == "CONFIRMED" and conv.outcome["promised_delivery_date"] == F.SOON
     reply, pdf = H.messages("OUT", chat)[-2:]
     assert reply.text == "Terima kasih." and pdf.agent_output["source"] == "po_pdf"    # balasan, lalu PDF final
 
 
-def test_cancellation_confirmed_deletes_po_and_reverts_stock(client, seeded):
+def test_cancellation_confirmed_cancels_po_keeps_record_and_reverts_stock(client, seeded):
     po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 20)
     assert H.on_order("RM-TUB-01") == 20
     with SessionLocal() as db:                               # run DRAFT yang harus jadi basi
@@ -48,9 +50,10 @@ def test_cancellation_confirmed_deletes_po_and_reverts_stock(client, seeded):
         cid = conv.id
     svc.dispatch_queued()
     svc.handle_inbound(chat, "Oke, PO dibatalkan")
-    assert H.po(po_id) is None and H.on_order("RM-TUB-01") == 0
+    po = H.po(po_id)
+    assert po.status.value == "CANCELLED" and "Dibatalkan" in po.notes and H.on_order("RM-TUB-01") == 0
     conv = H.conversation(cid)
-    assert conv.status.value == "CANCEL_CONFIRMED" and conv.po_id is None and conv.po_snapshot["id"] == po_id
+    assert conv.status.value == "CANCEL_CONFIRMED" and conv.po_id == po_id     # PO tetap ada (Dibatalkan)
     with SessionLocal() as db:
         assert all(r.is_stale for r in db.query(PlanningRun))
 
@@ -98,7 +101,7 @@ def test_unclear_replies_escalate_after_max_turns(seeded):
 
 def test_one_active_conversation_per_supplier(seeded):
     first, second = (H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 5), H.issue_po(seeded, "RM-RUB-01", "SUP-KRT", 5))
-    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed")})
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed", promised=F.SOON)})
     chat = H.link(svc, seeded, "SUP-KRT")
     c1, c2 = H.start(svc, first), H.start(svc, second)
     assert (H.conversation(c1).status.value, H.conversation(c2).status.value) == ("AWAITING_SUPPLIER", "QUEUED")
@@ -110,7 +113,7 @@ def test_sandbox_api_round_trip(client, seeded):
     """The ops API path: link, start, reply as supplier via HTTP."""
     import app.api.v1.endpoints.supplier_chat as ep
     po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 5)
-    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed")})
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed", promised=F.SOON)})
     client.app.dependency_overrides[ep.service] = lambda: svc
     try:
         sid = seeded["suppliers"]["SUP-KRT"]
@@ -165,3 +168,56 @@ def test_issuing_from_po_page_queues_one_supplier_confirmation(client, seeded):
     assert H.confirmation_status(po["id"]) == "PENDING"
     with A.write_session() as db:                                       # jalur lain (mis. Hub) tidak menggandakan
         assert A.ensure_confirm_conversation(db, db.get(PurchaseOrder, po["id"])) is None
+
+
+# ------------------------- required confirmation fields (your Telegram sequence) -------------------------
+def test_confirmation_without_date_asks_for_it_then_sends_one_final_pdf(seeded):
+    transport = H.RecordingTransport()
+    po_id = H.issue_po(seeded, "RM-SBR-01", "SUP-CPT", 1000)
+    number = H.po(po_id).po_number
+    svc, fake = H.supplier_service({**SCRIPT, "SupplierReplyOutput": [
+        F.reply("confirmed", "Terima kasih atas konfirmasinya."),           # "Bisa" (tanpa tanggal)
+        F.reply("unclear", "Baik.", promised=F.SOON)],                       # "Tanggal …" (agent ragu)
+        "SupplierInboundTriageOutput": [F.triage(number, "acknowledgement", "Sama-sama, sudah kami catat."),
+                                        F.triage(number, "delivery_update", "Siap.", promised=F.SOON)]},
+        transport=transport)
+    chat = H.link(svc, seeded, "SUP-CPT")
+    cid = H.start(svc, po_id)
+
+    svc.handle_inbound(chat, "Bisa")
+    conv = H.conversation(cid)
+    assert conv.status.value == "AWAITING_SUPPLIER" and conv.outcome["confirmed_pending"] is True
+    assert "Mohon informasikan tanggal pengiriman" in H.messages("OUT", chat)[-1].text
+    assert transport.documents == [] and H.confirmation_status(po_id) == "PENDING"
+
+    svc.handle_inbound(chat, "Tanggal pengirimannya nanti")
+    payload = __import__("json").loads([c for c in fake.calls if c["agent"] == "SupplierReplyOutput"][-1]["messages"][-1]["content"])
+    assert payload["already_confirmed"] is True and payload["still_needed"] == ["tanggal pengiriman"]
+    assert H.confirmation_status(po_id) == "CONFIRMED" and len(transport.documents) == 1
+    final = H.revisions(po_id)[-1]
+    assert final.status.value == "FINAL" and final.snapshot["promised_delivery_date"] == F.SOON
+
+    svc.handle_inbound(chat, "Sudah sesuai")                              # setelah final: hanya terima kasih
+    assert len(transport.documents) == 1 and len(H.conversations()) == 1
+    assert H.messages("OUT", chat)[-1].text == f"Terima kasih, {number} sudah tercatat terkonfirmasi."
+
+    later = (date.today() + timedelta(days=9)).isoformat()
+    fake.script["SupplierInboundTriageOutput"] = [F.triage(number, "delivery_update", "Siap.", promised=later)]
+    svc.handle_inbound(chat, "Ternyata baru bisa kirim tanggal itu")
+    assert H.messages("OUT", chat)[-1].text == f"Terima kasih. Tanggal kirim {number} kami catat: {later}."
+    with SessionLocal() as db:
+        assert A.confirmation(db, po_id).promised_delivery_date.isoformat() == later
+    assert H.revisions(po_id)[-1].snapshot["promised_delivery_date"] == later and len(transport.documents) == 1
+
+
+def test_required_fields_are_configurable(seeded):
+    po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 5)
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": [F.reply("confirmed", promised=F.SOON),
+                                                                  F.reply("confirmed", ref="SO-9")]},
+                                required_confirmation_fields=["promised_delivery_date", "supplier_reference"])
+    chat = H.link(svc, seeded, "SUP-KRT")
+    H.start(svc, po_id)
+    svc.handle_inbound(chat, "Siap, kirim minggu depan")
+    assert H.confirmation_status(po_id) == "PENDING" and "nomor referensi" in H.messages("OUT", chat)[-1].text
+    svc.handle_inbound(chat, "No SO-9")
+    assert H.confirmation_status(po_id) == "CONFIRMED" and H.revisions(po_id)[-1].snapshot["supplier_reference"] == "SO-9"

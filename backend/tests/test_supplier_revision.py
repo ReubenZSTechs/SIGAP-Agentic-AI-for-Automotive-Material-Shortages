@@ -38,7 +38,7 @@ def test_revision_request_offers_all_three_options(seeded):
 def test_approve_change_revises_po_and_asks_supplier_to_reconfirm(seeded):
     po_id, cid, chat, svc, fake = _revision(seeded)
     [cr] = H.change_requests()
-    fake.script["SupplierReplyOutput"] = [F.reply("confirmed")]
+    fake.script["SupplierReplyOutput"] = [F.reply("confirmed", promised=F.SOON)]
     svc.handle_button(svc.manager_chat_id, f"cr:{cr.id}:approve_change")
     po = H.po(po_id)
     assert po.items[0].qty_ordered == 40 and po.total_amount == 40 * 35_000
@@ -63,7 +63,7 @@ def test_approve_change_revises_po_and_asks_supplier_to_reconfirm(seeded):
 def test_first_confirmation_saves_v1_as_final_and_sends_pdf(seeded):
     transport = H.RecordingTransport()
     po_id = H.issue_po(seeded, "RM-RUB-01", "SUP-KRT", 50)
-    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed")}, transport=transport)
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed", promised=F.SOON)}, transport=transport)
     chat = H.link(svc, seeded, "SUP-KRT")
     H.start(svc, po_id)
     [v1] = H.revisions(po_id)
@@ -93,7 +93,7 @@ def test_hub_decision_removes_telegram_buttons_and_logs_once(seeded):
     options = H.messages("MANAGER_OUT")[-1]
     with SessionLocal() as db:
         assert [b["state"] for b in manager.manager_thread(db)["messages"][-1]["buttons"]] == ["active"] * 3
-    fake.script["SupplierReplyOutput"] = [F.reply("confirmed")]
+    fake.script["SupplierReplyOutput"] = [F.reply("confirmed", promised=F.SOON)]
     approvals.choose_change_request(svc, cr.id, "approve_change", "Rina")
     assert (svc.manager_chat_id, options.telegram_message_id, None) in transport.edited
     assert any("Diputuskan via Hub oleh Rina" in text for _, text, _ in transport.sent)
@@ -128,11 +128,11 @@ def test_parse_rupiah_formats():
             parse_rupiah(bad)
 
 
-def test_abort_deletes_po_and_notifies_supplier(seeded):
+def test_abort_cancels_po_keeps_record_and_notifies_supplier(seeded):
     po_id, _, chat, svc, _ = _revision(seeded)
     [cr] = H.change_requests()
     svc.handle_button(svc.manager_chat_id, f"cr:{cr.id}:abort")
-    assert H.po(po_id) is None and H.on_order("RM-RUB-01") == 0
+    assert H.po(po_id).status.value == "CANCELLED" and H.on_order("RM-RUB-01") == 0
     assert H.change_requests()[0].status.value == "ABORTED"
     assert H.messages("OUT", chat)[-1].text.startswith(F.OUTREACH["message_text"])     # pemberitahuan penarikan
 
@@ -142,9 +142,9 @@ def test_resource_issues_new_po_to_alternative_supplier(seeded):
     rbr_chat = H.link(svc, seeded, "SUP-RBR")
     [cr] = H.change_requests()
     svc.handle_button(svc.manager_chat_id, f"cr:{cr.id}:resource")
-    assert H.po(po_id) is None
+    assert H.po(po_id).status.value == "CANCELLED"
     with SessionLocal() as db:
-        [new] = db.query(PurchaseOrder).all()
+        [new] = db.query(PurchaseOrder).filter(PurchaseOrder.status == "ISSUED").all()   # yang lama: CANCELLED
         assert new.supplier.code == "SUP-RBR" and new.status.value == "ISSUED" and new.items[0].qty_ordered == 50
         assert new.decided_by == "Manager via Telegram" and new.po_number != cr.po_number
     assert H.on_order("RM-RUB-01") == 50
@@ -165,7 +165,7 @@ def test_no_resource_option_without_alternative_supplier(seeded):
 def test_new_chat_after_confirmation_is_triaged_into_a_revision(seeded):
     po_id = H.issue_po(seeded, "RM-RUB-01", "SUP-KRT", 50)
     number = H.po(po_id).po_number
-    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": [F.reply("confirmed"), QTY_40],
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": [F.reply("confirmed", promised=F.SOON), QTY_40],
                                  "SupplierInboundTriageOutput": F.triage(number, "revision_request")})
     chat = H.link(svc, seeded, "SUP-KRT")
     H.start(svc, po_id)
@@ -231,3 +231,23 @@ def test_pick_supplier_policy():
     assert pick_supplier([link(1, 90, 5, moq=500)], 10)["supplier_id"] == 1            # satu-satunya -> tetap diusulkan
     assert pick_supplier([cheap, fast], 10, exclude_supplier_id=1)["supplier_id"] == 2  # re-sourcing
     assert pick_supplier([cheap], 10, exclude_supplier_id=1) is None
+
+
+def test_delivery_date_on_undated_line_is_a_promise_not_a_revision(seeded):
+    reply = F.reply("change_requested", changes=[F.change("RM-RUB-01", "needed_by_date", F.SOON)])
+    po_id, _, _, _, _ = _revision(seeded, reply=reply)
+    assert H.change_requests() == [] and H.confirmation_status(po_id) == "CONFIRMED"
+    assert H.revisions(po_id)[-1].snapshot["promised_delivery_date"] == F.SOON
+
+
+def test_promised_date_given_with_a_revision_is_kept_for_the_final_confirmation(seeded):
+    reply = F.reply("change_requested", changes=[F.change("RM-RUB-01", "qty", "40"),
+                                                 F.change("RM-RUB-01", "needed_by_date", F.SOON)])
+    po_id, _, chat, svc, fake = _revision(seeded, reply=reply)
+    [cr] = H.change_requests()
+    assert [c["field"] for c in cr.proposed_changes] == ["qty_ordered"]          # tanggal bukan revisi
+    fake.script["SupplierReplyOutput"] = [F.reply("confirmed")]                  # "ok" tanpa tanggal lagi
+    svc.handle_button(svc.manager_chat_id, f"cr:{cr.id}:approve_change")
+    svc.handle_inbound(chat, "Oke, 40 kami konfirmasi")
+    assert H.confirmation_status(po_id) == "CONFIRMED"
+    assert H.revisions(po_id)[-1].snapshot["promised_delivery_date"] == F.SOON

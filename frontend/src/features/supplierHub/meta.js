@@ -35,6 +35,7 @@ export function fmt(v, unit) {
 // Selisih numerik atau tanggal. tone mengikuti arti bisnis (direction), bukan arah angka.
 export function delta(r) {
   let value; let text;
+  if (r.before == null || r.after == null) return null; // nilai lama kosong (mis. tanggal belum diisi): tanpa selisih
   if (r.unit === 'date') {
     value = Math.round((new Date(r.after) - new Date(r.before)) / 864e5);
     text = `${value > 0 ? '+' : ''}${value} hari`;

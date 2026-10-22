@@ -119,7 +119,7 @@ def test_po_revision_listed_and_decided_from_hub(hub, seeded):
     assert card["diff"]["rows"][0]["before"] == 50 and card["diff"]["rows"][0]["after"] == 40
     assert client.get(f"{API}/status").json()["pending"] == 1
 
-    fake.script["SupplierReplyOutput"] = [F.reply("confirmed")]
+    fake.script["SupplierReplyOutput"] = [F.reply("confirmed", promised=F.SOON)]
     r = client.post(f"{API}/approvals/cr-{cr.id}/choose", json={**WHO, "choice": "approve_change"})
     assert r.status_code == 200, r.text
     assert H.po(po_id).items[0].qty_ordered == 40
@@ -145,7 +145,7 @@ def test_resource_from_hub_uses_hub_actor(hub, seeded):
     r = client.post(f"{API}/approvals/cr-{cr.id}/choose", json={**WHO, "choice": "resource"})
     assert r.status_code == 200, r.text
     new_id = r.json()["new_pos"][0]["id"]
-    assert H.po(new_id).decided_by == "Rina via Hub" and H.po(po_id) is None
+    assert H.po(new_id).decided_by == "Rina via Hub" and H.po(po_id).status.value == "CANCELLED"
 
 
 # ------------------------------------------------- missions -------------------------------------------------
@@ -208,7 +208,7 @@ def test_stale_price_card_blocks_approval(hub, seeded):
 
 def test_mission_waits_while_po_conversation_is_open(hub, seeded):
     client, make = hub
-    svc, fake = make({"SupplierReplyOutput": F.reply("confirmed"),
+    svc, fake = make({"SupplierReplyOutput": F.reply("confirmed", promised=F.SOON),
                       "MissionReplyOutput": mission_reply(items=[quote("RM-TUB-01", qty=30)])})
     po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 20)
     chat = link(client, seeded, "SUP-KRT")
@@ -330,7 +330,7 @@ def test_pause_stops_mission_sending(hub, seeded):
 # ------------------------------------------------ threads ------------------------------------------------
 def test_takeover_blocks_agent_and_allows_manual_message(hub, seeded):
     client, make = hub
-    svc, fake = make({"SupplierReplyOutput": F.reply("confirmed")})
+    svc, fake = make({"SupplierReplyOutput": F.reply("confirmed", promised=F.SOON)})
     po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 20)
     chat = link(client, seeded, "SUP-KRT")
     H.start(svc, po_id)

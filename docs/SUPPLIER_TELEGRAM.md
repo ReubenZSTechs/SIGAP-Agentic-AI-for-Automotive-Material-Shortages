@@ -4,8 +4,8 @@ A background agent talks to suppliers on **Telegram** about purchase orders. It 
 
 | Situation | The agent… | When the supplier answers |
 |:--|:--|:--|
-| A PO was issued (e.g. by [PO automation](AUTOMATION.md)) | asks the supplier to **confirm** the order and its delivery date | confirmed → PO confirmation `CONFIRMED` (with promised date / supplier reference) |
-| A user asked to delete an ISSUED PO | asks the supplier to agree to the **cancellation** | agreed → PO **deleted** and stock reverted; refused → **manager notified** |
+| A PO was issued (e.g. by [PO automation](AUTOMATION.md)) | asks the supplier to **confirm** the order and its delivery date | confirmed **and every required field given** (delivery date by default) → PO confirmation `CONFIRMED`, version FINAL, final PDF sent |
+| A user asked to delete an ISSUED PO | asks the supplier to agree to the **cancellation** | agreed → PO **cancelled** (kept on record as *Dibatalkan*) and on-order released; refused → **manager notified** |
 | The supplier asks to **revise** a PO (qty, price, delivery date), during a chat or in a new chat later | sends the manager the options **abort / approve change / re-source** (Telegram buttons **and** the Hub) | manager approves → PO updated, a new PO version is saved, and the supplier gets **only the changes** to confirm; re-source → new PO to another supplier |
 | No response, unclear answers, a refusal | sends reminders, then escalates to the manager with the full context | — |
 
@@ -155,9 +155,9 @@ sequenceDiagram
 
 | Option | Offered when | Effect |
 |:--|:--|:--|
-| `abort` | always | hard delete (see [AUTOMATION.md §5](AUTOMATION.md#5-stock--planning-effects-of-a-delete)) + withdrawal notice |
+| `abort` | always | PO **cancelled** (`CANCELLED`, *Dibatalkan*, kept on record; on-order released, planning runs stale) + withdrawal notice |
 | `approve_change` | every requested change maps to a line of this PO and is valid (qty > 0, price ≥ 0, date ≥ PO date); PO still ISSUED with no receipts; revision rounds < `max_revision_rounds` | PO lines updated (new totals shown up front), new PO version saved, supplier gets the list of changes to confirm |
-| `resource` | `find_alternative_suppliers()` finds another active supplier for **every** line (same `pick_supplier` policy as PO automation) | new ISSUED PO(s) per alternative supplier (`decided_by = "Manager via Telegram"`), original deleted, old supplier notified, new supplier asked to confirm |
+| `resource` | `find_alternative_suppliers()` finds another active supplier for **every** line (same `pick_supplier` policy as PO automation) | new ISSUED PO(s) per alternative supplier (`decided_by = "Manager via Telegram"`), original **cancelled** (kept on record), old supplier notified, new supplier asked to confirm |
 
 - **New chats are picked up.** If a supplier writes while no conversation is open (e.g. a revision after confirming), `supplier_inbound_triage` matches the message to one of their open POs and opens a conversation for it, which then runs the same flow. If the PO is unclear, the agent asks which PO number.
 - **Free-text manager replies** (e.g. "setujui saja") go through `manager_decision_agent`. They never run directly: the agent asks for one confirmation button first (`crc:<id>:<choice>` / `crx:<id>`).
@@ -182,10 +182,27 @@ The PO row always holds the latest values; `po_revisions` keeps the history and 
 
 | Purpose | `confirmed` | `declined` | `change_requested` | `question` / `unclear` |
 |:--|:--|:--|:--|:--|
-| CONFIRM_ORDER / REVISION_CONFIRM | `record_supplier_confirmation` → CONFIRMED, `finalize_po_revision` → FINAL, final PDF sent | `record_supplier_decline` → DECLINED + manager notice | `open_change_request` → manager options (if nothing concrete: ask for specifics) | reply, keep waiting; escalate after `max_turns` |
-| CANCEL_ORDER | re-check PO (ISSUED, no receipts) → `delete_po` → CANCEL_CONFIRMED | restore previous confirmation → DECLINED + manager asked to call the supplier | treated as refusal | reply, keep waiting; escalate after `max_turns` |
+| CONFIRM_ORDER / REVISION_CONFIRM | required fields complete → `record_supplier_confirmation` → CONFIRMED, `finalize_po_revision` → FINAL, final PDF sent; otherwise ask for the missing fields (no PDF) | `record_supplier_decline` → DECLINED + manager notice | `open_change_request` → manager options (if nothing concrete: ask for specifics) | reply, keep waiting; escalate after `max_turns` |
+| CANCEL_ORDER | re-check PO (ISSUED, no receipts) → `cancel_po` (CANCELLED, kept) → CANCEL_CONFIRMED | restore previous confirmation → DECLINED + manager asked to call the supplier | treated as refusal | reply, keep waiting; escalate after `max_turns` |
 
 If the PO is gone or no longer ISSUED/PARTIALLY_RECEIVED when a reply arrives, the conversation closes and the manager is notified (`po_changed`).
+
+### Required confirmation fields
+
+`supplier_chat.required_confirmation_fields` (default `[promised_delivery_date]`; `supplier_reference` can be added) lists what the supplier must give before a PO is final:
+
+- **Partial confirmation.** A confirmation without them (e.g. *"Bisa"*) is remembered: the conversation gets `outcome.confirmed_pending` and `outcome.collected`. The supplier gets a fixed question for exactly what is missing, the confirmation stays `PENDING`, and no PDF is sent.
+- **Completing it.** The agent is told `already_confirmed` / `still_needed`. A later message with the missing data (*"Tanggal 24 Oktober"*) completes the confirmation. As a backstop that doesn't rely on the LLM, an unclear reply that still carries the data counts as complete. Then CONFIRMED, FINAL, and one PDF showing *Janji kirim* / *Ref. supplier*.
+- **A delivery date is not a revision.** A delivery date for a line that has no needed-by date is the supplier's promise. `split_promised_dates` takes it out of `proposed_changes`. Given together with a real revision, it is carried into the REVISION_CONFIRM conversation.
+
+### Messages after the PO is final (triage)
+
+| Triage intent on a CONFIRMED PO | What happens |
+|:--|:--|
+| `acknowledgement` / `confirmation` (*"Sudah sesuai"*) | fixed thank-you; **no** new conversation, **no** second PDF |
+| `delivery_update` with a date | stored on the confirmation and the FINAL version; fixed reply *"Tanggal kirim … kami catat: …"*; manager notified if it is later than a needed-by date |
+
+The triage agent may not claim to have recorded anything. Every "kami catat" comes from code, after the write.
 
 ## Agents
 
@@ -310,6 +327,7 @@ supplier_chat:
   poll_timeout_s: 25
   idle_sleep_s: 5
   manager_actor: "Manager via Telegram"
+  required_confirmation_fields: [promised_delivery_date]   # + supplier_reference
 ```
 
 ## 13. Security

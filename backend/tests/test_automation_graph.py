@@ -204,3 +204,126 @@ def test_rewriter_sees_what_a_proposal_card_contained(seeded):
     history = json.loads([c for c in fake.calls if c["agent"] == "PromptRewriterOutput"][-1]["messages"][-1]["content"])
     card_line = next(h["content"] for h in history["conversation_history"] if "[Kartu usulan PO" in h["content"])
     assert "RM-SBR-01 Rangka Besi Dudukan Jok 100 Buah" in card_line and "SUP-CPT" in card_line
+
+
+# ------------------------------ production request: schedule + multi-PO ------------------------------
+from datetime import date, timedelta  # noqa: E402
+
+from app.models import Inventory, Schedule  # noqa: E402
+from configs.tools import po_actions as A  # noqa: E402
+
+
+def _produce(qty: int, days: int) -> dict:
+    return F.parsed(operation="produce", items=[F.item("Sepeda Gunung", qty)],
+                    needed_by_date=(date.today() + timedelta(days=days)).isoformat())
+
+
+def _po_tables(card: dict) -> dict[str, list]:
+    return {t["title"].split(" ")[0]: t["rows"] for t in card["tables"][1:]}
+
+
+def test_production_request_schedules_and_orders_from_the_fewest_suppliers(seeded):
+    calls = []
+    svc, _ = _service({"AutomationParserOutput": _produce(100, 10)}, calls)
+    out = svc.run("Saya membutuhkan 100 sepeda gunung, materialnya harus siap 10 hari lagi", "thread-prod-1")
+    aid = _action_id(out)
+    card = out["actions"][aid]
+    assert card["kind"] == "produce" and card["title"] == "Jadwal produksi & PO"
+    check = {r[0]: r for r in card["tables"][0]["rows"]}
+    assert check["RM-STEEL-01"][5] == "100" and check["RM-SBR-01"][5] == "65" and check["RM-TUB-01"][5] == "–"
+    pos = _po_tables(card)
+    assert set(pos) == {"SUP-CPT", "SUP-KRT", "SUP-MKM"}                    # BJU lebih murah utk baja, tapi CPT
+    assert {r[0] for r in pos["SUP-CPT"]} == {"RM-STEEL-01", "RM-SBR-01"}   # juga memasok rangka jok: 1 PO saja
+    assert any("+Rp100.000" in w and "hemat 1 PO" in w for w in card["warnings"])
+
+    done = svc.run(None, "thread-prod-1", {"action_id": aid, "decision": "approve"})
+    assert done["action_updates"][aid]["status"] == "approved"
+    when = date.today() + timedelta(days=10)
+    with SessionLocal() as db:
+        [s] = db.query(Schedule).all()
+        assert (s.target_qty, s.production_date, s.status.value) == (100, when, "PLANNED")
+        steel = db.scalar(select(Inventory).where(Inventory.material_id == seeded["materials"]["RM-STEEL-01"]))
+        assert steel.allocated == 150                                        # halaman material: stok terkunci
+    issued = [p for p in _pos() if p.status.value == "ISSUED"]
+    assert len(issued) == 3 and all(i.needed_by_date == when for p in issued for i in p.items)
+    assert all(s.batch_code in p.notes for p in issued) and H.on_order("RM-STEEL-01") == 100
+    assert len(H.conversations()) == 3 and calls == ["dispatch"]
+    assert H.action(aid).status.value == "AWAITING_SUPPLIER" and H.action(aid).result["schedules"][0]["qty"] == 100
+
+
+def test_production_for_tomorrow_uses_fastest_suppliers_with_warnings(seeded):
+    svc, _ = _service({"AutomationParserOutput": _produce(100, 1)})
+    card = svc.run("butuh 100 sepeda gunung besok", "thread-prod-2")
+    card = card["actions"][_action_id(card)]
+    pos = _po_tables(card)
+    assert set(pos) == {"SUP-CPT", "SUP-RBR", "SUP-IND"}                    # RBR satu-satunya yang tepat waktu
+    late = [w for w in card["warnings"] if "paling cepat tiba" in w]
+    assert len(late) == 3 and any(w.startswith("RM-PDL-01: PT Industri Lokal") for w in late)
+
+
+def test_production_with_enough_stock_only_schedules(seeded):
+    svc, _ = _service({"AutomationParserOutput": _produce(1, 3)})
+    out = svc.run("rencanakan produksi 1 sepeda gunung", "thread-prod-3")
+    aid = _action_id(out)
+    assert len(out["actions"][aid]["tables"]) == 1                          # hanya cek material
+    svc.run(None, "thread-prod-3", {"action_id": aid, "decision": "approve"})
+    with SessionLocal() as db:
+        assert db.query(Schedule).count() == 1
+    assert _pos() == [] and H.action(aid).status.value == "EXECUTED"
+
+
+def test_production_card_is_refused_when_stock_changed_before_approval(seeded):
+    svc, _ = _service({"AutomationParserOutput": _produce(100, 10)})
+    aid = _action_id(svc.run("butuh 100 sepeda gunung", "thread-prod-4"))
+    with SessionLocal() as db:
+        db.scalar(select(Inventory).where(Inventory.material_id == seeded["materials"]["RM-RUB-01"])).on_hand = 1000
+        db.commit()
+    done = svc.run(None, "thread-prod-4", {"action_id": aid, "decision": "approve"})
+    assert done["action_updates"][aid]["status"] == "failed" and _pos() == []
+    with SessionLocal() as db:
+        assert db.query(Schedule).count() == 0
+
+
+def test_incoming_po_counts_only_when_it_arrives_in_time(seeded):
+    when = date.today() + timedelta(days=10)
+    po_id = H.issue_po(seeded, "RM-RUB-01", "SUP-KRT", 200)
+    draft = _produce(100, 10)
+
+    def rubber_short():
+        with SessionLocal() as db:
+            res = A.resolve_po_request(db, draft)
+        return next(m for m in res["proposal"]["materials"] if m["sku"] == "RM-RUB-01")
+
+    assert rubber_short()["incoming_in_time"] == 0                           # tanpa tanggal: tidak dihitung
+    with A.write_session() as db:
+        A.confirmation(db, po_id).promised_delivery_date = when + timedelta(days=1)
+    assert rubber_short()["incoming_in_time"] == 0                           # terlambat
+    with A.write_session() as db:
+        A.confirmation(db, po_id).promised_delivery_date = when
+    m = rubber_short()
+    assert m["incoming_in_time"] == 200 and m["shortfall"] == 0
+
+
+def test_production_of_product_without_bom_is_an_error(seeded):
+    from app.models import Material
+    from app.models.enums import ItemCategory
+    with SessionLocal() as db:
+        db.add(Material(sku="FG-TEST-01", name="Sepeda Lipat", uom="Unit", category=ItemCategory.FINISHED))
+        db.commit()
+    with SessionLocal() as db:
+        res = A.resolve_po_request(db, F.parsed(operation="produce", items=[F.item("Sepeda Lipat", 5)],
+                                                needed_by_date=(date.today() + timedelta(days=5)).isoformat()))
+    assert res["status"] == "needs_input" and res["errors"][0]["field"] == "bom"
+
+
+def test_assign_suppliers_covers_with_fewest_suppliers(seeded):
+    m = seeded["materials"]
+    needs = [{"material_id": m[s], "sku": s, "name": s, "uom": "u", "qty": q}
+             for s, q in [("RM-STEEL-01", 10), ("RM-SBR-01", 5), ("RM-PDL-01", 4)]]
+    with SessionLocal() as db:
+        pick = A.assign_suppliers(db, needs)
+        assert {n["sku"]: l["supplier_code"] for l, n, _, _ in pick["assigned"]} == \
+            {"RM-STEEL-01": "SUP-CPT", "RM-SBR-01": "SUP-CPT", "RM-PDL-01": "SUP-MKM"}
+        assert pick["saved_pos"] == 1 and pick["extra_cost"] == 10 * 1000
+        soon = A.assign_suppliers(db, needs[2:], deadline=date.today() + timedelta(days=2))
+        assert soon["assigned"][0][0]["supplier_code"] == "SUP-IND" and soon["warnings"] == []

@@ -38,13 +38,16 @@ TEXT = {
         "create_tail": "Agent akan menghubungi supplier via Telegram untuk konfirmasi pesanan.",
         "update": "{po} diperbarui. Total {before} → {after}.",
         "delete_now": "{po} dihapus. Stok on-order dan planning disesuaikan.",
-        "delete_supplier": "Permintaan pembatalan {po} dikirim ke {supplier} via Telegram. PO akan dihapus setelah "
+        "delete_supplier": "Permintaan pembatalan {po} dikirim ke {supplier} via Telegram. PO akan dibatalkan setelah "
                            "supplier menyetujui; bila supplier menolak, manajer akan diberi tahu.",
         "propose_create": "Saya siapkan PO berikut. Periksa lalu konfirmasi:",
+        "propose_produce": "Saya cek kebutuhan material untuk jadwal produksi ini. Periksa lalu konfirmasi:",
+        "produce_schedule": "Jadwal {batch} dibuat: {qty} {name} pada {date} (MPS & Planning).",
+        "produce_enough": "Material cukup untuk jadwal ini; tidak ada PO baru.",
         "propose_update": "Saya siapkan perubahan {po} berikut. Periksa lalu konfirmasi:",
         "propose_delete_now": "{po} ({status}) belum dikirim ke supplier, jadi akan langsung dihapus. Konfirmasi?",
         "propose_delete_supplier": "{po} sudah diterbitkan ke {supplier}. Saya akan meminta persetujuan pembatalan "
-                                   "via Telegram dan menghapusnya setelah supplier setuju. Konfirmasi?",
+                                   "via Telegram dan membatalkannya (data PO tetap tersimpan) setelah supplier setuju. Konfirmasi?",
     },
     "en": {
         "refused": "This request cannot be carried out: {reason}",
@@ -58,13 +61,16 @@ TEXT = {
         "create_tail": "The agent will contact the supplier on Telegram to confirm the order.",
         "update": "{po} was updated. Total {before} → {after}.",
         "delete_now": "{po} was deleted. On-order stock and planning were adjusted.",
-        "delete_supplier": "A cancellation request for {po} was sent to {supplier} on Telegram. The PO is deleted once "
+        "delete_supplier": "A cancellation request for {po} was sent to {supplier} on Telegram. The PO is cancelled (kept on record) once "
                            "the supplier agrees; if they refuse, the manager is notified.",
         "propose_create": "I prepared the following PO. Please review and confirm:",
+        "propose_produce": "I checked the materials needed for this production schedule. Please review and confirm:",
+        "produce_schedule": "Schedule {batch} created: {qty} {name} on {date} (MPS & Planning).",
+        "produce_enough": "There is enough material for this schedule; no new PO is needed.",
         "propose_update": "I prepared these changes to {po}. Please review and confirm:",
         "propose_delete_now": "{po} ({status}) was never sent to the supplier, so it will be deleted right away. Confirm?",
         "propose_delete_supplier": "{po} was already issued to {supplier}. I will ask them on Telegram to agree to the "
-                                   "cancellation and delete it once they do. Confirm?",
+                                   "cancellation and cancel it (kept on record) once they do. Confirm?",
     },
 }
 
@@ -89,9 +95,21 @@ def proposal_tables(p: dict) -> list[dict]:
         return [[i["sku"], i["name"], f"{A.fmt_qty(i['qty_ordered'])} {i.get('uom', '')}".strip(), A.rupiah(i["unit_price"]),
                  A.rupiah(i["line_total"]), i.get("needed_by_date") or "–"] for i in items]
 
-    if p["operation"] == "create":
+    def po_tables(groups):
         return [_table(f"{g['supplier_code']} {g['supplier_name']} · Net {g['payment_term_days']} · total "
-                       f"{A.rupiah(g['total_amount'])}", cols, rows(g["items"])) for g in p["purchase_orders"]]
+                       f"{A.rupiah(g['total_amount'])}" + (f" · {len(g['items'])} material dalam 1 PO" if len(g["items"]) > 1 else ""),
+                       cols, rows(g["items"])) for g in groups]
+
+    if p["operation"] == "create":
+        return po_tables(p["purchase_orders"])
+    if p["operation"] == "produce":
+        what = ", ".join(f"{A.fmt_qty(s['qty'])} {s['name']}" for s in p["schedules"])
+        check = [[m["sku"], m["name"], f"{A.fmt_qty(m['requirement'])} {m['uom']}", A.fmt_qty(m["available"]),
+                  A.fmt_qty(m["incoming_in_time"]), A.fmt_qty(m["shortfall"]) if m["shortfall"] else "–",
+                  m["status_without_po"]] for m in p["materials"]]
+        return [_table(f"Cek material untuk {what} · siap {p['needed_by_date']}",
+                       ["SKU", "Material", "Kebutuhan", "Tersedia", "Masuk tepat waktu", "Kurang (ke batas aman)",
+                        "Status tanpa PO baru"], check), *po_tables(p["purchase_orders"])]
     if p["operation"] == "update":
         return [_table(f"{p['po']['po_number']} setelah perubahan · total {A.rupiah(p['total_before'])} → "
                        f"{A.rupiah(p['total_after'])}", cols, rows(p["items_after"]))]
@@ -101,7 +119,13 @@ def proposal_tables(p: dict) -> list[dict]:
 
 def action_card(action_id: str, p: dict, status: str = "pending") -> dict:
     op = p["operation"]
-    if op == "create":
+    if op == "produce":
+        pos, what = p["purchase_orders"], ", ".join(f"{A.fmt_qty(s['qty'])} {s['name']}" for s in p["schedules"])
+        title, approve = "Jadwal produksi & PO", "Konfirmasi jadwal & PO"
+        detail = (f"Jadwal baru: {what} pada {p['needed_by_date']}; "
+                  + (f"{len(pos)} PO ke {len(pos)} supplier, total {A.rupiah(p['grand_total'])}. Supplier dihubungi "
+                     "via Telegram setelah dikonfirmasi." if pos else "material cukup, tanpa PO baru."))
+    elif op == "create":
         title = "Buat & terbitkan PO" + (f" ({len(p['purchase_orders'])} supplier)" if len(p["purchase_orders"]) > 1 else "")
         detail = f"Total {A.rupiah(p['grand_total'])}. Supplier dihubungi via Telegram setelah dikonfirmasi."
         approve = "Konfirmasi & terbitkan"
@@ -111,7 +135,7 @@ def action_card(action_id: str, p: dict, status: str = "pending") -> dict:
     else:
         title, approve = f"Hapus {p['po']['po_number']}", "Konfirmasi hapus"
         detail = ("Langsung dihapus (belum dikirim ke supplier)." if p["mode"] == "immediate"
-                  else "Minta persetujuan pembatalan ke supplier via Telegram, lalu hapus.")
+                  else "Minta persetujuan pembatalan ke supplier via Telegram, lalu batalkan (tetap tersimpan).")
     return {"id": action_id, "kind": op, "title": title, "detail": detail, "approveLabel": approve,
             "status": status, "tables": proposal_tables(p), "warnings": p.get("warnings") or []}
 
@@ -202,6 +226,8 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
             db.commit()
         if p["operation"] == "create":
             intro = _t(lang, "propose_create")
+        elif p["operation"] == "produce":
+            intro = _t(lang, "propose_produce")
         elif p["operation"] == "update":
             intro = _t(lang, "propose_update", po=po["po_number"])
         else:
@@ -224,6 +250,8 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
         """Runs the confirmed proposal in one transaction. Returns (texts, status, result, queued_supplier_work)."""
         p = action.proposal
         with A.write_session() as db:
+            if p["operation"] == "produce":
+                return _execute_produce(db, action, p, lang)
             if p["operation"] == "create":
                 texts, created = [], []
                 for group in p["purchase_orders"]:
@@ -247,6 +275,32 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
             conv = A.request_po_cancellation(db, p, action.id)
             return ([_t(lang, "delete_supplier", po=p["po"]["po_number"], supplier=p["po"]["supplier_name"])],
                     AS.AWAITING_SUPPLIER, {"conversation_id": conv.id}, True)
+
+    def _execute_produce(db, action: AutomationAction, p: dict, lang: str):
+        """Schedule(s) + one ISSUED PO per supplier, in the caller's single transaction."""
+        from app.services import schedule_service
+        current = A.resolve_po_request(db, p["request"])
+        if current["status"] != "resolved" or A.produce_signature(current["proposal"]) != A.produce_signature(p):
+            raise AppError(409, "stok, PO, atau harga berubah sejak usulan dibuat; kirim ulang permintaannya")
+        texts, batches, created = [], [], []
+        for sch in p["schedules"]:
+            s = schedule_service.create_schedule(db, sch["product_id"], date.fromisoformat(sch["production_date"]),
+                                                 sch["qty"])
+            batches.append({"id": s.id, "batch_code": s.batch_code, "product": sch["name"], "qty": sch["qty"]})
+            texts.append(_t(lang, "produce_schedule", batch=s.batch_code, qty=A.fmt_qty(sch["qty"]), name=sch["name"],
+                            date=sch["production_date"]))
+        codes = ", ".join(b["batch_code"] for b in batches)
+        for group in p["purchase_orders"]:
+            po = A.create_and_issue_po(db, group, actor, notes=f"Untuk {codes}")
+            A.queue_conversation(db, po, ConversationPurpose.CONFIRM_ORDER, action.id)
+            created.append({"id": po.id, "po_number": po.po_number, "supplier_name": po.supplier_name,
+                            "total_amount": po.total_amount})
+            texts.append(_t(lang, "create", po=po.po_number, supplier=po.supplier_name, total=A.rupiah(po.total_amount)))
+        texts.append(_t(lang, "create_tail") if created else _t(lang, "produce_enough"))
+        result = {"schedules": batches, "created": created}
+        if created:
+            result.update(po_id=created[0]["id"], po_number=created[0]["po_number"])
+        return texts, (AS.AWAITING_SUPPLIER if created else AS.EXECUTED), result, bool(created)
 
     def auto_execute(state):
         lang = state["language"]

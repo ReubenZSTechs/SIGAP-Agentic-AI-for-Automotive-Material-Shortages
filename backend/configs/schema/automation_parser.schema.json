@@ -22,9 +22,10 @@
         "create",
         "update",
         "delete",
+        "produce",
         "none"
       ],
-      "description": "create = new PO, update = change an existing PO, delete = delete/cancel a PO, none = not (or no longer) a PO change request."
+      "description": "create = new PO, update = change an existing PO, delete = delete/cancel a PO, produce = the user needs finished products by a date (schedule production and order the missing materials), none = not (or no longer) a PO change request."
     },
     "po_reference": {
       "type": [
@@ -35,7 +36,7 @@
     },
     "items": {
       "type": "array",
-      "description": "Materials to order (create) or change (update). Empty for delete.",
+      "description": "Materials to order (create) or change (update); for produce the finished products to make. Empty for delete.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -70,7 +71,7 @@
         "string",
         "null"
       ],
-      "description": "Requested delivery date as YYYY-MM-DD, resolved against today; null if not given."
+      "description": "Requested delivery date as YYYY-MM-DD, resolved against today; for produce the date the materials must be ready (production date). Null if not given."
     },
     "notes": {
       "type": [

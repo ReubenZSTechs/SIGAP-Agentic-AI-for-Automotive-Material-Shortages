@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "master_data_parser.schema.json",
+  "title": "MasterDataParserOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "entity",
+    "is_new_request",
+    "user_cancelled",
+    "fields",
+    "items",
+    "reason"
+  ],
+  "properties": {
+    "entity": {
+      "type": "string",
+      "enum": [
+        "product",
+        "material",
+        "supplier",
+        "none"
+      ],
+      "description": "product = new finished product; material = new purchased material; supplier = new supplier; none = not stated."
+    },
+    "is_new_request": {
+      "type": "boolean",
+      "description": "True when the message starts a different addition than the current form."
+    },
+    "user_cancelled": {
+      "type": "boolean",
+      "description": "True when the user cancels adding the data."
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sku",
+        "code",
+        "name",
+        "uom",
+        "selling_price",
+        "specification",
+        "contact",
+        "payment_term_days",
+        "initial_stock",
+        "safety_stock"
+      ],
+      "description": "Values stated in the latest message only; null when not stated.",
+      "properties": {
+        "sku": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uom": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "selling_price": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "specification": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contact": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "payment_term_days": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "initial_stock": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "safety_stock": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "description": "BOM components (product), suppliers (material) or materials (supplier) named in the latest message.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "query",
+          "qty",
+          "unit_price",
+          "lead_time_days",
+          "moq"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Name or code as written."
+          },
+          "qty": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Component quantity per product unit (product only)."
+          },
+          "unit_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Price per unit in Rupiah, if stated."
+          },
+          "lead_time_days": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Lead time in days, if stated."
+          },
+          "moq": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Minimum order quantity, if stated."
+          }
+        }
+      }
+    },
+    "reason": {
+      "type": "string",
+      "description": "One short sentence explaining the interpretation."
+    }
+  }
+}

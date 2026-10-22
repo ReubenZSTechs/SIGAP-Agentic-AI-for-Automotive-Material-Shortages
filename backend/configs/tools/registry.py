@@ -4,6 +4,7 @@
 supplier Telegram agent live in `configs.tools.po_actions.WRITE_TOOLS` and are never offered to the
 retrieval planner; only deterministic workflow nodes call them.
 """
+from app.chatbot import tracing
 from app.chatbot.db import chat_session
 from app.chatbot.evidence import Evidence, make_evidence
 from configs.tools.curated import CURATED
@@ -27,6 +28,9 @@ TOOL_CATALOG: dict[str, tuple[str, str]] = {
                                  "PARTIALLY_RECEIVED) with ordered/received/remaining qty and amounts."),
     "get_latest_planning_run": ("", "Most recent MRP planning run: per-material gross requirement, "
                                     "shortfall, status, selected supplier, plus run date range and staleness."),
+    "list_products": ("query?", "All finished products (Produk Final) with selling price, specification, active "
+                                "flag and number of BOM components; optional filter by SKU/name. Use this to "
+                                "list or count finished products (they have no stock rows)."),
     "get_bom": ("product, qty?", "Multi-level bill of materials of a finished product or sub-part, with "
                                  "required quantity of every component for qty units."),
     "get_production_schedules": ("date_from?, date_to?, schedule_status?",
@@ -48,13 +52,15 @@ def catalog_text() -> str:
 
 
 def run_curated(tool: str, args: dict, purpose: str, eid: str, row_limit: int) -> Evidence:
-    """Runs a curated tool in a read-only session and wraps the result as evidence."""
-    with chat_session() as db:
+    """Runs a curated tool in a read-only session and wraps the result as evidence (traced in `tool_runs`)."""
+    with tracing.record_tool(tool, "read", args) as run, chat_session() as db:
         try:
             rows, meta = CURATED[tool](db, **args)
         except Exception as e:  # noqa: BLE001
+            run.fail(f"{type(e).__name__}: {e}")
             return make_evidence(eid, tool, args, purpose, [], row_limit=row_limit,
                                  error=f"{type(e).__name__}: {e}")
+        run.done(rows)
     return make_evidence(eid, tool, args, purpose, rows, row_limit=row_limit, meta=meta)
 
 

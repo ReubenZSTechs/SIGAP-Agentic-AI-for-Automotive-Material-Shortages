@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from langchain_core.messages import AIMessage
 from langgraph.types import interrupt
 
+from app.chatbot import tracing
 from app.chatbot.progress import emit
 from app.core.exceptions import AppError
 from app.database import SessionLocal
@@ -144,19 +145,26 @@ UI_STATUS = {AS.PROPOSED: "pending", AS.EXECUTED: "approved", AS.AWAITING_SUPPLI
              AS.REJECTED: "rejected", AS.SUPERSEDED: "expired", AS.EXPIRED: "expired", AS.FAILED: "failed"}
 
 
-def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "finalize", on_supplier_work=None) -> None:
-    """Adds the automation nodes/edges to the chat `StateGraph` (shared `ChatState`)."""
-    ttl = cfg.get("proposal_ttl_minutes", 30)
-    max_rounds = cfg.get("max_clarify_rounds", 3)
-    actor = cfg.get("actor", "Agent MRP (dikonfirmasi pengguna)")
-    from configs.workflows.chat_graph import LANGUAGE_NAMES
+class PoAutomationWorkflow:
+    """PO branch of the chat graph: one method per node, added to the shared `ChatState` graph by `add_to()`."""
 
-    def auto_parse(state):
+    def __init__(self, agents: dict, cfg: dict, finalize_name: str = "finalize", on_supplier_work=None):
+        self.agents = agents
+        self.ttl = cfg.get("proposal_ttl_minutes", 30)
+        self.max_rounds = cfg.get("max_clarify_rounds", 3)
+        self.actor = cfg.get("actor", "Agent MRP (dikonfirmasi pengguna)")
+        self.finalize_name = finalize_name
+        self.on_supplier_work = on_supplier_work
+
+    # ------------------------------------------------------------ 1. understand and match the request
+    def auto_parse(self, state):
+        """LLM: turn the message into a structured PO request (merged with the draft of earlier turns)."""
         emit("auto_parse", state["language"])
         pending = state.get("automation_draft") or {}
         payload = {"latest_message": state["question"], "rewritten": state["rewritten"],
                    "current_draft": pending.get("request"), "last_clarification": pending.get("last_clarification")}
-        out = agents["automation_parser"].run(json.dumps(payload, ensure_ascii=False), today=date.today().isoformat())
+        out = self.agents["automation_parser"].run(json.dumps(payload, ensure_ascii=False),
+                                                   today=date.today().isoformat())
         rounds = pending.get("rounds", 0)
         if out["user_cancelled"] or out["operation"] == "none" and pending:
             return {"automation_draft": None, "draft": _text_draft(_t(state["language"], "cancelled")),
@@ -165,10 +173,11 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
         if out["is_new_request"]:
             rounds = 0                                         # permintaan baru: hitungan klarifikasi mulai lagi
         else:
-            request = _drop_stale_supplier(request, pending.get("request"))
+            request = self._drop_stale_supplier(request, pending.get("request"))
         return {"automation_draft": {"request": request, "rounds": rounds, "last_clarification": None},
                 "automation_step": "resolve"}
 
+    @staticmethod
     def _drop_stale_supplier(request: dict, previous: dict | None) -> dict:
         """Safety net if the parser merged a new request into the old draft: a supplier carried over from
         a draft about other materials does not apply (the user can still name one again)."""
@@ -182,23 +191,27 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
             return {**request, "supplier_query": None}
         return request
 
-    def auto_resolve(state):
+    def auto_resolve(self, state):
+        """Deterministic: match the request against the database (read-only)."""
         emit("auto_resolve", state["language"])
         draft = state["automation_draft"]
-        with SessionLocal() as db:
+        with tracing.record_tool("resolve_po_request", "read", draft["request"]) as run, SessionLocal() as db:
             res = A.resolve_po_request(db, draft["request"])
+            run.done({"status": res["status"], "missing": res.get("missing"), "errors": res.get("errors")})
         return {"automation_resolution": res, "automation_step": res["status"]}
 
-    def auto_clarify(state):
+    def auto_clarify(self, state):
+        """Asks for what is missing or ambiguous (with clickable options), or explains a refusal."""
+        from configs.workflows.chat_graph import LANGUAGE_NAMES   # import lokal: hindari impor melingkar
         lang = state["language"]
         emit("auto_clarify", lang)
         draft, res = state["automation_draft"], state["automation_resolution"]
         if res["status"] == "refused":
             return {"automation_draft": None, "draft": _text_draft(_t(lang, "refused", reason=res["refusal"]))}
-        if draft["rounds"] >= max_rounds:
+        if draft["rounds"] >= self.max_rounds:
             return {"automation_draft": None, "draft": _text_draft(_t(lang, "gave_up"))}
         allowed = {o["value"]: o for a in res["ambiguous"] for o in a["options"]}
-        out = agents["automation_clarifier"].run(
+        out = self.agents["automation_clarifier"].run(
             json.dumps({"operation": res["operation"], "request": draft["request"], "missing": res["missing"],
                         "ambiguous": res["ambiguous"], "errors": res["errors"]}, ensure_ascii=False),
             language_name=LANGUAGE_NAMES[lang])
@@ -212,7 +225,9 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
                      "last_clarification": {"question": out["question_text"], "options": options}}
         return {"automation_draft": new_draft, "draft": {"blocks": blocks, "claims": [], "insufficient_data": False}}
 
-    def auto_propose(state):
+    # ------------------------------------------------------------ 2. confirmation card
+    def auto_propose(self, state):
+        """Saves the proposal (`automation_actions`) and shows the confirmation card."""
         lang = state["language"]
         emit("auto_propose", lang)
         p = state["automation_resolution"]["proposal"]
@@ -222,7 +237,7 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
             db.add(AutomationAction(id=action_id, thread_id=state.get("thread_id") or "-",
                                     operation=AutomationOperation(p["operation"].upper()), status=AS.PROPOSED,
                                     proposal=p, po_id=po.get("id"), po_number=po.get("po_number"),
-                                    expires_at=A.now() + timedelta(minutes=ttl)))
+                                    expires_at=A.now() + timedelta(minutes=self.ttl)))
             db.commit()
         if p["operation"] == "create":
             intro = _t(lang, "propose_create")
@@ -242,41 +257,50 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
                                                               "actions": {action_id: card}})
         return {"final": final, "messages": [message], "pending_action": {"id": action_id}}
 
-    def auto_await(state):
+    def auto_await(self, state):
+        """Pauses the graph until the user answers the card (approve / reject / superseded)."""
         decision = interrupt({"action_id": state["pending_action"]["id"]})
         return {"automation_decision": decision}
 
-    def _execute(action: AutomationAction, lang: str) -> tuple[list[str], AutomationStatus, dict, bool]:
+    # ------------------------------------------------------------ 3. execute
+    def _execute(self, action: AutomationAction, lang: str) -> tuple[list[str], AutomationStatus, dict, bool]:
         """Runs the confirmed proposal in one transaction. Returns (texts, status, result, queued_supplier_work)."""
         p = action.proposal
-        with A.write_session() as db:
-            if p["operation"] == "produce":
-                return _execute_produce(db, action, p, lang)
-            if p["operation"] == "create":
-                texts, created = [], []
-                for group in p["purchase_orders"]:
-                    po = A.create_and_issue_po(db, group, actor, notes=p.get("notes"))
-                    A.queue_conversation(db, po, ConversationPurpose.CONFIRM_ORDER, action.id)
-                    created.append({"id": po.id, "po_number": po.po_number, "supplier_name": po.supplier_name,
-                                    "total_amount": po.total_amount})
-                    texts.append(_t(lang, "create", po=po.po_number, supplier=po.supplier_name,
-                                    total=A.rupiah(po.total_amount)))
-                texts.append(_t(lang, "create_tail"))
-                first = created[0]
-                return texts, AS.AWAITING_SUPPLIER, {"created": created, "po_id": first["id"],
-                                                     "po_number": first["po_number"]}, True
-            if p["operation"] == "update":
-                po = A.update_draft_po(db, p)
-                return ([_t(lang, "update", po=po.po_number, before=A.rupiah(p["total_before"]),
-                             after=A.rupiah(po.total_amount))], AS.EXECUTED, {"total_after": po.total_amount}, False)
-            if p["mode"] == "immediate":
-                snap = A.delete_po(db, p["po"]["id"], p["po"])
-                return [_t(lang, "delete_now", po=snap["po_number"])], AS.EXECUTED, {"deleted": snap["po_number"]}, False
-            conv = A.request_po_cancellation(db, p, action.id)
-            return ([_t(lang, "delete_supplier", po=p["po"]["po_number"], supplier=p["po"]["supplier_name"])],
-                    AS.AWAITING_SUPPLIER, {"conversation_id": conv.id}, True)
+        with tracing.record_tool(f"{p['operation']}_po", "write", {"action_id": action.id}) as run, \
+                A.write_session() as db:
+            out = self._execute_in(db, action, p, lang)
+            run.done(out[2])
+            return out
 
-    def _execute_produce(db, action: AutomationAction, p: dict, lang: str):
+    def _execute_in(self, db, action: AutomationAction, p: dict, lang: str):
+        """Body of `_execute` (inside the write transaction)."""
+        if p["operation"] == "produce":
+            return self._execute_produce(db, action, p, lang)
+        if p["operation"] == "create":
+            texts, created = [], []
+            for group in p["purchase_orders"]:
+                po = A.create_and_issue_po(db, group, self.actor, notes=p.get("notes"))
+                A.queue_conversation(db, po, ConversationPurpose.CONFIRM_ORDER, action.id)
+                created.append({"id": po.id, "po_number": po.po_number, "supplier_name": po.supplier_name,
+                                "total_amount": po.total_amount})
+                texts.append(_t(lang, "create", po=po.po_number, supplier=po.supplier_name,
+                                total=A.rupiah(po.total_amount)))
+            texts.append(_t(lang, "create_tail"))
+            first = created[0]
+            return texts, AS.AWAITING_SUPPLIER, {"created": created, "po_id": first["id"],
+                                                 "po_number": first["po_number"]}, True
+        if p["operation"] == "update":
+            po = A.update_draft_po(db, p)
+            return ([_t(lang, "update", po=po.po_number, before=A.rupiah(p["total_before"]),
+                         after=A.rupiah(po.total_amount))], AS.EXECUTED, {"total_after": po.total_amount}, False)
+        if p["mode"] == "immediate":
+            snap = A.delete_po(db, p["po"]["id"], p["po"])
+            return [_t(lang, "delete_now", po=snap["po_number"])], AS.EXECUTED, {"deleted": snap["po_number"]}, False
+        conv = A.request_po_cancellation(db, p, action.id)
+        return ([_t(lang, "delete_supplier", po=p["po"]["po_number"], supplier=p["po"]["supplier_name"])],
+                AS.AWAITING_SUPPLIER, {"conversation_id": conv.id}, True)
+
+    def _execute_produce(self, db, action: AutomationAction, p: dict, lang: str):
         """Schedule(s) + one ISSUED PO per supplier, in the caller's single transaction."""
         from app.services import schedule_service
         current = A.resolve_po_request(db, p["request"])
@@ -291,7 +315,7 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
                             date=sch["production_date"]))
         codes = ", ".join(b["batch_code"] for b in batches)
         for group in p["purchase_orders"]:
-            po = A.create_and_issue_po(db, group, actor, notes=f"Untuk {codes}")
+            po = A.create_and_issue_po(db, group, self.actor, notes=f"Untuk {codes}")
             A.queue_conversation(db, po, ConversationPurpose.CONFIRM_ORDER, action.id)
             created.append({"id": po.id, "po_number": po.po_number, "supplier_name": po.supplier_name,
                             "total_amount": po.total_amount})
@@ -302,7 +326,8 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
             result.update(po_id=created[0]["id"], po_number=created[0]["po_number"])
         return texts, (AS.AWAITING_SUPPLIER if created else AS.EXECUTED), result, bool(created)
 
-    def auto_execute(state):
+    def auto_execute(self, state):
+        """Applies the user's decision: approve -> execute in one transaction; otherwise mark the card."""
         lang = state["language"]
         decision = state.get("automation_decision") or {}
         action_id = state["pending_action"]["id"]
@@ -327,7 +352,7 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
             return {**reset, **_finish(lang, [text], action_id, UI_STATUS[status])}
         queued = False
         try:
-            texts, status, result, queued = _execute(action, lang)
+            texts, status, result, queued = self._execute(action, lang)
         except AppError as e:
             texts, status, result = [_t(lang, "failed", reason=e.detail)], AS.FAILED, {"error": e.detail}
         except Exception as e:  # noqa: BLE001
@@ -340,28 +365,36 @@ def add_automation_nodes(g, agents: dict, cfg: dict, finalize_name: str = "final
             row.po_id = row.po_id or result.get("po_id")
             row.po_number = row.po_number or result.get("po_number")
             db.commit()
-        if queued and on_supplier_work is not None:
+        if queued and self.on_supplier_work is not None:
             emit("supplier_contact", lang)
-            on_supplier_work()
+            self.on_supplier_work()
         return {**reset, **_finish(lang, texts, action_id, UI_STATUS[status], status.value)}
 
-    def _finish(lang, texts, action_id, ui_status, db_status=None):
-        blocks = [{"type": "text", "text": t} for t in texts]
-        meta = {"intent": "po_automation", "language": lang, "evaluated": False, "sources": [],
-                "automation": {"action_id": action_id, "status": db_status or ui_status}}
-        update = {action_id: {"status": ui_status}}
-        return {"final": {"blocks": blocks, "meta": meta, "action_updates": update},
-                "messages": [AIMessage(content="\n".join(texts),
-                                       additional_kwargs={"blocks": blocks, "meta": meta})]}
+    # ------------------------------------------------------------ edges & wiring
+    def next_after_parse(self, state) -> str:
+        return "auto_resolve" if state["automation_step"] == "resolve" else self.finalize_name
 
-    for name, fn in [("auto_parse", auto_parse), ("auto_resolve", auto_resolve), ("auto_clarify", auto_clarify),
-                     ("auto_propose", auto_propose), ("auto_await", auto_await), ("auto_execute", auto_execute)]:
-        g.add_node(name, fn)
-    g.add_conditional_edges("auto_parse", lambda s: "auto_resolve" if s["automation_step"] == "resolve" else finalize_name,
-                            ["auto_resolve", finalize_name])
-    g.add_conditional_edges("auto_resolve", lambda s: "auto_propose" if s["automation_step"] == "resolved" else "auto_clarify",
-                            ["auto_propose", "auto_clarify"])
-    g.add_edge("auto_clarify", finalize_name)
-    g.add_edge("auto_propose", "auto_await")
-    g.add_edge("auto_await", "auto_execute")
-    g.add_edge("auto_execute", "__end__")
+    @staticmethod
+    def next_after_resolve(state) -> str:
+        return "auto_propose" if state["automation_step"] == "resolved" else "auto_clarify"
+
+    def add_to(self, g) -> None:
+        """Adds the PO nodes and edges to the chat `StateGraph`."""
+        for name in ("auto_parse", "auto_resolve", "auto_clarify", "auto_propose", "auto_await", "auto_execute"):
+            g.add_node(name, getattr(self, name))
+        g.add_conditional_edges("auto_parse", self.next_after_parse, ["auto_resolve", self.finalize_name])
+        g.add_conditional_edges("auto_resolve", self.next_after_resolve, ["auto_propose", "auto_clarify"])
+        g.add_edge("auto_clarify", self.finalize_name)
+        g.add_edge("auto_propose", "auto_await")
+        g.add_edge("auto_await", "auto_execute")
+        g.add_edge("auto_execute", "__end__")
+
+
+def _finish(lang, texts, action_id, ui_status, db_status=None):
+    """Final reply after a card was answered (text blocks + the card's new status)."""
+    blocks = [{"type": "text", "text": t} for t in texts]
+    meta = {"intent": "po_automation", "language": lang, "evaluated": False, "sources": [],
+            "automation": {"action_id": action_id, "status": db_status or ui_status}}
+    update = {action_id: {"status": ui_status}}
+    return {"final": {"blocks": blocks, "meta": meta, "action_updates": update},
+            "messages": [AIMessage(content="\n".join(texts), additional_kwargs={"blocks": blocks, "meta": meta})]}

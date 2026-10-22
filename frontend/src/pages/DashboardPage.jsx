@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import CommonIcon from '../components/common/Icon';
 import PageHeader from '../components/layout/PageHeader';
+import ChatForm from '../features/chat/ChatForm';
 import useFetch from '../hooks/useFetch';
 import { chatService } from '../services/chatService';
 import { inventoryService } from '../services/inventoryService';
 import { purchaseOrderService } from '../services/purchaseOrderService';
+import { useMasterStore } from '../store/masterStore';
 import { OPEN_PO_STATUSES } from '../utils/constants';
 
 /* -------------------------------------------------------------------------- */
@@ -18,6 +20,8 @@ const QUICK_ACTIONS = [
   'Supplier apa saja untuk material Ban Luar Karet?',
   'Ringkas PO yang belum diterima',
   'Buat PO 50 Ban Luar Karet',
+  'Saya ingin membuat produk baru',
+  'Daftarkan supplier baru',
 ];
 
 const GREETING = {
@@ -26,7 +30,7 @@ const GREETING = {
   blocks: [
     {
       type: 'text',
-      text: 'Halo, saya Agent MRP. Tanyakan ringkasan stok, item critical, supplier per material, BOM, jadwal produksi, hasil planning, atau PO terbuka; setiap jawaban diverifikasi terhadap database. Saya juga bisa membuat, mengubah, atau menghapus Purchase Order (mis. "Buat PO 50 Ban Luar Karet") — selalu dengan konfirmasi Anda dulu, lalu supplier dihubungi via Telegram.',
+      text: 'Halo, saya Agent MRP. Tanyakan ringkasan stok, item critical, supplier per material, BOM, jadwal produksi, hasil planning, atau PO terbuka; setiap jawaban diverifikasi terhadap database. Saya juga bisa membuat, mengubah, atau menghapus Purchase Order (mis. "Buat PO 50 Ban Luar Karet") — selalu dengan konfirmasi Anda dulu, lalu supplier dihubungi via Telegram — serta menambah produk final, material beli, dan supplier baru lewat formulir di chat.',
     },
   ],
 };
@@ -40,6 +44,7 @@ const TOOL_LABELS = {
   get_open_purchase_orders: 'PO terbuka',
   get_latest_planning_run: 'Planning terakhir',
   get_bom: 'BOM',
+  list_products: 'Produk final',
   get_production_schedules: 'Jadwal produksi',
   get_po_supplier_status: 'Konfirmasi supplier',
   query_database: 'Query database',
@@ -183,6 +188,15 @@ function Options({ options, onPick, disabled }) {
   );
 }
 
+function PageLink({ to, label }) {
+  return (
+    <Link to={to} className="my-1 mr-2 inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50">
+      {label}
+      <CommonIcon name="chevronRight" className="h-3.5 w-3.5" />
+    </Link>
+  );
+}
+
 function ConfidenceBadge({ meta }) {
   if (!meta?.evaluated || meta.score == null) return null;
   const tone = meta.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-800';
@@ -220,7 +234,7 @@ function Sources({ sources }) {
   );
 }
 
-function Message({ msg, actions, onResolve, onPick, busy, isLast }) {
+function Message({ msg, actions, onResolve, onPick, onSubmitForm, onCancelForm, busy, isLast }) {
   const isUser = msg.role === 'user';
   return (
     <div className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -236,6 +250,8 @@ function Message({ msg, actions, onResolve, onPick, busy, isLast }) {
           if (b.type === 'notice') return <Notice key={i} text={b.text} />;
           if (b.type === 'action') return <ActionCard key={i} action={actions[b.actionId]} onResolve={onResolve} busy={busy} />;
           if (b.type === 'options') return <Options key={i} options={b.options} onPick={onPick} disabled={busy || !isLast} />;
+          if (b.type === 'form') return <ChatForm key={i} block={b} editable={isLast && !busy} onSubmit={onSubmitForm} onCancel={onCancelForm} />;
+          if (b.type === 'link') return <PageLink key={i} to={b.to} label={b.label} />;
           return null;
         })}
         {!isUser && msg.meta && (
@@ -313,7 +329,7 @@ function Composer({ onSend, busy }) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
           }}
-          placeholder="Tanyakan data MRP atau minta ubah PO, mis. “Buat PO 50 Ban Luar Karet”"
+          placeholder="Tanyakan data MRP, minta ubah PO, atau tambah produk/material/supplier baru"
           className="max-h-32 min-h-[2.25rem] flex-1 resize-none bg-transparent px-1 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
         />
         <button
@@ -397,6 +413,10 @@ export default function AgenticMrpPage() {
           setActions((a) => Object.fromEntries(Object.entries(a).map(([id, v]) => [id, res.action_updates[id] ? { ...v, ...res.action_updates[id] } : v])));
         }
         push({ role: 'agent', blocks: res.blocks, meta: res.meta });
+        // Produk/material/supplier baru tersimpan -> dropdown master di halaman lain perlu dimuat ulang.
+        if (res.meta?.intent === 'master_data' && Object.values(res.action_updates ?? {}).some((u) => u.status === 'approved')) {
+          useMasterStore.getState().invalidate();
+        }
       } else {
         push({ role: 'agent', blocks: [{ type: 'text', text: res.message ?? 'Agent gagal merespons. Coba kirim ulang.' }] });
       }
@@ -423,6 +443,17 @@ export default function AgenticMrpPage() {
   const handleResolve = async (id, decision) => {
     if (busy) return;
     await runTurn({ resume: { actionId: id, decision } });
+  };
+
+  const handleSubmitForm = async (formId, values, title) => {
+    if (busy) return;
+    push({ role: 'user', blocks: [{ type: 'text', text: `Formulir ${title.toLowerCase()} dikirim.` }] });
+    await runTurn({ resume: { actionId: formId, decision: 'submit', values } });
+  };
+
+  const handleCancelForm = async (formId) => {
+    if (busy) return;
+    await runTurn({ resume: { actionId: formId, decision: 'reject' } });
   };
 
   const newConversation = () => {
@@ -468,6 +499,8 @@ export default function AgenticMrpPage() {
                 actions={actions}
                 onResolve={handleResolve}
                 onPick={handleSend}
+                onSubmitForm={handleSubmitForm}
+                onCancelForm={handleCancelForm}
                 busy={busy}
                 isLast={i === messages.length - 1}
               />

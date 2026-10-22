@@ -1,26 +1,34 @@
-"""Executes guarded SQL on the read-only chatbot engine."""
-from app.chatbot.db import chat_engine
+"""Executes guarded SQL on the read-only chatbot engine (used by the text-to-SQL agent)."""
+import time
+
+from app.chatbot import tracing
+from app.chatbot.db import create_connection, execute_sql_query
 
 
 class SqlExecutionError(RuntimeError):
     """The database rejected or failed the query."""
 
 
+def _short_error(e: Exception) -> str:
+    """First lines of the database message, e.g. 'relation "x" does not exist'."""
+    lines = str(getattr(e, "orig", e)).strip().splitlines()
+    return " | ".join(lines[:3]) or type(e).__name__
+
+
 def run_select(sql: str, timeout_ms: int) -> tuple[list[str], list[dict]]:
-    """Runs one SELECT in a READ ONLY transaction with a statement timeout."""
-    with chat_engine().connect() as conn:
+    """Runs one SELECT and returns (columns, rows); traced in `tool_runs` as `query_database`.
+
+        1. create_connection()             open a read-only connection
+        2. execute_sql_query(conn, sql)    run the SELECT with a statement timeout
+    """
+    with tracing.record_tool("query_database", "sql", {"sql": sql}) as run, create_connection() as conn:
+        started = time.perf_counter()
         try:
-            with conn.begin():
-                conn.exec_driver_sql(f"SET LOCAL statement_timeout = {int(timeout_ms)}")
-                # Raw DB-API cursor: no bind-parameter parsing, so '%' and ':' in the SQL stay literal.
-                cursor = conn.connection.cursor()
-                try:
-                    cursor.execute(sql)
-                    columns = [d[0] for d in cursor.description or []]
-                    rows = [dict(zip(columns, r)) for r in cursor.fetchall()]
-                finally:
-                    cursor.close()
+            columns, rows = execute_sql_query(conn, sql, timeout_ms)
         except Exception as e:
-            lines = str(getattr(e, "orig", e)).strip().splitlines()
-            raise SqlExecutionError(" | ".join(lines[:3]) or type(e).__name__) from e
+            raise SqlExecutionError(_short_error(e)) from e
+        finally:
+            # the raw cursor bypasses SQLAlchemy's events, so the statement is recorded here
+            run.add_statement(sql, ms=(time.perf_counter() - started) * 1000)
+        run.done(rows)
     return columns, rows

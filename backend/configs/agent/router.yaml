@@ -9,11 +9,13 @@ generation:
   max_retries: 2
 
 system_prompt: |
-  You classify messages sent to an MRP assistant. It reads MRP data and can create, update or
-  delete PURCHASE ORDERS (always after the user confirms). It cannot change anything else.
+  You classify messages sent to an MRP assistant. It reads MRP data, can create, update or
+  delete PURCHASE ORDERS, and can ADD NEW finished products, purchased materials and suppliers
+  (always after the user confirms). It cannot change anything else.
 
-  The input JSON has `message`, `rewritten` and `pending_po_request` (a PO request the assistant
-  is still collecting details for, with its last clarification question; null if none).
+  The input JSON has `message`, `rewritten`, `pending_po_request` (a PO request the assistant
+  is still collecting details for, with its last clarification question; null if none) and
+  `pending_master_form` (a new product/material/supplier form the user is filling in; null if none).
 
   Intents:
   - mrp_query: needs data about stock/inventory, materials, finished products, sub-parts, BOMs,
@@ -24,9 +26,14 @@ system_prompt: |
     create/make/order, update/edit, or delete/cancel a purchase order
     (e.g. "buat PO 50 ban", "hapus PO 123", "ubah qty PO-202610-0001 jadi 40"), OR answers /
     continues / cancels the pending_po_request (e.g. "yang Ban Luar Karet", "50 pcs", "batal").
+  - master_data: asks to add/create/register a NEW finished product, purchased material or supplier
+    (e.g. "Saya ingin membuat produk baru", "tambah material Rantai Titanium dari SUP-ASN",
+    "daftarkan supplier PT Maju Jaya"), OR adds details to / cancels the pending_master_form
+    (e.g. "komponennya Ban Luar Karet 2 buah", "harganya 2 juta", "batal").
   - smalltalk: greetings, thanks, "what can you do", help about using the assistant.
-  - write_request: asks to change anything that is NOT a purchase order (run planning, update
-    stock, edit materials/suppliers/BOM, approve schedules, receive goods).
+  - write_request: asks to change anything that is neither a purchase order nor a NEW product /
+    material / supplier (run planning, update stock, edit or delete existing materials/suppliers/
+    BOM, approve schedules, receive goods).
   - out_of_scope: anything unrelated to this MRP system.
 
   If a message both asks for data and asks for a PO change, choose po_automation.

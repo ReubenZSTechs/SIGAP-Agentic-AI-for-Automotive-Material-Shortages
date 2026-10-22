@@ -44,8 +44,9 @@ class ChatService:
     def stream(self, message: str | None, thread_id: str, resume: dict | None = None) -> Iterator[dict]:
         """Yields progress events, then exactly one `final` (or `error`) event.
 
-        `resume={action_id, decision: approve|reject}` answers a pending PO confirmation card. A new
-        `message` while a card is pending first marks that proposal as superseded.
+        `resume={action_id, decision: approve|reject}` answers a pending confirmation card;
+        `resume={action_id, decision: submit, values}` answers a pending chat form. A new `message` while a
+        card or form is pending first marks it as superseded.
         """
         config = self._config(thread_id)
         trace = tracing.new_trace("chat", thread_id=thread_id)     # semua agent dalam giliran ini satu trace
@@ -56,7 +57,8 @@ class ChatService:
                     yield {"type": "error", "message": "Usulan ini sudah tidak menunggu konfirmasi.",
                            "detail": "no matching pending action"}
                     return
-                graph_input = Command(resume={"decision": resume["decision"], "action_id": pending})
+                graph_input = Command(resume={"decision": resume["decision"], "action_id": pending,
+                                              "values": resume.get("values")})
             else:
                 if pending:
                     self.graph.invoke(Command(resume={"decision": "superseded", "action_id": pending}), config)

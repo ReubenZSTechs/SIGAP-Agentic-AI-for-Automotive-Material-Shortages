@@ -276,7 +276,8 @@ backend/
 │   ├── progress.py               progress events for the live stream
 │   ├── schema_catalog.py         allowed relations + descriptions for the SQL agent
 │   ├── semantic_views.py         the chat_*_v database views
-│   └── db.py                     read-only database engine
+│   ├── tracing.py                agent_runs + tool_runs recording (AGENT_TRACKING.md)
+│   └── db.py                     read-only engine: chat_session(), create_connection(), execute_sql_query()
 ├── configs/
 │   ├── models.yaml               models, agent registry, chatbot settings (threshold, weights…)
 │   ├── agent/<agent>.yaml        prompt + generation settings, one per agent
@@ -285,11 +286,19 @@ backend/
 │   │   ├── curated.py            the curated tools (section 4.1)
 │   │   ├── registry.py           tool catalog for the planner + tool dispatcher
 │   │   ├── sql_guard.py          SQL safety checks
-│   │   └── sql_executor.py       read-only SQL execution
-│   │   └── po_actions.py         WRITE tools for PO automation & the supplier agent (never offered to the planner)
+│   │   ├── sql_executor.py       read-only SQL execution (create_connection -> execute_sql_query)
+│   │   ├── master_actions.py     WRITE tools for new products / materials / suppliers (MASTER_DATA_CHAT.md)
+│   │   ├── po_actions.py         re-exports the PO WRITE tools below (never offered to the planner)
+│   │   ├── po_common.py          constants, write_session(), PO snapshots & text formatting
+│   │   ├── po_sourcing.py        supplier choice per material
+│   │   ├── po_resolve.py         chat PO request -> proposal (read-only)
+│   │   ├── po_execute.py         confirmed proposal -> po_service calls
+│   │   ├── supplier_conversation.py    supplier Telegram conversations & PO versions
+│   │   └── supplier_change_request.py  supplier revisions & the manager's choice
 │   └── workflows/                LangGraph workflows
 │       ├── chat_graph.py         main workflow (section 2)
 │       ├── automation_graph.py   PO automation branch (AUTOMATION.md)
+│       ├── master_data_graph.py  new product / material / supplier branch (MASTER_DATA_CHAT.md)
 │       ├── supplier_chat_graph.py  supplier Telegram replies (SUPPLIER_TELEGRAM.md)
 │       ├── manager_graph.py      manager decisions on supplier revisions
 │       └── sql_agent_graph.py    query_database workflow (section 4.2)

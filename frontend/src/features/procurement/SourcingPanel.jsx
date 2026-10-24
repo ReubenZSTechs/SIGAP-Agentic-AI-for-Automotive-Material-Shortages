@@ -8,6 +8,7 @@ import SourcingCard from './SourcingCard';
 import { usePlanningStore } from '../../store/planningStore';
 import { STRATEGIES } from '../../utils/constants';
 import { formatRupiah } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 export default function SourcingPanel({ onNext }) {
   const { run, sourcing, strategy, setStrategy, loadSourcing, select, clearSelection, autoSelect } = usePlanningStore();
@@ -39,22 +40,22 @@ export default function SourcingPanel({ onNext }) {
     <div className="space-y-4">
       {locked && (
         <p className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-          PO sudah dibuat untuk run ini — pilihan supplier terkunci.{' '}
-          <Link className="font-medium underline" to="/purchase-orders">Lihat daftar PO</Link>
+          {t('PO sudah dibuat untuk run ini — pilihan supplier terkunci.')}{' '}
+          <Link className="font-medium underline" to="/purchase-orders">{t('Lihat daftar PO')}</Link>
         </p>
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-slate-500">Strategi:</span>
+          <span className="text-sm text-slate-500">{t('Strategi:')}</span>
           <Tabs variant="segmented" value={strategy} onChange={changeStrategy}
                 tabs={STRATEGIES.map((s) => ({ id: s.id, label: s.label }))} />
         </div>
-        <Button variant="secondary" loading={auto} disabled={locked} onClick={runAuto}><Icon name="spark" /> Pilih Otomatis</Button>
+        <Button variant="secondary" loading={auto} disabled={locked} onClick={runAuto}><Icon name="spark" /> {t('Pilih Otomatis')}</Button>
       </div>
 
       {loading && sourcing.length === 0 ? <Spinner /> : (
         sourcing.length === 0
-          ? <EmptyState title="Tidak ada material defisit" />
+          ? <EmptyState title={t('Tidak ada material defisit')} />
           : sourcing.map((it) => (
             <SourcingCard key={it.line.id} item={it} locked={locked} onSelect={select} onClear={clearSelection} />
           ))
@@ -62,10 +63,10 @@ export default function SourcingPanel({ onNext }) {
 
       <div className="sticky bottom-0 -mx-1 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
         <span className="text-sm text-slate-600">
-          Terpilih <b>{summary.selected} / {summary.total}</b> material · {summary.suppliers} supplier ·
-          Estimasi <b>{formatRupiah(summary.amount)}</b>
+          {t('Terpilih')} <b>{summary.selected} / {summary.total}</b> {t('material')} · {summary.suppliers} supplier ·{' '}
+          {t('Estimasi')} <b>{formatRupiah(summary.amount)}</b>
         </span>
-        <Button disabled={!complete} onClick={onNext}>Buat Purchase Order <Icon name="arrowRight" /></Button>
+        <Button disabled={!complete} onClick={onNext}>{t('Buat Purchase Order')} <Icon name="arrowRight" /></Button>
       </div>
     </div>
   );

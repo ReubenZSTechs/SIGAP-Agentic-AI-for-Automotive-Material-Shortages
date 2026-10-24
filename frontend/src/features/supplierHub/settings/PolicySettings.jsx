@@ -10,6 +10,7 @@ import useFetch from '../../../hooks/useFetch';
 import { hubService } from '../../../services/hubService';
 import { toast } from '../../../store/toastStore';
 import { approverName } from '../meta';
+import { t } from '../../../i18n';
 
 const DAYS = [[1, 'Sen'], [2, 'Sel'], [3, 'Rab'], [4, 'Kam'], [5, 'Jum'], [6, 'Sab'], [0, 'Min']];
 const THRESHOLDS = [
@@ -22,7 +23,7 @@ const THRESHOLDS = [
 
 function validate(p) {
   if (p.scenarios.some((s) => s.expiry_hours != null && !(s.expiry_hours >= 1 && s.expiry_hours <= 168))) return 'Batas keputusan harus 1–168 jam';
-  if (THRESHOLDS.some((t) => !(p.thresholds[t.key] >= 0) || p.thresholds[t.key] === '')) return 'Semua ambang wajib diisi dengan angka';
+  if (THRESHOLDS.some((item) => !(p.thresholds[item.key] >= 0) || p.thresholds[item.key] === '')) return 'Semua ambang wajib diisi dengan angka';
   if (p.thresholds.escalate_after_hours <= p.thresholds.reminder_after_hours) return 'Eskalasi harus lebih lama dari pengingat';
   if (p.working_hours.days.length === 0) return 'Pilih minimal satu hari kerja';
   if (p.working_hours.start >= p.working_hours.end) return 'Jam selesai harus setelah jam mulai';
@@ -37,7 +38,7 @@ export default function PolicySettings() {
   const strip = (d) => { const { po_agent: _ignored, ...rest } = d; return rest; };
   useEffect(() => { if (data) setDraft(structuredClone(strip(data))); }, [data]);
 
-  if (error) return <Card><p className="text-sm text-red-600">{error.message}</p><Button className="mt-3" variant="secondary" onClick={reload}>Coba lagi</Button></Card>;
+  if (error) return <Card><p className="text-sm text-red-600">{error.message}</p><Button className="mt-3" variant="secondary" onClick={reload}>{t('Coba lagi')}</Button></Card>;
   if (loading || !draft) return <Spinner />;
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(strip(data));
@@ -52,7 +53,7 @@ export default function PolicySettings() {
 
   return (
     <div className="space-y-4 pb-20">
-      <Card padded={false} title="Aturan otonomi per skenario">
+      <Card padded={false} title={t('Aturan otonomi per skenario')}>
         <AutonomyMatrix rows={draft.scenarios} onChange={(scenarios) => setDraft((d) => ({ ...d, scenarios }))} />
         <p className="flex items-start gap-2 border-t border-slate-200 px-4 py-3 text-xs text-slate-500">
           <Icon name="info" className="mt-0.5 h-3.5 w-3.5" />
@@ -61,28 +62,28 @@ export default function PolicySettings() {
       </Card>
 
       <div className="grid items-start gap-4 lg:grid-cols-2">
-        <Card title="Ambang risiko & eskalasi">
+        <Card title={t('Ambang risiko & eskalasi')}>
           <div className="space-y-3">
-            {THRESHOLDS.map((t) => (
-              <div key={t.key} className="flex items-center justify-between gap-3">
-                <label htmlFor={t.key} className="text-sm text-slate-700">{t.label}</label>
+            {THRESHOLDS.map((item) => (
+              <div key={item.key} className="flex items-center justify-between gap-3">
+                <label htmlFor={item.key} className="text-sm text-slate-700">{t(item.label)}</label>
                 <span className="inline-flex shrink-0 items-center gap-1.5">
-                  {t.unit === 'Rp' && <span className="text-xs text-slate-500">Rp</span>}
-                  <Input id={t.key} type="number" min="0" className={`h-8 text-right ${t.unit === 'Rp' ? 'w-28' : 'w-20'}`} value={draft.thresholds[t.key]} onChange={(e) => setTh(t.key, e.target.value)} />
-                  {t.unit !== 'Rp' && <span className="w-7 text-xs text-slate-500">{t.unit}</span>}
+                  {item.unit === 'Rp' && <span className="text-xs text-slate-500">Rp</span>}
+                  <Input id={item.key} type="number" min="0" className={`h-8 text-right ${item.unit === 'Rp' ? 'w-28' : 'w-20'}`} value={draft.thresholds[item.key]} onChange={(e) => setTh(item.key, e.target.value)} />
+                  {item.unit !== 'Rp' && <span className="w-7 text-xs text-slate-500">{t(item.unit)}</span>}
                 </span>
               </div>
             ))}
           </div>
           <p className="mt-4 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-600">
             <Icon name="shield" className="mt-0.5 h-4 w-4 text-primary-600" />
-            Data berkeyakinan rendah selalu wajib dicek manual, dan kartu risiko Tinggi selalu meminta konfirmasi dampak sebelum disetujui.
+            {t('Data berkeyakinan rendah selalu wajib dicek manual, dan kartu risiko Tinggi selalu meminta konfirmasi dampak sebelum disetujui.')}
           </p>
         </Card>
 
-        <Card title="Jam kerja pengiriman">
+        <Card title={t('Jam kerja pengiriman')}>
           <fieldset>
-            <legend className="mb-1.5 text-sm font-medium text-slate-700">Hari</legend>
+            <legend className="mb-1.5 text-sm font-medium text-slate-700">{t('Hari')}</legend>
             <div className="flex flex-wrap gap-1.5">
               {DAYS.map(([n, label]) => {
                 const on = draft.working_hours.days.includes(n);
@@ -94,19 +95,19 @@ export default function PolicySettings() {
             </div>
           </fieldset>
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <FormField label="Mulai"><Input type="time" value={draft.working_hours.start} onChange={(e) => setWh({ start: e.target.value })} /></FormField>
-            <FormField label="Selesai"><Input type="time" value={draft.working_hours.end} onChange={(e) => setWh({ end: e.target.value })} /></FormField>
+            <FormField label={t('Mulai')}><Input type="time" value={draft.working_hours.start} onChange={(e) => setWh({ start: e.target.value })} /></FormField>
+            <FormField label={t('Selesai')}><Input type="time" value={draft.working_hours.end} onChange={(e) => setWh({ end: e.target.value })} /></FormField>
           </div>
-          <p className="mt-1.5 text-xs text-slate-500">Zona waktu WIB (Asia/Jakarta).</p>
+          <p className="mt-1.5 text-xs text-slate-500">{t('Zona waktu WIB (Asia/Jakarta).')}</p>
           <label className="mt-4 flex items-start gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={draft.working_hours.queue_outside} onChange={(e) => setWh({ queue_outside: e.target.checked })} className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-primary-600" />
-            Antrekan pesan di luar jam kerja dan kirim saat jam kerja berikutnya dimulai
+            {t('Antrekan pesan di luar jam kerja dan kirim saat jam kerja berikutnya dimulai')}
           </label>
         </Card>
       </div>
 
-      <Card title="Agent PO (konfirmasi & revisi PO)">
-        <p className="text-sm text-slate-600">Agent PO yang sudah ada tetap memakai pengaturan di <code className="font-mono text-xs">backend/configs/models.yaml</code>; nilainya ditampilkan di sini sebagai referensi.</p>
+      <Card title={t('Agent PO (konfirmasi & revisi PO)')}>
+        <p className="text-sm text-slate-600">{t('Agent PO yang sudah ada tetap memakai pengaturan di')} <code className="font-mono text-xs">{t('backend/configs/models.yaml')}</code>; nilainya ditampilkan di sini sebagai referensi.</p>
         <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
           {[['reminder_after_hours', 'Pengingat', 'jam'], ['escalate_after_hours', 'Eskalasi', 'jam'], ['change_request_ttl_hours', 'Batas opsi revisi', 'jam'],
             ['max_turns', 'Balasan tak jelas maks.', 'kali'], ['max_revision_rounds', 'Putaran revisi maks.', 'kali']].map(([k, label, unit]) => (
@@ -117,9 +118,9 @@ export default function PolicySettings() {
 
       {dirty && (
         <div className="anim-pop sticky bottom-4 z-20 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-lg">
-          <span className="flex-1 text-sm text-slate-700">{problem ? <span className="font-medium text-red-600">{problem}</span> : 'Ada perubahan yang belum disimpan.'}</span>
-          <Button variant="secondary" onClick={() => setDraft(structuredClone(strip(data)))}>Batalkan</Button>
-          <Button loading={busy} disabled={!!problem} onClick={save}>Simpan aturan</Button>
+          <span className="flex-1 text-sm text-slate-700">{problem ? <span className="font-medium text-red-600">{problem}</span> : t('Ada perubahan yang belum disimpan.')}</span>
+          <Button variant="secondary" onClick={() => setDraft(structuredClone(strip(data)))}>{t('Batalkan')}</Button>
+          <Button loading={busy} disabled={!!problem} onClick={save}>{t('Simpan aturan')}</Button>
         </div>
       )}
     </div>

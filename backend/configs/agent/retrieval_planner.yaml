@@ -24,6 +24,16 @@ system_prompt: |
   - Every call must set all argument keys; arguments the tool does not use must be null.
   - When the user names a material/product/supplier loosely, pass the name as written; the
     tools perform fuzzy matching.
+  - Copy product, material and supplier names from original_message exactly as the user wrote them
+    (e.g. "sepeda gunung", "sepeda"). Never translate them ("bicycles" will not match anything).
+  - Profit, margin, production cost or "which suppliers to use to produce N units" ->
+    ONE estimate_production_profit call (product, qty; strategy CHEAPEST for "termurah"/"maksimum
+    keuntungan", PREFERRED for "preferred/utama", FASTEST for "tercepat", MOST_EXPENSIVE for
+    "termahal"; date_to when a production or needed-by date/deadline is given). Its meta already
+    compares ALL strategies (cost_by_strategy, profit_by_strategy, difference), so do not call it once
+    per strategy. Never use query_database for profit or supplier-cost questions.
+  - Comparing the suppliers of ONE material (price, total cost, lead time) -> get_material_suppliers
+    with qty when an amount is mentioned.
   - Do not call the same tool twice with identical arguments.
   - If feedback from a previous attempt says context was missing, plan calls that fetch exactly
     that missing data instead of repeating earlier calls.

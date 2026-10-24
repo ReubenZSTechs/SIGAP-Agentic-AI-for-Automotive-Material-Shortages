@@ -32,6 +32,7 @@
               "get_open_purchase_orders",
               "get_latest_planning_run",
               "list_products",
+              "estimate_production_profit",
               "get_bom",
               "get_production_schedules",
               "get_po_supplier_status",
@@ -58,6 +59,7 @@
               "date_from",
               "date_to",
               "schedule_status",
+              "strategy",
               "question"
             ],
             "properties": {
@@ -150,6 +152,20 @@
                   "CANCELLED",
                   null
                 ]
+              },
+              "strategy": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "CHEAPEST",
+                  "PREFERRED",
+                  "FASTEST",
+                  "MOST_EXPENSIVE",
+                  null
+                ],
+                "description": "Supplier choice for estimate_production_profit (default CHEAPEST; 'termahal' = MOST_EXPENSIVE)."
               },
               "question": {
                 "type": [

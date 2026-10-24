@@ -29,7 +29,8 @@ from configs.tools.po_common import (
     po_snapshot,
     rupiah,
 )
-from configs.tools.po_sourcing import _group_by_supplier, _line, active_links, assign_suppliers, consolidation_note
+from configs.tools.po_sourcing import (_group_by_supplier, _line, active_links, assign_suppliers, consolidation_note,
+                                       earliest_arrival, payment_schedule)
 
 
 # ---------------------------------- request resolution ----------------------------------
@@ -103,7 +104,7 @@ def _resolve_material(db: Session, query: str, field: str, out: dict) -> Materia
         return None
     if len(mats) > 1:
         out["ambiguous"].append({"field": field, "message": f"'{query}' matches several materials.",
-                                 "options": [{"label": f"{m.sku} {m.name}", "value": m.sku} for m in mats]})
+                                 "options": [{"label": f"{m.name} ({m.sku})", "value": m.sku} for m in mats]})
         return None
     return mats[0]
 
@@ -143,7 +144,7 @@ def _resolve_create(db: Session, draft: dict, out: dict, today: date) -> None:
             supplier_missing = True                         # opsi supplier ditambahkan setelah material diketahui
         elif len(sups) > 1:
             out["ambiguous"].append({"field": "supplier", "message": "Several suppliers match.",
-                                     "options": [{"label": f"{s.code} {s.name}", "value": s.code} for s in sups]})
+                                     "options": [{"label": f"{s.name} ({s.code})", "value": s.code} for s in sups]})
         else:
             supplier = sups[0]
     needed_by = _parse_date(draft.get("needed_by_date"), "needed_by_date", out, today)
@@ -177,7 +178,7 @@ def _resolve_create(db: Session, draft: dict, out: dict, today: date) -> None:
             link = next((l for l in links if l["supplier_id"] == supplier.id), None)
             if link is None:
                 out["ambiguous"].append({
-                    "field": "supplier", "message": f"{supplier.name} does not supply {m.sku} {m.name}.",
+                    "field": "supplier", "message": f"{supplier.name} does not supply {m.name}.",
                     "options": [{"label": f"{l['supplier_code']} {l['supplier_name']} ({rupiah(l['unit_price'])}, "
                                           f"{l['lead_time_days']} hari)", "value": l["supplier_code"]} for l in links]})
                 continue
@@ -188,18 +189,19 @@ def _resolve_create(db: Session, draft: dict, out: dict, today: date) -> None:
         pick = assign_suppliers(db, needs)
         for need in pick["missing"]:
             out["errors"].append({"field": "supplier",
-                                  "message": f"No active supplier can deliver {need['sku']} {need['name']}."})
+                                  "message": f"No active supplier can deliver {need['name']}."})
         chosen = [(link, need["material"], qty) for link, need, qty, _ in pick["assigned"]]
         if consolidation_note(pick):
             warnings.append(consolidation_note(pick))
     for link, m, qty in chosen:
         if qty < link["moq"]:
-            warnings.append(f"{m.sku}: qty {fmt_qty(qty)} di bawah MOQ {fmt_qty(link['moq'])} {link['supplier_name']}")
+            warnings.append(f"{m.name}: qty {fmt_qty(qty)} di bawah MOQ {fmt_qty(link['moq'])} {link['supplier_name']}")
         lines.append((link, _line(link, m, qty, needed_by)))
     if lines and not (out["missing"] or out["ambiguous"] or out["errors"]):
         pos = _group_by_supplier(db, lines)
         out["proposal"] = {"operation": "create", "purchase_orders": pos, "notes": draft.get("notes"),
-                           "grand_total": sum(p["total_amount"] for p in pos), "warnings": warnings}
+                           "grand_total": sum(p["total_amount"] for p in pos), "warnings": warnings,
+                           "payment": payment_schedule(pos, today)}
 
 
 def _resolve_update(db: Session, po: PurchaseOrder, draft: dict, out: dict, today: date) -> None:
@@ -228,7 +230,7 @@ def _resolve_update(db: Session, po: PurchaseOrder, draft: dict, out: dict, toda
             link = next((l for l in active_links(db, m.id) if l["supplier_id"] == po.supplier_id), None)
             if link is None:
                 out["errors"].append({"field": f"items.{n}.material",
-                                      "message": f"{po.supplier_name} does not supply {m.sku} {m.name}."})
+                                      "message": f"{po.supplier_name} does not supply {m.name}."})
                 continue
             after[m.id] = {"material_id": m.id, "sku": m.sku, "name": m.name, "uom": m.uom, "qty_ordered": qty,
                            "unit_price": link["unit_price"], "needed_by_date": None}
@@ -304,7 +306,7 @@ def _resolve_produce(db: Session, draft: dict, out: dict, today: date) -> None:
                                   "message": f"No finished product matches '{it.get('material_query')}'."})
         elif len(found) > 1:
             out["ambiguous"].append({"field": f"items.{n}.product", "message": "Which product?",
-                                     "options": [{"label": f"{m.sku} {m.name}", "value": m.sku} for m in found]})
+                                     "options": [{"label": f"{m.name} ({m.sku})", "value": m.sku} for m in found]})
         if qty is None or qty <= 0:
             out["missing"].append({"field": f"items.{n}.qty", "message": "How many units to produce?"})
         elif float(qty) != int(qty):
@@ -321,7 +323,7 @@ def _resolve_produce(db: Session, draft: dict, out: dict, today: date) -> None:
             for mid, q in allocation_service.requirement(db, m.id, qty).items():
                 requirement[mid] += q
         except AppError as e:
-            out["errors"].append({"field": "bom", "message": f"{m.sku} {m.name}: {e.detail}"})
+            out["errors"].append({"field": "bom", "message": f"{m.name}: {e.detail}"})
     if out["errors"]:
         return
     mats = {m.id: m for m in db.scalars(select(Material).where(Material.id.in_(list(requirement))))}
@@ -344,7 +346,7 @@ def _resolve_produce(db: Session, draft: dict, out: dict, today: date) -> None:
     pick = assign_suppliers(db, needs, deadline=need_by, today=today,
                             order_qty=lambda need, link: max(need["qty"], link["moq"]))
     for need in pick["missing"]:
-        out["errors"].append({"field": "supplier", "message": f"No active supplier can deliver {need['sku']} {need['name']}."})
+        out["errors"].append({"field": "supplier", "message": f"No active supplier can deliver {need['name']}."})
     if out["errors"]:
         return
     lines = [(link, _line(link, need, qty, when)) for link, need, qty, _ in pick["assigned"]]
@@ -354,9 +356,15 @@ def _resolve_produce(db: Session, draft: dict, out: dict, today: date) -> None:
         warnings.append(consolidation_note(pick))
     schedules = [{"product_id": m.id, "sku": m.sku, "name": m.name, "uom": m.uom, "qty": qty,
                   "production_date": when} for m, qty in products.values()]
+    # Paling cepat kapan SEMUA material yang kurang bisa tiba (pakai supplier tercepat masing-masing)?
+    arrivals = [earliest_arrival(db, n["material_id"], today) for n in needs]
+    earliest = max([a for a in arrivals if a] or [today])
+    payment = payment_schedule(pos, today)
     out["proposal"] = {"operation": "produce", "request": draft, "schedules": schedules, "materials": check,
                        "purchase_orders": pos, "grand_total": sum(p["total_amount"] for p in pos),
-                       "needed_by_date": when, "warnings": warnings}
+                       "needed_by_date": when, "warnings": warnings, "payment": payment,
+                       "earliest_ready_date": earliest.isoformat(), "feasible": earliest <= need_by,
+                       "expected_ready_date": payment["latest_arrival"] or today.isoformat()}
 
 
 def produce_signature(p: dict) -> list:

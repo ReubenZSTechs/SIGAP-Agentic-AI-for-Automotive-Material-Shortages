@@ -7,6 +7,7 @@ import MaterialForm from './forms/MaterialForm';
 import ProductForm from './forms/ProductForm';
 import SupplierForm from './forms/SupplierForm';
 import { checkRequired, setIn } from './formUtils';
+import { t } from '../../i18n';
 
 const BODY = { product: ProductForm, material: MaterialForm, supplier: SupplierForm };
 
@@ -50,7 +51,7 @@ export default function ChatForm({ block, editable, onSubmit, onCancel }) {
   const errorCount = Object.keys(errors).length;
   return (
     <div className="my-2 rounded-xl border border-l-4 border-indigo-200 border-l-indigo-600 bg-slate-50/70 p-4">
-      <div className="mb-3 text-sm font-medium text-slate-900">{block.title}</div>
+      <div className="mb-3 text-sm font-medium text-slate-900">{t(block.title)}</div>
       {editable && errorCount > 0 && (
         <p role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           {errorCount} isian perlu diperbaiki (ditandai merah). Perbaiki lalu kirim lagi, atau kosongkan formulir untuk mulai dari awal.
@@ -61,12 +62,12 @@ export default function ChatForm({ block, editable, onSubmit, onCancel }) {
       {editable ? (
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={submit}>{block.submitLabel ?? 'Lanjutkan'}</Button>
-          <Button size="sm" variant="ghost" onClick={reset}>Kosongkan formulir</Button>
-          <Button size="sm" variant="secondary" onClick={() => onCancel(block.formId)}>Batal</Button>
+          <Button size="sm" variant="ghost" onClick={reset}>{t('Kosongkan formulir')}</Button>
+          <Button size="sm" variant="secondary" onClick={() => onCancel(block.formId)}>{t('Batal')}</Button>
           {errorCount > 0 && <span className="text-xs text-red-600">{errorCount} isian perlu diperbaiki</span>}
         </div>
       ) : (
-        <p className="mt-3 text-xs text-slate-500">Formulir ini sudah dikirim atau digantikan.</p>
+        <p className="mt-3 text-xs text-slate-500">{t('Formulir ini sudah dikirim atau digantikan.')}</p>
       )}
     </div>
   );

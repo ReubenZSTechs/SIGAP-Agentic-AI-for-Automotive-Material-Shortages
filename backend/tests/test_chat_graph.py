@@ -46,7 +46,7 @@ def test_happy_path_streams_progress_and_grounded_table(critical_state):
     text, table = final["blocks"]
     assert text["type"] == "text"
     assert table["type"] == "table" and len(table["rows"]) == 2
-    assert [r[0] for r in table["rows"]] == ["RM-RUB-01", "RM-SBR-01"]
+    assert [r[0] for r in table["rows"]] == ["Ban Luar Karet", "Rangka Besi Dudukan Jok"]   # nama, bukan SKU
     meta = final["meta"]
     assert meta["passed"] and meta["score"] >= 0.8 and meta["metrics"]["numeric_grounding"] == 1.0
     assert meta["sources"][0]["tool"] == "get_critical_items"
@@ -69,7 +69,7 @@ def test_missing_context_triggers_new_retrieval(critical_state):
                         "args": F.args(material="Ban Luar Karet")}]}
     svc, fake = _service(_script(
         RetrievalPlannerOutput=[F.PLAN_CRITICAL, plan2],
-        EvaluatorOutput=[F.judge(r=0.5, c=0.2, failure="missing_context", critique="Supplier data missing"),
+        EvaluatorOutput=[F.judge(r=0.4, c=0.1, failure="missing_context", critique="Supplier data missing"),   # skor 0.715 < 0.75
                          F.judge()]))
     final = svc.run("critical items and who supplies them?", "thread-replan")
     assert fake.count("RetrievalPlannerOutput") == 2

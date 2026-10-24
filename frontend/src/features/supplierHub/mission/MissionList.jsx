@@ -1,6 +1,7 @@
 import Icon from '../../../components/common/Icon';
 import StateBadge from '../StateBadge';
 import { MISSION_STATUS, SCENARIO, dayTime, msLeft, timeLeft } from '../meta';
+import { t } from '../../../i18n';
 
 export function Progress({ value, total, className = '' }) {
   const pct = total ? Math.round((value / total) * 100) : 0;
@@ -30,11 +31,11 @@ export default function MissionList({ missions, onOpen, emptyText }) {
                 <ScenarioTile scenario={m.scenario} />
                 <span className="min-w-0">
                   <span className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-slate-900">#{m.number} {m.title}</span>
+                    <span className="text-sm font-semibold text-slate-900">#{m.number} {t(m.title)}</span>
                     <StateBadge meta={MISSION_STATUS[m.status]} />
                   </span>
                   <span className="mt-0.5 block truncate text-xs text-slate-500">
-                    {SCENARIO[m.scenario].label} · {m.item}{m.po_number ? ` · ${m.po_number}` : ''} · oleh {m.created_by}
+                    {t(SCENARIO[m.scenario].label)} · {m.item}{m.po_number ? ` · ${m.po_number}` : ''} · oleh {m.created_by}
                   </span>
                 </span>
               </span>

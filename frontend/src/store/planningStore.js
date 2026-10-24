@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { planningService } from '../services/planningService';
 import { toast } from './toastStore';
+import { t } from '../i18n';
 
 // Inti alur Phase 2–4: run aktif, hasil sourcing, strategi, dan PO hasil generate.
 export const usePlanningStore = create((set, get) => ({
@@ -85,7 +86,7 @@ export const usePlanningStore = create((set, get) => ({
       const res = await planningService.autoSelect(run.id, strategy);
       await get().loadSourcing();
       if (res.skipped_no_supplier?.length) {
-        toast.error(`Belum ada supplier untuk: ${res.skipped_no_supplier.join(', ')}`);
+        toast.error(t('Belum ada supplier untuk: {list}', { list: res.skipped_no_supplier.join(', ') }));
       } else {
         toast.success('Supplier terpilih otomatis untuk baris yang kosong');
       }
@@ -100,7 +101,7 @@ export const usePlanningStore = create((set, get) => ({
     try {
       const pos = await planningService.generatePOs(run.id);
       set({ pos, run: { ...run, status: 'PO_GENERATED' } });
-      toast.success(`${pos.length} Purchase Order dibuat`);
+      toast.success(t('{n} Purchase Order dibuat', { n: pos.length }));
       return pos;
     } catch (e) {
       toast.error(e.message);

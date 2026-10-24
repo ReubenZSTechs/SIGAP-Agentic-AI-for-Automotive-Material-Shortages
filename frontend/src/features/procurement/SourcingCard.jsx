@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import Badge from '../../components/common/Badge';
 import Button from '../../components/common/Button';
 import { formatDate, formatLead, formatQty, formatRupiah } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 function QtyInput({ line, minQty, locked, onCommit }) {
   const [val, setVal] = useState(String(line.order_qty ?? ''));
@@ -12,7 +13,7 @@ function QtyInput({ line, minQty, locked, onCommit }) {
 
   const commit = () => {
     const n = Number(val);
-    if (!(n > 0) || n < minQty) { setErr(`Minimal ${formatQty(minQty)} (defisit / MOQ)`); return; }
+    if (!(n > 0) || n < minQty) { setErr(t('Minimal {n} (defisit / MOQ)', { n: formatQty(minQty) })); return; }
     setErr(null);
     if (n !== line.order_qty) onCommit(n);
   };
@@ -20,7 +21,7 @@ function QtyInput({ line, minQty, locked, onCommit }) {
   return (
     <div className="flex flex-col items-end">
       <div className="flex items-center gap-2">
-        <label htmlFor={`qty-${line.id}`}>Qty pesan</label>
+        <label htmlFor={`qty-${line.id}`}>{t('Qty pesan')}</label>
         <input id={`qty-${line.id}`} type="number" min={minQty} step="any" value={val} disabled={locked}
                onChange={(e) => setVal(e.target.value)} onBlur={commit}
                onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
@@ -56,16 +57,16 @@ export default function SourcingCard({ item, locked, onSelect, onClear }) {
 
       {options.length === 0 ? (
         <p className="px-4 py-3 text-sm text-red-600">
-          Belum ada supplier untuk material ini. Tambahkan di <Link className="underline" to="/materials">Master Material</Link>.
+          Belum ada supplier untuk material ini. Tambahkan di <Link className="underline" to="/materials">{t('Master Material')}</Link>.
         </p>
       ) : (
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs uppercase tracking-wide text-slate-400">
-              <th className="w-10 px-4 py-1" /><th className="py-1 text-left font-medium">Supplier</th>
-              <th className="py-1 text-right font-medium">Harga/Unit</th><th className="py-1 text-right font-medium">Lead</th>
-              <th className="py-1 text-right font-medium">MOQ</th><th className="py-1 text-right font-medium">Est. Total</th>
-              <th className="py-1 pl-4 text-left font-medium">Label</th>
+              <th className="w-10 px-4 py-1" /><th className="py-1 text-left font-medium">{t('Supplier')}</th>
+              <th className="py-1 text-right font-medium">{t('Harga/Unit')}</th><th className="py-1 text-right font-medium">{t('Lead')}</th>
+              <th className="py-1 text-right font-medium">MOQ</th><th className="py-1 text-right font-medium">{t('Est. Total')}</th>
+              <th className="py-1 pl-4 text-left font-medium">{t('Label')}</th>
             </tr>
           </thead>
           <tbody>
@@ -76,7 +77,7 @@ export default function SourcingCard({ item, locked, onSelect, onClear }) {
                     className={`border-b border-slate-50 last:border-0 ${isSel ? 'bg-indigo-50' : ''}`}>
                   <td className="px-4 py-2">
                     <input type="radio" name={`sel-${line.id}`} checked={isSel} disabled={locked}
-                           aria-label={`Pilih ${o.supplier_name}`} onChange={() => pick(o)} />
+                           aria-label={t('Pilih {name}', { name: o.supplier_name })} onChange={() => pick(o)} />
                   </td>
                   <td className="py-2 font-medium">{o.supplier_name}</td>
                   <td className="py-2 text-right">{formatRupiah(o.unit_price)}</td>
@@ -85,11 +86,11 @@ export default function SourcingCard({ item, locked, onSelect, onClear }) {
                   <td className="py-2 text-right">{formatRupiah(o.est_total)}</td>
                   <td className="py-2 pl-4 pr-4">
                     <div className="flex flex-wrap gap-1">
-                      {o.rank === 1 && <Badge tone="slate">Pilihan utama</Badge>}
-                      {o.is_cheapest && <Badge tone="green">Termurah</Badge>}
-                      {o.is_fastest && <Badge tone="indigo">Tercepat</Badge>}
+                      {o.rank === 1 && <Badge tone="slate">{t('Pilihan utama')}</Badge>}
+                      {o.is_cheapest && <Badge tone="green">{t('Termurah')}</Badge>}
+                      {o.is_fastest && <Badge tone="indigo">{t('Tercepat')}</Badge>}
                       {!o.meets_moq && <Badge tone="amber">MOQ {formatQty(o.moq)}</Badge>}
-                      {o.will_be_late && <Badge tone="amber">Telat dari jadwal</Badge>}
+                      {o.will_be_late && <Badge tone="amber">{t('Telat dari jadwal')}</Badge>}
                     </div>
                   </td>
                 </tr>
@@ -103,12 +104,12 @@ export default function SourcingCard({ item, locked, onSelect, onClear }) {
         <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-2 text-sm">
           <span className="text-slate-500">
             Terpilih: <b className="text-slate-800">{line.selected_supplier_name}</b>
-            {!selected && <span className="ml-1 text-amber-700">(di luar filter strategi saat ini)</span>}
+            {!selected && <span className="ml-1 text-amber-700">{t('(di luar filter strategi saat ini)')}</span>}
           </span>
           <div className="flex items-center gap-3">
             <QtyInput line={line} minQty={minQty} locked={locked}
                       onCommit={(n) => onSelect(line.id, line.selected_supplier_id, n)} />
-            {!locked && <Button size="sm" variant="ghost" onClick={() => onClear(line.id)}>Batal pilih</Button>}
+            {!locked && <Button size="sm" variant="ghost" onClick={() => onClear(line.id)}>{t('Batal pilih')}</Button>}
           </div>
         </footer>
       )}

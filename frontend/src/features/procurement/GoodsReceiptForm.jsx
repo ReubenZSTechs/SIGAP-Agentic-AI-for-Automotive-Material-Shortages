@@ -3,6 +3,7 @@ import Button from '../../components/common/Button';
 import { purchaseOrderService } from '../../services/purchaseOrderService';
 import { toast } from '../../store/toastStore';
 import { formatQty } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 export default function GoodsReceiptForm({ po, onDone }) {
   const remaining = (i) => Math.max(0, i.qty_ordered - i.qty_received);
@@ -12,7 +13,7 @@ export default function GoodsReceiptForm({ po, onDone }) {
 
   const submit = async () => {
     for (const i of po.items) {
-      if (Number(qty[i.id]) > remaining(i)) return toast.error(`Qty ${i.name} melebihi sisa pesanan`);
+      if (Number(qty[i.id]) > remaining(i)) return toast.error(t('Qty {name} melebihi sisa pesanan', { name: i.name }));
     }
     const items = po.items
       .map((i) => ({ po_item_id: i.id, qty_received: Number(qty[i.id]) }))
@@ -30,16 +31,16 @@ export default function GoodsReceiptForm({ po, onDone }) {
   return (
     <div>
       <div className="mb-2 flex justify-end">
-        <Button variant="secondary" size="sm" onClick={() => setQty(defaults())}>Terima Semua</Button>
+        <Button variant="secondary" size="sm" onClick={() => setQty(defaults())}>{t('Terima Semua')}</Button>
       </div>
       <table className="w-full text-sm">
         <thead className="text-left text-xs uppercase tracking-wide text-slate-500">
           <tr>
-            <th className="py-1 font-medium">Material</th>
-            <th className="py-1 text-right font-medium">Dipesan</th>
-            <th className="py-1 text-right font-medium">Diterima</th>
-            <th className="py-1 text-right font-medium">Sisa</th>
-            <th className="py-1 text-right font-medium">Terima sekarang</th>
+            <th className="py-1 font-medium">{t('Material')}</th>
+            <th className="py-1 text-right font-medium">{t('Dipesan')}</th>
+            <th className="py-1 text-right font-medium">{t('Diterima')}</th>
+            <th className="py-1 text-right font-medium">{t('Sisa')}</th>
+            <th className="py-1 text-right font-medium">{t('Terima sekarang')}</th>
           </tr>
         </thead>
         <tbody>
@@ -60,7 +61,7 @@ export default function GoodsReceiptForm({ po, onDone }) {
         </tbody>
       </table>
       <div className="mt-3 flex justify-end">
-        <Button loading={saving} onClick={submit}>Simpan Penerimaan</Button>
+        <Button loading={saving} onClick={submit}>{t('Simpan Penerimaan')}</Button>
       </div>
     </div>
   );

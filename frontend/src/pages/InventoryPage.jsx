@@ -10,6 +10,7 @@ import MovementHistoryModal from '../features/material/MovementHistoryModal';
 import useFetch from '../hooks/useFetch';
 import { inventoryService } from '../services/inventoryService';
 import { useMasterStore } from '../store/masterStore';
+import { t } from '../i18n';
 
 export default function InventoryPage() {
   const [status, setStatus] = useState('');
@@ -32,20 +33,20 @@ export default function InventoryPage() {
 
   return (
     <>
-      <PageHeader title="Inventory Material Beli" subtitle="Stok fisik, stok terkunci, dan stok tersedia per material beli"
-        actions={<Button variant="secondary" onClick={() => setModal({ open: true, row: null })}><Icon name="plus" /> Atur Stok Material</Button>} />
+      <PageHeader title={t('Inventory Material Beli')} subtitle={t('Stok fisik, stok terkunci, dan stok tersedia per material beli')}
+        actions={<Button variant="secondary" onClick={() => setModal({ open: true, row: null })}><Icon name="plus" /> {t('Atur Stok Material')}</Button>} />
       <div className="mb-3">
         <Select className="w-48" value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="">Status: Semua</option>
-          <option value="CRITICAL">Critical</option>
-          <option value="WARNING">Warning</option>
-          <option value="SAFE">Aman</option>
+          <option value="">{t('Status: Semua')}</option>
+          <option value="CRITICAL">{t('Critical')}</option>
+          <option value="WARNING">{t('Warning')}</option>
+          <option value="SAFE">{t('Aman')}</option>
         </Select>
       </div>
       <p className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-        <span className="inline-flex items-center gap-1.5"><i className="h-2 w-5 rounded-full bg-slate-300" />Stok fisik</span>
-        <span className="inline-flex items-center gap-1.5"><i className="h-2 w-5 rounded-full bg-green-600" />Stok tersedia (warna mengikuti status)</span>
-        <span className="inline-flex items-center gap-1.5"><i className="h-3.5 w-0.5 rounded bg-slate-800" />Safety stock</span>
+        <span className="inline-flex items-center gap-1.5"><i className="h-2 w-5 rounded-full bg-slate-300" />{t('Stok fisik')}</span>
+        <span className="inline-flex items-center gap-1.5"><i className="h-2 w-5 rounded-full bg-green-600" />{t('Stok tersedia (warna mengikuti status)')}</span>
+        <span className="inline-flex items-center gap-1.5"><i className="h-3.5 w-0.5 rounded bg-slate-800" />{t('Safety stock')}</span>
       </p>
       <Card padded={false}>
         {error ? <p className="p-4 text-sm text-red-600">{error.message}</p> : (

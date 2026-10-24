@@ -10,6 +10,7 @@ import { materialService } from '../../services/materialService';
 import { useMasterStore } from '../../store/masterStore';
 import { byCategory } from '../../utils/constants';
 import { formatQty, formatRupiah, todayISO } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 const newRow = () => ({ material_id: '', qty: '', unit_price: '', needed_by: '', price_touched: false });
 const toRow = (i) => ({ material_id: String(i.material_id), qty: String(i.qty_ordered), unit_price: String(i.unit_price),
@@ -51,13 +52,13 @@ export default function ManualPoForm({ initial, saving, onSubmit }) {
 
   const errors = useMemo(() => {
     const er = [];
-    if (!h.supplier_id) er.push('Pilih supplier');
-    if (!h.po_date) er.push('Tanggal PO wajib diisi');
-    if (rows.some((r) => !r.material_id)) er.push('Pilih material pada setiap baris');
+    if (!h.supplier_id) er.push(t('Pilih supplier'));
+    if (!h.po_date) er.push(t('Tanggal PO wajib diisi'));
+    if (rows.some((r) => !r.material_id)) er.push(t('Pilih material pada setiap baris'));
     rows.forEach((r, i) => {
-      if (!(Number(r.qty) > 0)) er.push(`Baris ${i + 1}: qty harus > 0`);
-      if (r.unit_price === '' || !Number.isInteger(Number(r.unit_price)) || Number(r.unit_price) < 0) er.push(`Baris ${i + 1}: harga bilangan bulat ≥ 0`);
-      if (r.needed_by && h.po_date && r.needed_by < h.po_date) er.push(`Baris ${i + 1}: tanggal kebutuhan sebelum tanggal PO`);
+      if (!(Number(r.qty) > 0)) er.push(t('Baris {n}: qty harus > 0', { n: i + 1 }));
+      if (r.unit_price === '' || !Number.isInteger(Number(r.unit_price)) || Number(r.unit_price) < 0) er.push(t('Baris {n}: harga bilangan bulat ≥ 0', { n: i + 1 }));
+      if (r.needed_by && h.po_date && r.needed_by < h.po_date) er.push(t('Baris {n}: tanggal kebutuhan sebelum tanggal PO', { n: i + 1 }));
     });
     return er;
   }, [h, rows]);
@@ -71,30 +72,30 @@ export default function ManualPoForm({ initial, saving, onSubmit }) {
 
   return (
     <div className="space-y-4">
-      <Card title="Header">
+      <Card title={t('Header')}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <FormField label="Supplier*">
+          <FormField label={t('Supplier*')}>
             <Select value={h.supplier_id} onChange={(e) => setH({ ...h, supplier_id: e.target.value })}>
-              <option value="">Pilih supplier…</option>
+              <option value="">{t('Pilih supplier…')}</option>
               {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name} — {s.payment_term_days > 0 ? `Net ${s.payment_term_days}` : 'Tunai'}</option>)}
             </Select>
           </FormField>
-          <FormField label="Tanggal PO*">
+          <FormField label={t('Tanggal PO*')}>
             <Input type="date" value={h.po_date} onChange={(e) => setH({ ...h, po_date: e.target.value })} />
           </FormField>
-          <FormField label="Catatan" className="sm:col-span-2">
+          <FormField label={t('Catatan')} className="sm:col-span-2">
             <Textarea rows={2} maxLength={500} value={h.notes} onChange={(e) => setH({ ...h, notes: e.target.value })} />
           </FormField>
         </div>
       </Card>
 
-      <Card title="Item" padded={false}
-        actions={<Button size="sm" variant="secondary" onClick={() => setRows((rs) => [...rs, newRow()])}><Icon name="plus" /> Tambah item</Button>}>
+      <Card title={t('Item')} padded={false}
+        actions={<Button size="sm" variant="secondary" onClick={() => setRows((rs) => [...rs, newRow()])}><Icon name="plus" /> {t('Tambah item')}</Button>}>
         <table className="w-full text-sm">
           <thead className="text-left text-xs uppercase tracking-wide text-slate-500">
-            <tr><th className="px-3 py-2 font-medium">Material*</th><th className="py-2 font-medium">Qty*</th><th className="py-2 font-medium">Sat.</th>
-              <th className="py-2 font-medium">Harga satuan*</th><th className="py-2 font-medium">Tgl kebutuhan</th>
-              <th className="py-2 text-right font-medium">Subtotal</th><th /></tr>
+            <tr><th className="px-3 py-2 font-medium">{t('Material*')}</th><th className="py-2 font-medium">{t('Qty*')}</th><th className="py-2 font-medium">Sat.</th>
+              <th className="py-2 font-medium">{t('Harga satuan*')}</th><th className="py-2 font-medium">{t('Tgl kebutuhan')}</th>
+              <th className="py-2 text-right font-medium">{t('Subtotal')}</th><th /></tr>
           </thead>
           <tbody>
             {rows.map((r, i) => {
@@ -105,26 +106,26 @@ export default function ManualPoForm({ initial, saving, onSubmit }) {
               return [
                 <tr key={`r${i}`} className="border-t border-slate-100 align-top">
                   <td className="px-3 py-2">
-                    <Select aria-label={`Material baris ${i + 1}`} value={r.material_id} onChange={(e) => pickMaterial(i, e.target.value)}>
-                      <option value="">Pilih material…</option>
+                    <Select aria-label={t('Material baris {n}', { n: i + 1 })} value={r.material_id} onChange={(e) => pickMaterial(i, e.target.value)}>
+                      <option value="">{t('Pilih material…')}</option>
                       {buyable.filter((b) => !taken.has(b.id)).map((b) => <option key={b.id} value={b.id}>{b.sku} · {b.name}</option>)}
                     </Select>
                   </td>
-                  <td className="py-2"><Input aria-label={`Qty baris ${i + 1}`} type="number" min="0" step="any" className="w-24" value={r.qty} onChange={(e) => patchRow(i, { qty: e.target.value })} /></td>
+                  <td className="py-2"><Input aria-label={t('Qty baris {n}', { n: i + 1 })} type="number" min="0" step="any" className="w-24" value={r.qty} onChange={(e) => patchRow(i, { qty: e.target.value })} /></td>
                   <td className="py-2 text-slate-600">{m?.uom ?? '—'}</td>
-                  <td className="py-2"><Input aria-label={`Harga baris ${i + 1}`} type="number" min="0" step="1" className="w-32" value={r.unit_price}
+                  <td className="py-2"><Input aria-label={t('Harga baris {n}', { n: i + 1 })} type="number" min="0" step="1" className="w-32" value={r.unit_price}
                     onChange={(e) => patchRow(i, { unit_price: e.target.value, price_touched: true })} /></td>
-                  <td className="py-2"><Input aria-label={`Tanggal kebutuhan baris ${i + 1}`} type="date" className="w-40" value={r.needed_by} onChange={(e) => patchRow(i, { needed_by: e.target.value })} /></td>
+                  <td className="py-2"><Input aria-label={t('Tanggal kebutuhan baris {n}', { n: i + 1 })} type="date" className="w-40" value={r.needed_by} onChange={(e) => patchRow(i, { needed_by: e.target.value })} /></td>
                   <td className="py-2 text-right">{formatRupiah(Math.round((Number(r.qty) || 0) * (Number(r.unit_price) || 0)))}</td>
                   <td className="py-2 pr-3 text-right">
-                    {rows.length > 1 && <Button size="sm" variant="ghost" aria-label={`Hapus baris ${i + 1}`} onClick={() => setRows((rs) => rs.filter((_, k) => k !== i))}><Icon name="trash" /></Button>}
+                    {rows.length > 1 && <Button size="sm" variant="ghost" aria-label={t('Hapus baris {n}', { n: i + 1 })} onClick={() => setRows((rs) => rs.filter((_, k) => k !== i))}><Icon name="trash" /></Button>}
                   </td>
                 </tr>,
                 <tr key={`i${i}`}>
                   <td colSpan={7} className="px-3 pb-2">
                     {l && <p className="text-xs text-slate-500">Lead time {l.lead_time_days} hari (supplier ini)</p>}
                     {r.material_id && supplier && !l && (
-                      <p className="flex items-center gap-1 text-xs text-amber-700"><Icon name="alert" className="h-3.5 w-3.5" /> Supplier belum terdaftar untuk material ini — tetap bisa dipesan.</p>
+                      <p className="flex items-center gap-1 text-xs text-amber-700"><Icon name="alert" className="h-3.5 w-3.5" /> {t('Supplier belum terdaftar untuk material ini — tetap bisa dipesan.')}</p>
                     )}
                     {st && <p className="text-xs text-slate-500">Tersedia {formatQty(st.available)} · Dipesan {formatQty(st.on_order)} · Safety {formatQty(st.safety_stock)}</p>}
                   </td>
@@ -133,7 +134,7 @@ export default function ManualPoForm({ initial, saving, onSubmit }) {
             })}
           </tbody>
         </table>
-        <div className="border-t border-slate-100 px-3 py-2 text-right text-sm">Total <b>{formatRupiah(total)}</b></div>
+        <div className="border-t border-slate-100 px-3 py-2 text-right text-sm">{t('Total')} <b>{formatRupiah(total)}</b></div>
       </Card>
 
       {errors.length > 0 && (
@@ -142,7 +143,7 @@ export default function ManualPoForm({ initial, saving, onSubmit }) {
         </ul>
       )}
       <div className="flex justify-end gap-2">
-        <Button variant="secondary" disabled={errors.length > 0} loading={saving === 'draft'} onClick={() => onSubmit(payload(), false)}>Simpan Draft</Button>
+        <Button variant="secondary" disabled={errors.length > 0} loading={saving === 'draft'} onClick={() => onSubmit(payload(), false)}>{t('Simpan Draft')}</Button>
         <Button disabled={errors.length > 0} loading={saving === 'submit'} onClick={() => onSubmit(payload(), true)}>Simpan & Submit</Button>
       </div>
     </div>

@@ -5,6 +5,7 @@ import FormField from '../../components/common/FormField';
 import Input from '../../components/common/Input';
 import { materialService } from '../../services/materialService';
 import { toast } from '../../store/toastStore';
+import { t } from '../../i18n';
 
 const EMPTY = { sku: '', name: '', uom: '', is_active: true };
 
@@ -50,23 +51,22 @@ export default function MaterialFormModal({ open, material, onClose, onSaved }) 
     <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Material Beli' : 'Tambah Material Beli'}
       footer={(
         <>
-          <Button variant="secondary" onClick={onClose}>Batal</Button>
-          <Button loading={saving} onClick={submit}>Simpan</Button>
+          <Button variant="secondary" onClick={onClose}>{t('Batal')}</Button>
+          <Button loading={saving} onClick={submit}>{t('Simpan')}</Button>
         </>
       )}>
       <div className="space-y-3">
-        <FormField label="SKU" error={errors.sku}>
-          <Input value={form.sku} onChange={set('sku')} disabled={isEdit} placeholder="RM-XXX-01" />
+        <FormField label={t('SKU')} error={errors.sku}>
+          <Input value={form.sku} onChange={set('sku')} disabled={isEdit} placeholder={t('RM-XXX-01')} />
         </FormField>
-        <FormField label="Nama" error={errors.name}>
+        <FormField label={t('Nama')} error={errors.name}>
           <Input value={form.name} onChange={set('name')} />
         </FormField>
-        <FormField label="Satuan" error={errors.uom}>
-          <Input value={form.uom} onChange={set('uom')} placeholder="Buah, kg, ml, m²" />
+        <FormField label={t('Satuan')} error={errors.uom}>
+          <Input value={form.uom} onChange={set('uom')} placeholder={t('Buah, kg, ml, m²')} />
         </FormField>
         <p className="text-xs text-slate-500">
-          Halaman ini khusus material yang dibeli dari supplier. Sub-part dibuat di menu BOM,
-          produk jual di menu Produk Final.
+          {t('Halaman ini khusus material yang dibeli dari supplier. Sub-part dibuat di menu BOM, produk jual di menu Produk Final.')}
         </p>
         {isEdit && (
           <label className="flex items-center gap-2 text-sm">

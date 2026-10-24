@@ -1,4 +1,5 @@
 import { formatDate, formatQty, formatRupiah } from '../../utils/formatters';
+import { locale, t } from '../../i18n';
 
 // Registry jenis kartu. Jenis tak dikenal otomatis memakai tampilan generik.
 export const TYPE = {
@@ -20,9 +21,9 @@ export const msLeft = (iso) => new Date(iso).getTime() - Date.now();
 export const isUrgent = (it) => it.status === 'PENDING' && msLeft(it.expires_at) < 2 * 3600e3;
 export function timeLeft(iso) {
   const ms = msLeft(iso);
-  if (ms <= 0) return 'kedaluwarsa';
+  if (ms <= 0) return t('kedaluwarsa');
   const h = Math.floor(ms / 3600e3); const m = Math.floor((ms % 3600e3) / 60e3);
-  return h > 0 ? `${h} jam ${m} mnt` : `${m} mnt`;
+  return h > 0 ? t('{h} jam {m} mnt', { h, m }) : t('{m} mnt', { m });
 }
 
 export function fmt(v, unit) {
@@ -38,7 +39,7 @@ export function delta(r) {
   if (r.before == null || r.after == null) return null; // nilai lama kosong (mis. tanggal belum diisi): tanpa selisih
   if (r.unit === 'date') {
     value = Math.round((new Date(r.after) - new Date(r.before)) / 864e5);
-    text = `${value > 0 ? '+' : ''}${value} hari`;
+    text = `${value > 0 ? '+' : ''}${t('{n} hari', { n: value })}`;
   } else if (typeof r.before === 'number' && typeof r.after === 'number' && r.before !== 0) {
     value = ((r.after - r.before) / r.before) * 100;
     text = `${value > 0 ? '+' : ''}${value.toFixed(1).replace('.', ',')}%`;
@@ -95,23 +96,23 @@ export const DOC_STATUS = {
 
 // ---- Waktu ----
 const toDate = (iso) => new Date(iso);
-export const clock = (iso) => toDate(iso).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+export const clock = (iso) => toDate(iso).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' });
 const sameDay = (a, b) => a.toDateString() === b.toDateString();
 export function dayLabel(iso) {
   const d = toDate(iso); const today = new Date(); const yday = new Date(Date.now() - 864e5);
-  if (sameDay(d, today)) return 'Hari ini';
-  if (sameDay(d, yday)) return 'Kemarin';
-  return d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' });
+  if (sameDay(d, today)) return t('Hari ini');
+  if (sameDay(d, yday)) return t('Kemarin');
+  return d.toLocaleDateString(locale(), { weekday: 'long', day: 'numeric', month: 'long' });
 }
 // "10.42" untuk hari ini, "Kemarin" atau "18 Okt" untuk sebelumnya.
 export function shortTime(iso) {
   if (!iso) return '';
   const d = toDate(iso);
   if (sameDay(d, new Date())) return clock(iso);
-  if (sameDay(d, new Date(Date.now() - 864e5))) return 'Kemarin';
-  return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+  if (sameDay(d, new Date(Date.now() - 864e5))) return t('Kemarin');
+  return d.toLocaleDateString(locale(), { day: 'numeric', month: 'short' });
 }
-export const dayTime = (iso) => toDate(iso).toLocaleString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+export const dayTime = (iso) => toDate(iso).toLocaleString(locale(), { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 export const initials = (name) => name.replace(/^(PT|CV|UD)\.?\s+/i, '').split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
 
 // Nama approver diingat peramban (MVP tanpa autentikasi, sama dengan DecisionModal).

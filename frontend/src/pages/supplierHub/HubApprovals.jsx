@@ -13,6 +13,7 @@ import { TYPE, isUrgent } from '../../features/supplierHub/meta';
 import usePolling from '../../hooks/usePolling';
 import { useHubStore } from '../../store/hubStore';
 import { toast } from '../../store/toastStore';
+import { t } from '../../i18n';
 
 const DONE_COPY = { approve: 'Disetujui', reject: 'Ditolak', revision: 'Revisi dicatat', choose: 'Opsi dijalankan' };
 
@@ -56,7 +57,7 @@ export default function HubApprovals() {
     const { mode, payload } = dlg;
     try {
       await decide(selected.id, mode, { ...payload, approver, reason });
-      toast.success(DONE_COPY[mode]);
+      toast.success(t(DONE_COPY[mode]));
       setDlg(null); setSelectedId(null);
     } catch (e) { toast.error(e.message ?? 'Gagal menyimpan keputusan'); if (e.status === 409) setDlg(null); }
   };
@@ -64,14 +65,14 @@ export default function HubApprovals() {
   return (
     <>
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="Menunggu" value={pendingItems.length} />
-        <Stat label="Hampir kedaluwarsa" value={pendingItems.filter(isUrgent).length} warn />
-        <Stat label="Risiko tinggi" value={pendingItems.filter((i) => i.risk === 'HIGH').length} warn />
-        <Stat label="Sudah diputuskan" value={items.length - pendingItems.length} />
+        <Stat label={t('Menunggu')} value={pendingItems.length} />
+        <Stat label={t('Hampir kedaluwarsa')} value={pendingItems.filter(isUrgent).length} warn />
+        <Stat label={t('Risiko tinggi')} value={pendingItems.filter((i) => i.risk === 'HIGH').length} warn />
+        <Stat label={t('Sudah diputuskan')} value={items.length - pendingItems.length} />
       </div>
 
       {error ? (
-        <Card><p className="text-sm text-red-600">{error.message}</p><Button className="mt-3" variant="secondary" onClick={() => load()}>Coba lagi</Button></Card>
+        <Card><p className="text-sm text-red-600">{error.message}</p><Button className="mt-3" variant="secondary" onClick={() => load()}>{t('Coba lagi')}</Button></Card>
       ) : (
         <div className="grid items-start gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">
           <div className={selected ? 'hidden lg:block' : ''}>
@@ -79,14 +80,14 @@ export default function HubApprovals() {
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3">
                 <Tabs variant="segmented" value={view} onChange={(v) => { setView(v); setSelectedId(null); }}
                   tabs={[{ id: 'PENDING', label: 'Menunggu' }, { id: 'DONE', label: 'Selesai' }]} />
-                <Select className="ml-auto h-8 w-auto! min-w-0 text-xs" value={type} aria-label="Filter jenis" onChange={(e) => { setType(e.target.value); setSelectedId(null); }}>
-                  <option value="">Semua jenis</option>
-                  {Object.entries(TYPE).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                <Select className="ml-auto h-8 w-auto! min-w-0 text-xs" value={type} aria-label={t('Filter jenis')} onChange={(e) => { setType(e.target.value); setSelectedId(null); }}>
+                  <option value="">{t('Semua jenis')}</option>
+                  {Object.entries(TYPE).map(([k, v]) => <option key={k} value={k}>{t(v.label)}</option>)}
                 </Select>
               </div>
               {loading && !items.length ? <Spinner /> : (
                 <ApprovalList items={visible} selectedId={selectedId} onSelect={setSelectedId}
-                  emptyText={view === 'PENDING' ? 'Tidak ada yang perlu disetujui' : 'Belum ada keputusan'} />
+                  emptyText={view === 'PENDING' ? t('Tidak ada yang perlu disetujui') : t('Belum ada keputusan')} />
               )}
             </Card>
           </div>
@@ -94,16 +95,16 @@ export default function HubApprovals() {
           <div className={selected ? '' : 'hidden lg:block'}>
             {selected ? (
               <>
-                <Button className="mb-3 lg:hidden" variant="ghost" size="sm" onClick={() => setSelectedId(null)}><Icon name="arrowLeft" /> Kembali</Button>
+                <Button className="mb-3 lg:hidden" variant="ghost" size="sm" onClick={() => setSelectedId(null)}><Icon name="arrowLeft" /> {t('Kembali')}</Button>
                 <ApprovalCard key={`${selected.id}-${selected.version}`} item={selected} onDecide={(mode, payload) => setDlg({ mode, payload })} />
               </>
-            ) : <Card><EmptyState title="Pilih item untuk ditinjau" description="Perubahan, bukti dari chat, dan dampaknya tampil di sini." /></Card>}
+            ) : <Card><EmptyState title={t('Pilih item untuk ditinjau')} description={t('Perubahan, bukti dari chat, dan dampaknya tampil di sini.')} /></Card>}
           </div>
         </div>
       )}
 
       <DecisionModal open={!!dlg} mode={dlg?.mode} item={selected} onClose={() => setDlg(null)} onSubmit={submit}
-        detail={dlg?.mode === 'choose' ? `Opsi: ${dlg.payload.label}. Keputusan ini sama dengan menekan tombol di Telegram manajer.` : null} />
+        detail={dlg?.mode === 'choose' ? t('Opsi: {opt}. Keputusan ini sama dengan menekan tombol di Telegram manajer.', { opt: t(dlg.payload.label) }) : null} />
     </>
   );
 }

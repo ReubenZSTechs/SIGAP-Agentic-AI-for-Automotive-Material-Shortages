@@ -115,7 +115,7 @@ def _resolve_item(db: Session, entity: str, item: dict) -> tuple[dict, str | Non
         elif not matches:
             row["new_supplier"] = empty_new_supplier(query)
         else:
-            names = ", ".join(f"{s.code} {s.name}" for s in matches[:5])
+            names = ", ".join(f"{s.name} ({s.code})" for s in matches[:5])
             return row, f"'{query}' cocok dengan beberapa supplier ({names}). Pilih salah satu."
         return row, None
     matches = _material_matches(db, entity, query)            # baris = material
@@ -124,7 +124,7 @@ def _resolve_item(db: Session, entity: str, item: dict) -> tuple[dict, str | Non
     elif not matches:
         row["new_material"] = empty_new_material(query)
     else:
-        names = ", ".join(f"{m.sku} {m.name}" for m in matches[:5])
+        names = ", ".join(f"{m.name} ({m.sku})" for m in matches[:5])
         return row, f"'{query}' cocok dengan beberapa material ({names}). Pilih salah satu."
     return row, None
 
@@ -176,9 +176,9 @@ def form_options(db: Session, entity: str) -> dict:
                            .order_by(Material.sku)).all()
     suppliers = db.scalars(select(Supplier).where(Supplier.is_active).order_by(Supplier.code)).all()
     return {
-        "materials": [{"value": m.id, "label": f"{m.sku} · {m.name}", "uom": m.uom,
+        "materials": [{"value": m.id, "label": f"{m.name} · {m.sku}", "uom": m.uom,
                        "category": m.category.value} for m in materials],
-        "suppliers": [{"value": s.id, "label": f"{s.code} · {s.name}"} for s in suppliers],
+        "suppliers": [{"value": s.id, "label": f"{s.name} · {s.code}"} for s in suppliers],
     }
 
 
@@ -298,7 +298,7 @@ def _add_new_material(db: Session, plan: _Plan, data: dict, path: str, errors: d
         return None
     key = plan.key("new-mat", sku)
     plan.new_materials.append({**checked, "initial_stock": initial, "safety_stock": safety, "key": key})
-    plan.labels[key] = f"{sku} {checked['name']} (baru)"
+    plan.labels[key] = f"{checked['name']} (baru)"
     return key
 
 
@@ -318,7 +318,7 @@ def _add_new_supplier(db: Session, plan: _Plan, data: dict, path: str, errors: d
         return None
     key = plan.key("new-sup", code)
     plan.new_suppliers.append({**checked, "key": key})
-    plan.labels[key] = f"{code} {checked['name']} (baru)"
+    plan.labels[key] = f"{checked['name']} (baru)"
     return key
 
 
@@ -338,7 +338,7 @@ def _existing_material(db: Session, plan: _Plan, material_id, path: str, errors:
                         if is_bom else f"{m.sku} bukan material beli")
         return None
     key = plan.key("mat", m.id)
-    plan.labels[key] = f"{m.sku} {m.name}"
+    plan.labels[key] = m.name
     return key
 
 
@@ -348,7 +348,7 @@ def _existing_supplier(db: Session, plan: _Plan, supplier_id, path: str, errors:
         errors[path] = "Supplier tidak ditemukan atau tidak aktif"
         return None
     key = plan.key("sup", s.id)
-    plan.labels[key] = f"{s.code} {s.name}"
+    plan.labels[key] = s.name
     return key
 
 

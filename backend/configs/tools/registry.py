@@ -18,9 +18,11 @@ TOOL_CATALOG: dict[str, tuple[str, str]] = {
                            "Items whose status is CRITICAL (available <= 0); with include_warning=true "
                            "also WARNING (available below safety stock). Sorted most severe first."),
     "find_materials": ("query", "Look up items by SKU or approximate name; use to disambiguate names."),
-    "get_material_suppliers": ("material",
+    "get_material_suppliers": ("material, qty?",
                                "All suppliers of a material (SKU or name, fuzzy): unit_price, "
-                               "lead_time_days, moq, payment terms, is_preferred, is_cheapest, is_fastest."),
+                               "lead_time_days, moq, payment terms, is_preferred, is_cheapest, is_fastest. "
+                               "With qty: COMPARES the suppliers for buying that amount (MOQ-aware order_qty, "
+                               "total_cost, difference_vs_cheapest, arrival_date), cheapest first."),
     "list_suppliers": ("query?", "All suppliers (optionally filtered by code/name) with payment terms "
                                  "and the materials each supplies."),
     "get_open_purchase_orders": ("supplier?, material?",
@@ -31,6 +33,16 @@ TOOL_CATALOG: dict[str, tuple[str, str]] = {
     "list_products": ("query?", "All finished products (Produk Final) with selling price, specification, active "
                                 "flag and number of BOM components; optional filter by SKU/name. Use this to "
                                 "list or count finished products (they have no stock rows)."),
+    "estimate_production_profit": ("product, qty, strategy?, date_to?",
+                                   "Cost and profit of producing qty units of a finished product: one row per "
+                                   "purchased material with the chosen supplier (strategy CHEAPEST default | "
+                                   "PREFERRED | FASTEST | MOST_EXPENSIVE; MOQ respected) and, per material, the "
+                                   "cheapest vs most expensive supplier and cost_difference; meta has revenue, "
+                                   "total_material_cost, gross_profit, margin_pct, cost_by_strategy and "
+                                   "profit_by_strategy for ALL strategies, max_profit, min_profit and "
+                                   "profit_difference_cheapest_vs_most_expensive. date_to = date the materials "
+                                   "are needed (only suppliers arriving by then; late ones flagged). Use for "
+                                   "profit, margin, production cost and supplier-choice comparisons."),
     "get_bom": ("product, qty?", "Multi-level bill of materials of a finished product or sub-part, with "
                                  "required quantity of every component for qty units."),
     "get_production_schedules": ("date_from?, date_to?, schedule_status?",

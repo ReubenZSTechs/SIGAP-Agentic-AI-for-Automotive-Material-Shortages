@@ -8,6 +8,7 @@ import { bomService } from '../../services/bomService';
 import { useMasterStore } from '../../store/masterStore';
 import { toast } from '../../store/toastStore';
 import { byCategory } from '../../utils/constants';
+import { t } from '../../i18n';
 
 const NEW_SUB = { sku: '', name: '', uom: 'Set' };
 
@@ -69,7 +70,7 @@ export default function BomItemFormModal({ open, form, onClose, onSaved }) {
         });
         toast.success('Sub-part dibuat & ditambahkan — tambahkan komponennya dengan tombol tambah (+) di barisnya');
       } else {
-        if (!childId) { toast.error(kind === 'purchased' ? 'Pilih material beli' : 'Pilih sub-part'); return; }
+        if (!childId) { toast.error(kind === 'purchased' ? t('Pilih material beli') : t('Pilih sub-part')); return; }
         await bomService.addItem({ parent_id: form.parent.id, child_id: Number(childId), qty_per_parent: Number(qty) });
         toast.success('Komponen ditambahkan');
       }
@@ -79,7 +80,7 @@ export default function BomItemFormModal({ open, form, onClose, onSaved }) {
     finally { setSaving(false); }
   };
 
-  const title = isEdit ? `Ubah Komponen · ${editMat?.name}` : `Tambah Komponen ke ${form?.parent?.name ?? ''}`;
+  const title = isEdit ? t('Ubah Komponen · {name}', { name: editMat?.name }) : t('Tambah Komponen ke {name}', { name: form?.parent?.name ?? '' });
   const uomLabel = isEdit ? editMat?.uom : (kind === 'purchased'
     ? materials.find((m) => m.id === Number(childId))?.uom
     : (subMode === 'new' ? sub.uom : materials.find((m) => m.id === Number(childId))?.uom));
@@ -88,8 +89,8 @@ export default function BomItemFormModal({ open, form, onClose, onSaved }) {
     <Modal open={open} onClose={onClose} title={title}
       footer={(
         <>
-          <Button variant="secondary" onClick={onClose}>Batal</Button>
-          <Button loading={saving} onClick={submit}>Simpan</Button>
+          <Button variant="secondary" onClick={onClose}>{t('Batal')}</Button>
+          <Button loading={saving} onClick={submit}>{t('Simpan')}</Button>
         </>
       )}>
       <div className="space-y-3">
@@ -99,10 +100,10 @@ export default function BomItemFormModal({ open, form, onClose, onSaved }) {
         )}
 
         {!isEdit && kind === 'purchased' && (
-          <FormField label="Material beli"
+          <FormField label={t('Material beli')}
             hint={purchased.length === 0 ? 'Tidak ada material beli yang tersedia — tambahkan di menu Material Beli.' : undefined}>
             <Select value={childId} onChange={(e) => setChildId(e.target.value)}>
-              <option value="">Pilih material…</option>
+              <option value="">{t('Pilih material…')}</option>
               {purchased.map((m) => <option key={m.id} value={m.id}>{m.sku} · {m.name} ({m.uom})</option>)}
             </Select>
           </FormField>
@@ -113,10 +114,10 @@ export default function BomItemFormModal({ open, form, onClose, onSaved }) {
             <Tabs variant="segmented" value={subMode} onChange={(m) => { setSubMode(m); setChildId(''); }}
                   tabs={[{ id: 'new', label: 'Buat sub-part baru' }, { id: 'existing', label: 'Pakai yang sudah ada' }]} />
             {subMode === 'existing' ? (
-              <FormField label="Sub-part"
+              <FormField label={t('Sub-part')}
                 hint={existingSubs.length === 0 ? 'Belum ada sub-part lain — pilih "Buat sub-part baru".' : undefined}>
                 <Select value={childId} onChange={(e) => setChildId(e.target.value)}>
-                  <option value="">Pilih sub-part…</option>
+                  <option value="">{t('Pilih sub-part…')}</option>
                   {existingSubs.map((m) => <option key={m.id} value={m.id}>{m.sku} · {m.name} ({m.uom})</option>)}
                 </Select>
               </FormField>
@@ -127,24 +128,23 @@ export default function BomItemFormModal({ open, form, onClose, onSaved }) {
         {((!isEdit && kind === 'subpart' && subMode === 'new') || editingSubPart) && (
           <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
             {!isEdit && (
-              <FormField label="SKU sub-part">
-                <Input value={sub.sku} onChange={setSubField('sku')} placeholder="SA-XXX-01" />
+              <FormField label={t('SKU sub-part')}>
+                <Input value={sub.sku} onChange={setSubField('sku')} placeholder={t('SA-XXX-01')} />
               </FormField>
             )}
             <div className="grid grid-cols-[1fr_6rem] gap-3">
-              <FormField label="Nama sub-part"><Input value={sub.name} onChange={setSubField('name')} /></FormField>
-              <FormField label="Satuan"><Input value={sub.uom} onChange={setSubField('uom')} /></FormField>
+              <FormField label={t('Nama sub-part')}><Input value={sub.name} onChange={setSubField('name')} /></FormField>
+              <FormField label={t('Satuan')}><Input value={sub.uom} onChange={setSubField('uom')} /></FormField>
             </div>
             {!isEdit && (
               <p className="text-xs text-slate-500">
-                Sub-part dibuat di master dan langsung dipasang ke induk ini. Setelah itu, tambahkan material
-                penyusunnya lewat tombol tambah (+) di baris sub-part.
+                {t('Sub-part dibuat di master dan langsung dipasang ke induk ini. Setelah itu, tambahkan material penyusunnya lewat tombol tambah (+) di baris sub-part.')}
               </p>
             )}
           </div>
         )}
 
-        <FormField label={`Qty per induk${uomLabel ? ` (${uomLabel})` : ''}`}>
+        <FormField label={`${t('Qty per induk')}${uomLabel ? ` (${uomLabel})` : ''}`}>
           <Input type="number" min="0" step="any" value={qty} onChange={(e) => setQty(e.target.value)} />
         </FormField>
       </div>

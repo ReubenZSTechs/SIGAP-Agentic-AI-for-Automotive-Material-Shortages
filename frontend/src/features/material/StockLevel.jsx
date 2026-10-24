@@ -1,3 +1,4 @@
+import { t } from '../../i18n';
 // Penanda tingkat stok: bar abu = stok fisik, bar berwarna = stok tersedia, garis tegak = safety stock.
 const FILL = { CRITICAL: 'bg-red-500', WARNING: 'bg-amber-500', SAFE: 'bg-green-600' };
 
@@ -7,8 +8,8 @@ export default function StockLevel({ row }) {
   const pct = (n) => `${Math.min(100, Math.max(0, (n / max) * 100))}%`;
   return (
     <div className="relative h-2 w-32 rounded-full bg-slate-100" role="img"
-         aria-label={`Fisik ${on_hand}, tersedia ${available}, safety stock ${safety_stock}`}
-         title={`Fisik ${on_hand} · Tersedia ${available} · Safety ${safety_stock}`}>
+         aria-label={t('Fisik {a}, tersedia {b}, safety stock {c}', { a: on_hand, b: available, c: safety_stock })}
+         title={t('Fisik {a} · Tersedia {b} · Safety {c}', { a: on_hand, b: available, c: safety_stock })}>
       <div className="absolute inset-y-0 left-0 rounded-full bg-slate-300" style={{ width: pct(on_hand) }} />
       <div className={`absolute inset-y-0 left-0 rounded-full ${FILL[status] ?? 'bg-slate-500'}`} style={{ width: pct(available) }} />
       {safety_stock > 0 && (

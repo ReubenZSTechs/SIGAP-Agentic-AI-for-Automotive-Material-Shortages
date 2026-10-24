@@ -1,5 +1,6 @@
 import Button from './Button';
 import Modal from './Modal';
+import { t, tx } from '../../i18n';
 
 export default function ConfirmDialog({
   open, message, onConfirm, onCancel, loading = false,
@@ -9,11 +10,11 @@ export default function ConfirmDialog({
     <Modal open={open} title={title} onClose={onCancel} layer={60}
       footer={(
         <>
-          <Button variant="secondary" onClick={onCancel}>Batal</Button>
-          <Button variant={variant} loading={loading} onClick={onConfirm}>{confirmLabel}</Button>
+          <Button variant="secondary" onClick={onCancel}>{t('Batal')}</Button>
+          <Button variant={variant} loading={loading} onClick={onConfirm}>{tx(confirmLabel)}</Button>
         </>
       )}>
-      <p className="text-sm text-slate-700">{message}</p>
+      <p className="text-sm text-slate-700">{tx(message)}</p>
     </Modal>
   );
 }

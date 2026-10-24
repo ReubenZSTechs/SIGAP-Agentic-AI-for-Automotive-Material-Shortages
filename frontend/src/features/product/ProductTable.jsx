@@ -3,6 +3,7 @@ import Badge from '../../components/common/Badge';
 import Button from '../../components/common/Button';
 import DataTable from '../../components/common/DataTable';
 import { formatRupiah } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 export default function ProductTable({ rows, loading, onEdit, onDelete }) {
   const navigate = useNavigate();
@@ -21,7 +22,7 @@ export default function ProductTable({ rows, loading, onEdit, onDelete }) {
     { key: 'bom', header: 'BOM', render: (r) => (
       r.bom_item_count > 0
         ? <Badge tone="green">{r.bom_item_count} komponen</Badge>
-        : <Badge tone="amber">Belum ada BOM</Badge>
+        : <Badge tone="amber">{t('Belum ada BOM')}</Badge>
     ) },
     { key: 'is_active', header: 'Status', render: (r) => (
       <Badge tone={r.is_active ? 'green' : 'slate'}>{r.is_active ? 'Aktif' : 'Nonaktif'}</Badge>
@@ -29,11 +30,11 @@ export default function ProductTable({ rows, loading, onEdit, onDelete }) {
     { key: 'actions', header: 'Aksi', align: 'right', render: (r) => (
       <span className="inline-flex gap-1">
         <Button size="sm" variant="ghost" onClick={() => navigate(`/bom?product=${r.id}`)}>BOM</Button>
-        <Button size="sm" variant="ghost" onClick={() => onEdit(r)}>Edit</Button>
-        <Button size="sm" variant="ghost" className="text-red-600" onClick={() => onDelete(r)}>Hapus</Button>
+        <Button size="sm" variant="ghost" onClick={() => onEdit(r)}>{t('Edit')}</Button>
+        <Button size="sm" variant="ghost" className="text-red-600" onClick={() => onDelete(r)}>{t('Hapus')}</Button>
       </span>
     ) },
   ];
   return <DataTable columns={columns} rows={rows} loading={loading}
-                    emptyText="Belum ada produk final — klik + Tambah Produk" />;
+                    emptyText={t('Belum ada produk final — klik + Tambah Produk')} />;
 }

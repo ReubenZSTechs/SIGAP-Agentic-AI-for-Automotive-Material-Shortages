@@ -9,6 +9,7 @@ import { useMasterStore } from '../../store/masterStore';
 import { toast } from '../../store/toastStore';
 import { byCategory } from '../../utils/constants';
 import { todayISO } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 // Tambah jadwal, atau edit (hanya jadwal PLANNED): produk, tanggal, qty, line.
 export default function ScheduleFormModal({ open, schedule, defaultDate, onClose, onSaved }) {
@@ -49,37 +50,37 @@ export default function ScheduleFormModal({ open, schedule, defaultDate, onClose
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={isEdit ? `Edit Jadwal · ${schedule.batch_code}` : 'Tambah Jadwal Produksi'}
+    <Modal open={open} onClose={onClose} title={isEdit ? t('Edit Jadwal · {batch}', { batch: schedule.batch_code }) : t('Tambah Jadwal Produksi')}
       footer={(
         <>
-          <Button variant="secondary" onClick={onClose}>Batal</Button>
-          <Button loading={saving} onClick={submit}>Simpan</Button>
+          <Button variant="secondary" onClick={onClose}>{t('Batal')}</Button>
+          <Button loading={saving} onClick={submit}>{t('Simpan')}</Button>
         </>
       )}>
       <div className="space-y-3">
-        <FormField label="Produk Final"
+        <FormField label={t('Produk Final')}
           hint={products.length === 0 ? undefined : 'Hanya Produk Final dengan BOM lengkap yang dapat dijadwalkan.'}
           error={products.length === 0 ? 'Belum ada produk final aktif.' : undefined}>
           <Select value={productId} onChange={(e) => setProductId(e.target.value)}>
-            <option value="">Pilih produk…</option>
+            <option value="">{t('Pilih produk…')}</option>
             {products.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.sku})</option>)}
           </Select>
         </FormField>
         <div className="grid grid-cols-2 gap-3">
-          <FormField label="Tanggal produksi">
+          <FormField label={t('Tanggal produksi')}>
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           </FormField>
-          <FormField label="Target (unit)">
+          <FormField label={t('Target (unit)')}>
             <Input type="number" min="1" step="1" value={qty} onChange={(e) => setQty(e.target.value)} />
           </FormField>
         </div>
-        <FormField label="Production line">
+        <FormField label={t('Production line')}>
           <Select value={effectiveLine} onChange={(e) => setLineId(e.target.value)}>
             {lines.map((l) => <option key={l.id} value={l.id}>{l.code} · {l.name}</option>)}
           </Select>
         </FormField>
         {products.length === 0 && (
-          <Link to="/products" className="text-sm font-semibold text-primary-700 hover:underline">Buat produk final</Link>
+          <Link to="/products" className="text-sm font-semibold text-primary-700 hover:underline">{t('Buat produk final')}</Link>
         )}
       </div>
     </Modal>

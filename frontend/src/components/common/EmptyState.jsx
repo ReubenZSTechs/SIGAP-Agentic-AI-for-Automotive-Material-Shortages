@@ -1,4 +1,5 @@
 import Icon from './Icon';
+import { tx } from '../../i18n';
 
 export function Spinner({ label = 'Memuat…' }) {
   return (
@@ -7,7 +8,7 @@ export function Spinner({ label = 'Memuat…' }) {
         <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
         <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
       </svg>
-      {label}
+      {tx(label)}
     </div>
   );
 }
@@ -16,8 +17,8 @@ export default function EmptyState({ title = 'Tidak ada data', description, acti
   return (
     <div className="flex flex-col items-center py-12 text-center">
       <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500"><Icon name="box" className="h-5 w-5" /></span>
-      <p className="font-semibold text-slate-800">{title}</p>
-      {description && <p className="mt-1 max-w-sm text-sm text-slate-500">{description}</p>}
+      <p className="font-semibold text-slate-800">{tx(title)}</p>
+      {description && <p className="mt-1 max-w-sm text-sm text-slate-500">{tx(description)}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   );

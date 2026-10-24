@@ -6,6 +6,7 @@ import DataTable from '../../components/common/DataTable';
 import StatusBadge from '../../components/common/StatusBadge';
 import Tabs from '../../components/common/Tabs';
 import { formatQty } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 export default function PlanningResultTable({ lines, onNext }) {
   const [filter, setFilter] = useState('action'); // action | all
@@ -37,19 +38,19 @@ export default function PlanningResultTable({ lines, onNext }) {
     <div className="space-y-3">
       {!hasDeficit && (
         <p className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-          Semua stok aman — tidak ada defisit, tidak perlu pembelian tambahan.
+          {t('Semua stok aman — tidak ada defisit, tidak perlu pembelian tambahan.')}
         </p>
       )}
       <div className="flex items-center gap-2">
-        <span className="text-sm text-slate-500">Filter:</span>
+        <span className="text-sm text-slate-500">{t('Filter:')}</span>
         <Tabs variant="segmented" value={filter} onChange={setFilter}
               tabs={[{ id: 'action', label: 'Perlu tindakan' }, { id: 'all', label: 'Semua' }]} />
       </div>
       <Card padded={false}>
-        <DataTable columns={columns} rows={rows} emptyText="Tidak ada material yang perlu tindakan" />
+        <DataTable columns={columns} rows={rows} emptyText={t('Tidak ada material yang perlu tindakan')} />
       </Card>
       <div className="flex justify-end">
-        <Button disabled={!hasDeficit} onClick={onNext}>Lanjut ke Sourcing <Icon name="arrowRight" /></Button>
+        <Button disabled={!hasDeficit} onClick={onNext}>{t('Lanjut ke Sourcing')} <Icon name="arrowRight" /></Button>
       </div>
     </div>
   );

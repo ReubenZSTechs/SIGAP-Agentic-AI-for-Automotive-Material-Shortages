@@ -1,4 +1,6 @@
 import api from './api';
+import { currentLang } from '../store/settingsStore';
+import { t } from '../i18n';
 
 const BASE = (import.meta.env.VITE_API_URL ?? '/api/v1').replace(/\/$/, '');
 const THREAD_KEY = 'mrp-chat-thread';
@@ -39,10 +41,13 @@ export const chatService = {
   async stream({ message, resume, threadId, onEvent, signal }) {
     const answer = resume && { action_id: resume.actionId, decision: resume.decision };
     if (resume?.values) answer.values = resume.values;
-    const body = resume ? { thread_id: threadId, resume: answer } : { thread_id: threadId, message };
+    // language: bahasa UI yang dipilih -> Agent menjawab dalam bahasa ini (bukan deteksi otomatis)
+    const body = resume
+      ? { thread_id: threadId, resume: answer, language: currentLang() }
+      : { thread_id: threadId, message, language: currentLang() };
     const res = await fetch(`${BASE}/chat/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', 'Accept-Language': currentLang() },
       body: JSON.stringify(body),
       signal,
     });
@@ -67,7 +72,7 @@ export const chatService = {
       if (done) break;
     }
     if (!last || (last.type !== 'final' && last.type !== 'error')) {
-      throw { message: 'Koneksi ke Agent terputus sebelum jawaban selesai' };
+      throw { message: t('Koneksi ke Agent terputus sebelum jawaban selesai') };
     }
     return last;
   },

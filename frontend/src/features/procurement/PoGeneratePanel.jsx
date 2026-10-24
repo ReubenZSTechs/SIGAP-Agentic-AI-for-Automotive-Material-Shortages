@@ -9,6 +9,7 @@ import useFetch from '../../hooks/useFetch';
 import { purchaseOrderService } from '../../services/purchaseOrderService';
 import { usePlanningStore } from '../../store/planningStore';
 import { formatQty, formatRupiah } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 export default function PoGeneratePanel() {
   const { run, sourcing, loadSourcing, generatePOs } = usePlanningStore();
@@ -52,25 +53,25 @@ export default function PoGeneratePanel() {
     return (
       <div className="space-y-3">
         <p className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-          Purchase Order untuk run ini sudah dibuat. Terbitkan dan terima barang dari halaman detail PO.
+          {t('Purchase Order untuk run ini sudah dibuat. Terbitkan dan terima barang dari halaman detail PO.')}
         </p>
         <Card padded={false}>
           <PoTable rows={pos.data} loading={pos.loading} />
         </Card>
-        <div className="text-right"><Link className="text-sm font-semibold text-primary-700 hover:underline" to="/purchase-orders">Semua Purchase Order</Link></div>
+        <div className="text-right"><Link className="text-sm font-semibold text-primary-700 hover:underline" to="/purchase-orders">{t('Semua Purchase Order')}</Link></div>
       </div>
     );
   }
 
   if (sourcing.length === 0) return <Spinner />;
   if (groups.length === 0) {
-    return <EmptyState title="Belum ada supplier terpilih" description="Pilih supplier di tab Sourcing terlebih dahulu." />;
+    return <EmptyState title={t('Belum ada supplier terpilih')} description={t('Pilih supplier di tab Sourcing terlebih dahulu.')} />;
   }
 
   return (
     <div className="space-y-3">
       <h2 className="text-sm font-semibold text-slate-800">
-        Konfirmasi Pesanan — {groups.length} PO akan dibuat (dikelompokkan per supplier)
+        {t('Konfirmasi Pesanan — {n} PO akan dibuat (dikelompokkan per supplier)', { n: groups.length })}
       </h2>
       {groups.map((g) => (
         <Card key={g.name} padded={false}
@@ -91,8 +92,8 @@ export default function PoGeneratePanel() {
       ))}
       <div className="flex flex-wrap items-center justify-end gap-4">
         {missing > 0 && <span className="text-sm text-amber-700">{missing} material belum dipilih supplier</span>}
-        <span className="text-sm">Total <b>{formatRupiah(grandTotal)}</b></span>
-        {run.is_stale && <span className="text-sm text-amber-700">Run basi — jalankan ulang planning di halaman MPS</span>}
+        <span className="text-sm">{t('Total')} <b>{formatRupiah(grandTotal)}</b></span>
+        {run.is_stale && <span className="text-sm text-amber-700">{t('Run basi — jalankan ulang planning di halaman MPS')}</span>}
         <Button loading={generating} disabled={missing > 0 || run.is_stale} onClick={confirm}><Icon name="check" /> Konfirmasi & Buat PO</Button>
       </div>
     </div>

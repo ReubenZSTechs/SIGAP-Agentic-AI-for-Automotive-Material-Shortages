@@ -40,7 +40,7 @@ def fake_agents(script: dict):
 def args(**kw) -> dict:
     """Planner args object with every key present (unused keys null), as the schema requires."""
     keys = ["category", "status", "include_warning", "query", "material", "supplier", "product",
-            "qty", "date_from", "date_to", "schedule_status", "question"]
+            "qty", "date_from", "date_to", "schedule_status", "strategy", "question"]
     return {k: kw.get(k) for k in keys}
 
 

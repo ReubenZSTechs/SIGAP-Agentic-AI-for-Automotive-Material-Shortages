@@ -7,4 +7,3 @@ dist/
 .pytest_cache/
 backend/.env
 .env
-.claude

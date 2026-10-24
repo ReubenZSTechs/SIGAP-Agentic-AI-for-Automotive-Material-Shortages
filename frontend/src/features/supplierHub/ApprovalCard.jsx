@@ -6,6 +6,7 @@ import Icon from '../../components/common/Icon';
 import DiffTable from './DiffTable';
 import { CONFIDENCE, DECISION, RISK, delta, isUrgent, timeLeft, typeMeta } from './meta';
 import { formatDateTime, formatRupiah } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 function Section({ title, children }) {
   return <section className="mt-5"><h3 className="mb-2 text-sm font-semibold text-slate-900">{title}</h3>{children}</section>;
@@ -29,9 +30,9 @@ function ChatLinks({ item }) {
   const cls = 'inline-flex items-center gap-1 text-sm font-medium text-primary-700 hover:underline';
   return (
     <p className="mt-2 flex flex-wrap gap-x-4">
-      {item.thread_id && <Link className={cls} to={`/supplier-hub/conversations/${item.thread_id}`}><Icon name="chat" className="h-3.5 w-3.5" /> Buka thread</Link>}
-      {item.mission_id && <Link className={cls} to={`/supplier-hub/missions/${item.mission_id}`}><Icon name="flag" className="h-3.5 w-3.5" /> Lihat misi</Link>}
-      {item.po_id && <Link className={cls} to={`/purchase-orders/${item.po_id}`}><Icon name="file" className="h-3.5 w-3.5" /> Buka PO</Link>}
+      {item.thread_id && <Link className={cls} to={`/supplier-hub/conversations/${item.thread_id}`}><Icon name="chat" className="h-3.5 w-3.5" /> {t('Buka thread')}</Link>}
+      {item.mission_id && <Link className={cls} to={`/supplier-hub/missions/${item.mission_id}`}><Icon name="flag" className="h-3.5 w-3.5" /> {t('Lihat misi')}</Link>}
+      {item.po_id && <Link className={cls} to={`/purchase-orders/${item.po_id}`}><Icon name="file" className="h-3.5 w-3.5" /> {t('Buka PO')}</Link>}
     </p>
   );
 }
@@ -43,10 +44,10 @@ function Options({ item, disabled, onChoose }) {
       {item.options.map((o) => (
         <li key={o.key} className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-slate-200 px-3.5 py-3">
           <div className="min-w-0 flex-1 text-sm">
-            <p className="font-semibold text-slate-900">{o.label}</p>
+            <p className="font-semibold text-slate-900">{t(o.label)}</p>
             <p className="mt-0.5 text-slate-600">{o.effect}</p>
             {o.total_after != null && (
-              <p className="mt-1 text-xs text-slate-500">Total <span className="line-through">{formatRupiah(o.total_before)}</span> <b className="text-slate-800">{formatRupiah(o.total_after)}</b></p>
+              <p className="mt-1 text-xs text-slate-500">{t('Total')} <span className="line-through">{formatRupiah(o.total_before)}</span> <b className="text-slate-800">{formatRupiah(o.total_after)}</b></p>
             )}
             {o.purchase_orders.length > 0 && (
               <p className="mt-1 text-xs text-slate-500">PO baru: {o.purchase_orders.map((g) => `${g.supplier_name} ${formatRupiah(g.total_amount)}`).join('; ')}</p>
@@ -54,7 +55,7 @@ function Options({ item, disabled, onChoose }) {
           </div>
           {item.status === 'PENDING' && (
             <Button size="sm" variant={o.key === 'abort' ? 'danger' : o.key === 'approve_change' ? 'primary' : 'secondary'}
-              disabled={disabled} onClick={() => onChoose(o)}>Pilih</Button>
+              disabled={disabled} onClick={() => onChoose(o)}>{t('Pilih')}</Button>
           )}
         </li>
       ))}
@@ -78,13 +79,13 @@ export default function ApprovalCard({ item, onDecide }) {
   const payload = () => ({ version: item.version, selected: [...selected], edits });
 
   return (
-    <article className="rounded-xl border border-slate-200 bg-white p-5" aria-label={item.title}>
+    <article className="rounded-xl border border-slate-200 bg-white p-5" aria-label={t(item.title)}>
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={meta.tone}>{meta.label}</Badge>
+        <Badge tone={meta.tone}>{t(meta.label)}</Badge>
         <Badge tone={RISK[item.risk].tone}>Risiko {RISK[item.risk].label.toLowerCase()}</Badge>
-        <Badge tone={DECISION[item.status].tone}>{DECISION[item.status].label}</Badge>
+        <Badge tone={DECISION[item.status].tone}>{t(DECISION[item.status].label)}</Badge>
       </div>
-      <h2 className="mt-3 text-xl font-bold tracking-tight text-slate-900">{item.title}</h2>
+      <h2 className="mt-3 text-xl font-bold tracking-tight text-slate-900">{t(item.title)}</h2>
       <p className="mt-1 flex flex-wrap items-center gap-x-3 text-sm text-slate-500">
         <span>{item.supplier.name}</span>
         <span>Diajukan Agent {formatDateTime(item.created_at)}</span>
@@ -100,8 +101,8 @@ export default function ApprovalCard({ item, onDecide }) {
         <div role="alert" className="mt-4 flex items-start gap-2.5 rounded-lg border border-amber-200 border-l-4 border-l-amber-500 bg-amber-50 px-3.5 py-3 text-sm text-amber-900">
           <Icon name="alert" className="mt-0.5 h-4 w-4 text-amber-600" />
           <span>{meta.options
-            ? 'PO berubah sejak permintaan revisi dibuat (mis. sudah ada penerimaan barang), jadi opsi dinonaktifkan. Hubungi supplier secara langsung.'
-            : 'Data master berubah sejak diajukan, jadi persetujuan dinonaktifkan. Tolak kartu ini lalu buat misi baru untuk data terbaru.'}</span>
+            ? t('PO berubah sejak permintaan revisi dibuat (mis. sudah ada penerimaan barang), jadi opsi dinonaktifkan. Hubungi supplier secara langsung.')
+            : t('Data master berubah sejak diajukan, jadi persetujuan dinonaktifkan. Tolak kartu ini lalu buat misi baru untuk data terbaru.')}</span>
         </div>
       )}
       {item.po_changed && (
@@ -112,20 +113,20 @@ export default function ApprovalCard({ item, onDecide }) {
       )}
       {meta.hero && <Hero rows={rows} />}
 
-      <Section title="Perubahan">
+      <Section title={t('Perubahan')}>
         <DiffTable rows={rows} selectable={!!meta.selectable} readOnly={!pending || item.stale}
           selected={selected} onToggle={toggle} edits={edits} onEdit={(k, v) => setEdits((e) => ({ ...e, [k]: v }))} />
       </Section>
 
       {item.evidence.length > 0 && (
-        <Section title={`Bukti dari chat (${item.evidence.length})`}>
+        <Section title={t('Bukti dari chat ({n})', { n: item.evidence.length })}>
           <ul className="space-y-2">
             {item.evidence.map((e) => (
               <li key={e.id} className="rounded-lg bg-slate-50 px-3.5 py-2.5 text-sm">
                 <p className="text-slate-800">{e.excerpt}</p>
                 <p className="mt-1 flex flex-wrap items-center gap-x-3 text-xs text-slate-500">
                   <span>{e.from}, {e.at}</span>
-                  <span className="inline-flex items-center gap-1.5"><i className={`h-2 w-2 rounded-full ${CONFIDENCE[e.confidence].dot}`} />{CONFIDENCE[e.confidence].label}</span>
+                  <span className="inline-flex items-center gap-1.5"><i className={`h-2 w-2 rounded-full ${CONFIDENCE[e.confidence].dot}`} />{t(CONFIDENCE[e.confidence].label)}</span>
                 </p>
               </li>
             ))}
@@ -135,13 +136,13 @@ export default function ApprovalCard({ item, onDecide }) {
       )}
 
       {item.impact.summary && (
-        <Section title="Dampak">
+        <Section title={t('Dampak')}>
           <p className="text-sm text-slate-700">{item.impact.summary}</p>
           {item.impact.items.length > 0 && (
             <ul className="mt-2 space-y-1 text-sm">
               {item.impact.items.map((i) => (
-                <li key={i.label} className="flex flex-wrap items-center gap-x-2 text-slate-600">
-                  <span>{i.label}:</span><span className="text-slate-500 line-through">{i.before}</span><b className="text-red-700">{i.after}</b>
+                <li key={t(i.label)} className="flex flex-wrap items-center gap-x-2 text-slate-600">
+                  <span>{t(i.label)}:</span><span className="text-slate-500 line-through">{i.before}</span><b className="text-red-700">{i.after}</b>
                 </li>
               ))}
             </ul>
@@ -150,11 +151,11 @@ export default function ApprovalCard({ item, onDecide }) {
       )}
 
       {meta.options && (
-        <Section title="Opsi untuk manajer">
+        <Section title={t('Opsi untuk manajer')}>
           {pending && needAck && !item.stale && (
             <label className="mb-3 flex items-start gap-2 text-sm text-slate-700">
               <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-primary-600" />
-              Saya sudah memeriksa dampaknya.
+              {t('Saya sudah memeriksa dampaknya.')}
             </label>
           )}
           <Options item={item} disabled={item.stale || (needAck && !ack)} onChoose={(o) => onDecide('choose', { choice: o.key, label: o.label })} />
@@ -166,13 +167,13 @@ export default function ApprovalCard({ item, onDecide }) {
           {needAck && !item.stale && (
             <label className="mb-3 flex items-start gap-2 text-sm text-slate-700">
               <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-primary-600" />
-              {lowConf ? 'Saya sudah memeriksa bukti berkeyakinan rendah secara manual.' : 'Saya sudah memeriksa dampaknya.'}
+              {lowConf ? t('Saya sudah memeriksa bukti berkeyakinan rendah secara manual.') : t('Saya sudah memeriksa dampaknya.')}
             </label>
           )}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex gap-2">
-              <Button variant="danger" onClick={() => onDecide('reject', payload())}>Tolak</Button>
-              <Button variant="secondary" onClick={() => onDecide('revision', payload())}>Minta revisi</Button>
+              <Button variant="danger" onClick={() => onDecide('reject', payload())}>{t('Tolak')}</Button>
+              <Button variant="secondary" onClick={() => onDecide('revision', payload())}>{t('Minta revisi')}</Button>
             </div>
             <Button disabled={!canApprove} onClick={() => onDecide('approve', payload())}>
               <Icon name="check" /> Setujui{meta.selectable ? ` (${count})` : ''}
@@ -181,7 +182,7 @@ export default function ApprovalCard({ item, onDecide }) {
         </footer>
       ) : (
         <p className="mt-6 border-t border-slate-200 pt-4 text-sm text-slate-500">
-          {DECISION[item.status].label}{item.decided_by ? <> oleh <b className="text-slate-700">{item.decided_by}</b></> : ''}{item.decided_at ? `, ${formatDateTime(item.decided_at)}` : ''}
+          {t(DECISION[item.status].label)}{item.decided_by ? <> oleh <b className="text-slate-700">{item.decided_by}</b></> : ''}{item.decided_at ? `, ${formatDateTime(item.decided_at)}` : ''}
           {item.decision_note ? `. Catatan: ${item.decision_note}` : ''}
         </p>
       )}

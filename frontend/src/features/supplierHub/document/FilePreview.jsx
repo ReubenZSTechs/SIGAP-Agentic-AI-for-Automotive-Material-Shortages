@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Icon from '../../../components/common/Icon';
+import { t } from '../../../i18n';
 
 // File asli dari supplier: gambar ditampilkan langsung, PDF di iframe, selain itu tautan unduh.
 export default function FilePreview({ url, kind, name, tall = false }) {
@@ -8,7 +9,7 @@ export default function FilePreview({ url, kind, name, tall = false }) {
     return (
       <div className="flex flex-col items-center gap-2 rounded-lg bg-slate-50 py-12 text-center text-sm text-slate-500">
         <Icon name="alert" className="h-6 w-6 text-amber-600" />
-        File tidak tersimpan di server (terlalu besar atau gagal diunduh dari Telegram). Minta ulang ke supplier.
+        {t('File tidak tersimpan di server (terlalu besar atau gagal diunduh dari Telegram). Minta ulang ke supplier.')}
       </div>
     );
   }

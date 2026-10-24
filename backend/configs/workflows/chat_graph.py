@@ -49,6 +49,7 @@ class ChatState(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], add_messages]
     thread_id: str
     question: str
+    forced_language: str | None          # language chosen in the UI ("id"/"en"); None = detect
     rewritten: str
     language: str
     intent: str
@@ -74,10 +75,13 @@ class ChatState(TypedDict, total=False):
     master_decision: dict | None         # value a form/confirmation interrupt was resumed with
 
 
-def new_turn(message: str, thread_id: str = "") -> ChatState:
-    """Input for a new user turn (resets every per-turn field; keeps `automation_draft` and `master_draft`)."""
+def new_turn(message: str, thread_id: str = "", language: str | None = None) -> ChatState:
+    """Input for a new user turn (resets every per-turn field; keeps `automation_draft` and `master_draft`).
+
+    `language` = the UI language the user picked; when given, it is used instead of the detected one.
+    """
     return ChatState(messages=[HumanMessage(content=message)], question=message, rewritten=message,
-                     language="id", intent="", plan=[], evidence=[], draft=None, evaluation=None,
+                     language=language or "id", forced_language=language, intent="", plan=[], evidence=[], draft=None, evaluation=None,
                      best=None, feedback=None, next_step="", retrieve_attempts=0, revise_attempts=0,
                      final=None, thread_id=thread_id, automation_resolution=None, automation_step="",
                      automation_decision=None, pending_action=None, master_step="", master_decision=None)
@@ -137,11 +141,11 @@ class ChatWorkflow:
     # ------------------------------------------------------------ 1. understand the message
     def rewrite(self, state: ChatState) -> ChatState:
         """Standalone English query + language detection (resolves follow-up references)."""
-        emit("rewrite")
+        emit("rewrite", state.get("forced_language") or "id")      # bahasa UI sudah diketahui sebelum deteksi
         payload = {"conversation_history": _history(state["messages"], self.cfg.get("history_turns", 6)),
                    "latest_message": state["question"]}
         out = self.agents["prompt_rewriter"].run(json.dumps(payload, ensure_ascii=False))
-        return {"rewritten": out["rewritten_query"], "language": out["language"]}
+        return {"rewritten": out["rewritten_query"], "language": state.get("forced_language") or out["language"]}
 
     def route(self, state: ChatState) -> ChatState:
         """Classifies intent: `mrp_query` -> retrieval, `po_automation` -> PO branch, `master_data` -> form branch."""

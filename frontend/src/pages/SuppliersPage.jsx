@@ -10,6 +10,7 @@ import useFetch from '../hooks/useFetch';
 import { supplierService } from '../services/supplierService';
 import { useMasterStore } from '../store/masterStore';
 import { toast } from '../store/toastStore';
+import { t } from '../i18n';
 
 export default function SuppliersPage() {
   const [form, setForm] = useState({ open: false, supplier: null });
@@ -27,14 +28,14 @@ export default function SuppliersPage() {
       toast.success('Supplier dihapus');
       afterChange();
     } catch (e) {
-      toast.error(e.status === 409 ? 'Supplier masih dipakai (relasi material/PO) — nonaktifkan lewat Edit.' : e.message);
+      toast.error(e.status === 409 ? t('Supplier masih dipakai (relasi material/PO) — nonaktifkan lewat Edit.') : e.message);
     } finally { setBusy(false); setDeleting(null); }
   };
 
   return (
     <>
-      <PageHeader title="Supplier" subtitle="Phase 0 — Master Supplier"
-        actions={<Button onClick={() => setForm({ open: true, supplier: null })}><Icon name="plus" /> Tambah Supplier</Button>} />
+      <PageHeader title={t('Supplier')} subtitle={t('Phase 0 — Master Supplier')}
+        actions={<Button onClick={() => setForm({ open: true, supplier: null })}><Icon name="plus" /> {t('Tambah Supplier')}</Button>} />
       <Card padded={false}>
         {error ? <p className="p-4 text-sm text-red-600">{error.message}</p> : (
           <SupplierTable rows={data} loading={loading}
@@ -45,7 +46,7 @@ export default function SuppliersPage() {
         onClose={() => setForm({ open: false, supplier: null })}
         onSaved={() => { setForm({ open: false, supplier: null }); afterChange(); }} />
       <ConfirmDialog open={!!deleting} loading={busy}
-        message={`Hapus supplier ${deleting?.name}?`} onConfirm={remove} onCancel={() => setDeleting(null)} />
+        message={t('Hapus supplier {name}?', { name: deleting?.name })} onConfirm={remove} onCancel={() => setDeleting(null)} />
     </>
   );
 }

@@ -1,6 +1,7 @@
 // Komponen isian kecil yang dipakai bersama oleh ketiga formulir chat.
 import Icon from '../../components/common/Icon';
 import { getIn } from './formUtils';
+import { t } from '../../i18n';
 
 const inputCls = `w-full h-8 rounded-md border bg-white px-2.5 text-sm text-slate-900 placeholder:text-slate-400
   focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20
@@ -31,8 +32,8 @@ export function Field({ form, path, label, kind = 'text', required = false, plac
     input = (
       <select id={id} className={`${inputCls} ${border}`} value={value ?? ''} disabled={form.disabled}
         onChange={(e) => form.set(path, e.target.value === '' ? null : Number(e.target.value))}>
-        <option value="">{placeholder ?? '— pilih —'}</option>
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        <option value="">{placeholder ?? t('— pilih —')}</option>
+        {options.map((o) => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
       </select>
     );
   } else if (kind === 'textarea') {
@@ -82,9 +83,9 @@ export function ItemPicker({ form, base, idKey, newKey, options, newLabel, empty
       <select id={`f-${form.formId}-${path}`} disabled={form.disabled}
         className={`${inputCls} ${error ? 'border-red-400' : 'border-slate-300'}`}
         value={isNew ? '__new__' : (row[idKey] ?? '')} onChange={onChange}>
-        <option value="">— pilih —</option>
+        <option value="">{t('— pilih —')}</option>
         <option value="__new__">{newLabel}</option>
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        {options.map((o) => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
       </select>
       {error && <p role="alert" className="mt-1 text-xs font-medium text-red-600">{error}</p>}
     </div>
@@ -95,12 +96,12 @@ export function ItemPicker({ form, base, idKey, newKey, options, newLabel, empty
 export function NewMaterialFields({ form, base, hint }) {
   return (
     <div className="mt-2 grid grid-cols-2 gap-2 rounded-md border border-dashed border-indigo-200 bg-indigo-50/40 p-2.5 sm:grid-cols-4">
-      <p className="col-span-full text-xs font-medium text-indigo-700">Material beli baru</p>
-      <Field form={form} path={`${base}.sku`} label="SKU" required placeholder={`mis. ${hint}`} />
-      <Field form={form} path={`${base}.name`} label="Nama" required className="col-span-1 sm:col-span-2" />
-      <Field form={form} path={`${base}.uom`} label="Satuan" required placeholder="Buah, kg, m²" />
-      <Field form={form} path={`${base}.initial_stock`} label="Stok awal" kind="number" />
-      <Field form={form} path={`${base}.safety_stock`} label="Safety stock (opsional)" kind="number" placeholder="0" />
+      <p className="col-span-full text-xs font-medium text-indigo-700">{t('Material beli baru')}</p>
+      <Field form={form} path={`${base}.sku`} label={t('SKU')} required placeholder={t('mis. {x}', { x: hint })} />
+      <Field form={form} path={`${base}.name`} label={t('Nama')} required className="col-span-1 sm:col-span-2" />
+      <Field form={form} path={`${base}.uom`} label={t('Satuan')} required placeholder={t('Buah, kg, m²')} />
+      <Field form={form} path={`${base}.initial_stock`} label={t('Stok awal')} kind="number" />
+      <Field form={form} path={`${base}.safety_stock`} label={t('Safety stock (opsional)')} kind="number" placeholder="0" />
     </div>
   );
 }
@@ -109,11 +110,11 @@ export function NewMaterialFields({ form, base, hint }) {
 export function NewSupplierFields({ form, base, hint }) {
   return (
     <div className="mt-2 grid grid-cols-2 gap-2 rounded-md border border-dashed border-indigo-200 bg-indigo-50/40 p-2.5 sm:grid-cols-4">
-      <p className="col-span-full text-xs font-medium text-indigo-700">Supplier baru</p>
-      <Field form={form} path={`${base}.code`} label="Kode" required placeholder={`mis. ${hint}`} />
-      <Field form={form} path={`${base}.name`} label="Nama" required />
-      <Field form={form} path={`${base}.contact`} label="Kontak" placeholder="Telepon / email" />
-      <Field form={form} path={`${base}.payment_term_days`} label="Termin (hari)" kind="number" step="1" />
+      <p className="col-span-full text-xs font-medium text-indigo-700">{t('Supplier baru')}</p>
+      <Field form={form} path={`${base}.code`} label={t('Kode')} required placeholder={t('mis. {x}', { x: hint })} />
+      <Field form={form} path={`${base}.name`} label={t('Nama')} required />
+      <Field form={form} path={`${base}.contact`} label={t('Kontak')} placeholder={t('Telepon / email')} />
+      <Field form={form} path={`${base}.payment_term_days`} label={t('Termin (hari)')} kind="number" step="1" />
     </div>
   );
 }
@@ -122,10 +123,10 @@ export function NewSupplierFields({ form, base, hint }) {
 export function LinkTerms({ form, base }) {
   return (
     <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-      <Field form={form} path={`${base}.unit_price`} label="Harga/unit (Rp)" kind="number" step="1" required />
-      <Field form={form} path={`${base}.lead_time_days`} label="Lead time (hari)" kind="number" step="1" required />
-      <Field form={form} path={`${base}.moq`} label="MOQ" kind="number" />
-      <Field form={form} path={`${base}.is_preferred`} label="Supplier utama" kind="checkbox" />
+      <Field form={form} path={`${base}.unit_price`} label={t('Harga/unit (Rp)')} kind="number" step="1" required />
+      <Field form={form} path={`${base}.lead_time_days`} label={t('Lead time (hari)')} kind="number" step="1" required />
+      <Field form={form} path={`${base}.moq`} label={t('MOQ')} kind="number" />
+      <Field form={form} path={`${base}.is_preferred`} label={t('Supplier utama')} kind="checkbox" />
     </div>
   );
 }
@@ -142,7 +143,7 @@ export function RowList({ form, listKey, title, emptyText, addLabel, newRow, ren
           <div key={i} className="relative rounded-lg border border-slate-200 bg-white p-2.5 pr-9">
             {renderRow(`${listKey}.${i}`, i)}
             {!form.disabled && (
-              <button type="button" aria-label="Hapus baris" title="Hapus baris"
+              <button type="button" aria-label={t('Hapus baris')} title={t('Hapus baris')}
                 onClick={() => form.set(listKey, rows.filter((__, j) => j !== i))}
                 className="absolute right-2 top-2 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600">
                 <Icon name="trash" className="h-4 w-4" />

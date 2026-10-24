@@ -1,3 +1,5 @@
+import { tx } from '../../i18n';
+
 const VARIANTS = {
   primary: 'bg-primary-600 text-white shadow-sm hover:bg-primary-700',
   secondary: 'bg-white text-slate-700 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50 hover:text-slate-900',
@@ -25,7 +27,7 @@ export default function Button({
           <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
         </svg>
       )}
-      {children}
+      {tx(children)}
     </button>
   );
 }

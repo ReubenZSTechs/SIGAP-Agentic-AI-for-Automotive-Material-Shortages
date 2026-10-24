@@ -3,6 +3,7 @@ import Button from '../../components/common/Button';
 import FormField from '../../components/common/FormField';
 import Input, { Textarea } from '../../components/common/Input';
 import Modal from '../../components/common/Modal';
+import { t } from '../../i18n';
 
 const KEY = 'approverName'; // sama dengan ApprovalDialog PO (MVP tanpa autentikasi)
 const read = () => { try { return localStorage.getItem(KEY) ?? ''; } catch { return ''; } };
@@ -26,7 +27,7 @@ export default function DecisionModal({ open, mode, item, detail, onClose, onSub
 
   const submit = async () => {
     if (name.trim().length < 2) return setErr('Nama approver minimal 2 karakter');
-    if (c.note && reason.trim().length < 3) return setErr(`${c.label} wajib diisi (min. 3 karakter)`);
+    if (c.note && reason.trim().length < 3) return setErr(t('{field} wajib diisi (min. 3 karakter)', { field: t(c.label) }));
     setBusy(true);
     try {
       try { localStorage.setItem(KEY, name.trim()); } catch { /* abaikan */ }
@@ -35,12 +36,12 @@ export default function DecisionModal({ open, mode, item, detail, onClose, onSub
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={`${c.title}: ${item?.title ?? ''}`}
-      footer={(<><Button variant="secondary" onClick={onClose}>Batal</Button><Button variant={c.variant} loading={busy} onClick={submit}>{c.cta}</Button></>)}>
+    <Modal open={open} onClose={onClose} title={`${t(c.title)}: ${item?.title ?? ''}`}
+      footer={(<><Button variant="secondary" onClick={onClose}>{t('Batal')}</Button><Button variant={c.variant} loading={busy} onClick={submit}>{c.cta}</Button></>)}>
       <div className="space-y-3">
         {detail && <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{detail}</p>}
-        <FormField label="Nama approver"><Input value={name} onChange={(e) => setName(e.target.value)} /></FormField>
-        {c.note && <FormField label={c.label}><Textarea value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} /></FormField>}
+        <FormField label={t('Nama approver')}><Input value={name} onChange={(e) => setName(e.target.value)} /></FormField>
+        {c.note && <FormField label={t(c.label)}><Textarea value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} /></FormField>}
         {err && <p role="alert" className="text-xs font-medium text-red-600">{err}</p>}
       </div>
     </Modal>

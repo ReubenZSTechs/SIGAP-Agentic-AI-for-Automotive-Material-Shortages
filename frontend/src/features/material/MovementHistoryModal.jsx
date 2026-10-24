@@ -5,6 +5,7 @@ import useFetch from '../../hooks/useFetch';
 import { inventoryService } from '../../services/inventoryService';
 import { MOVEMENT_TYPE } from '../../utils/constants';
 import { formatDateTime, formatQty } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 // Riwayat pergerakan stok satu material (GET /stock-movements?material_id=).
 export default function MovementHistoryModal({ open, row, onClose }) {
@@ -21,10 +22,10 @@ export default function MovementHistoryModal({ open, row, onClose }) {
     { key: 'note', header: 'Referensi', render: (m) => m.note ?? '—' },
   ];
   return (
-    <Modal open={open} onClose={onClose} size="lg" title={row ? `Riwayat Stok · ${row.sku} ${row.name}` : 'Riwayat Stok'}
-      footer={<Button variant="secondary" onClick={onClose}>Tutup</Button>}>
+    <Modal open={open} onClose={onClose} size="lg" title={row ? t('Riwayat Stok · {name}', { name: row.name }) : t('Riwayat Stok')}
+      footer={<Button variant="secondary" onClick={onClose}>{t('Tutup')}</Button>}>
       {error ? <p className="text-sm text-red-600">{error.message}</p>
-        : <DataTable columns={columns} rows={data} loading={loading} emptyText="Belum ada pergerakan stok" />}
+        : <DataTable columns={columns} rows={data} loading={loading} emptyText={t('Belum ada pergerakan stok')} />}
     </Modal>
   );
 }

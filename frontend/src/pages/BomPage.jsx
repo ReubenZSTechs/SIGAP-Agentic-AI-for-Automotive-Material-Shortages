@@ -8,6 +8,7 @@ import BomTree from '../features/bom/BomTree';
 import ExplosionTable from '../features/bom/ExplosionTable';
 import { useMasterStore } from '../store/masterStore';
 import { byCategory } from '../utils/constants';
+import { t } from '../i18n';
 
 // Struktur produk: Produk Final / Sub-part → komponen (sub-part "Made" + material beli).
 // Produk dipilih lewat query ?product=ID (dipakai tombol "BOM →" di halaman Produk Final).
@@ -38,21 +39,21 @@ export default function BomPage() {
 
   return (
     <>
-      <PageHeader title="BOM" subtitle="Susun struktur produk: sub-part (Made) dan material beli pendukungnya" />
+      <PageHeader title={t('BOM')} subtitle={t('Susun struktur produk: sub-part (Made) dan material beli pendukungnya')} />
       {loaded && !hasProducts && (
         <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Belum ada Produk Final. <Link className="font-medium underline" to="/products">Buat produk final</Link> terlebih dahulu,
-          lalu susun BOM-nya di sini.
+          {t('Belum ada Produk Final.')} <Link className="font-medium underline" to="/products">{t('Buat produk final')}</Link>{' '}
+          {t('terlebih dahulu, lalu susun BOM-nya di sini.')}
         </p>
       )}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <ProductPicker materials={materials} value={productId}
                        onChange={(id) => update({ product: id ? String(id) : null })} />
-        <Tabs variant="segmented" value={tab} onChange={(t) => update({ tab: t === 'explosion' ? 'explosion' : null })}
+        <Tabs variant="segmented" value={tab} onChange={(item) => update({ tab: item === 'explosion' ? 'explosion' : null })}
               tabs={[{ id: 'tree', label: 'Struktur' }, { id: 'explosion', label: 'Eksplosi' }]} />
       </div>
       {productId == null
-        ? <EmptyState title="Pilih produk" description="Pilih Produk Final atau Sub-part untuk melihat strukturnya." />
+        ? <EmptyState title={t('Pilih produk')} description={t('Pilih Produk Final atau Sub-part untuk melihat strukturnya.')} />
         : tab === 'tree'
           ? <BomTree key={productId} productId={productId} />
           : <ExplosionTable key={productId} productId={productId} />}

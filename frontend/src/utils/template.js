@@ -1,3 +1,4 @@
+import { locale } from '../i18n';
 export const COMPANY = 'SIGAP'; // sama dengan backend (app/hub/common.py)
 
 // Variabel template pesan supplier: {nama} diganti nilai; yang tidak dikenal dibiarkan apa adanya.
@@ -29,6 +30,6 @@ export function templateParts(body, vars) {
 
 export const fillTemplate = (body, vars) => templateParts(body, vars).map((p) => p.text).join('');
 
-export const formatDeadline = (iso) => new Date(iso).toLocaleString('id-ID', {
+export const formatDeadline = (iso) => new Date(iso).toLocaleString(locale(), {
   weekday: 'long', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
 }).replace(/,?\s(\d{2})\.(\d{2})$/, ' pukul $1.$2');

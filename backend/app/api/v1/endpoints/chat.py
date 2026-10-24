@@ -34,10 +34,12 @@ class ResumeRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Either a new `message` or a `resume` answer to a pending PO confirmation."""
+    """Either a new `message` or a `resume` answer to a pending card/form. `language` = the UI language
+    the user picked; when set it decides the reply language instead of auto-detection."""
     message: str | None = Field(default=None, min_length=1, max_length=2000)
     thread_id: str = Field(pattern=THREAD_ID)
     resume: ResumeRequest | None = None
+    language: Literal["id", "en"] | None = None
 
     @model_validator(mode="after")
     def _one_of(self):
@@ -47,9 +49,9 @@ class ChatRequest(BaseModel):
             raise ValueError("message kosong")
         return self
 
-    def args(self) -> tuple[str | None, str, dict | None]:
+    def args(self) -> tuple[str | None, str, dict | None, str | None]:
         return (self.message.strip() if self.message else None, self.thread_id,
-                self.resume.model_dump() if self.resume else None)
+                self.resume.model_dump() if self.resume else None, self.language)
 
 
 def service() -> ChatService:

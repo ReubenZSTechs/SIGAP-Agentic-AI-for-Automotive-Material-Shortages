@@ -46,7 +46,7 @@ def test_ambiguous_material_is_clarified_then_proposed_and_executed(seeded):
     aid = _action_id(second)
     card = second["actions"][aid]
     assert card["kind"] == "create" and card["status"] == "pending"
-    assert card["tables"][0]["rows"][0][0] == "RM-TUB-01"
+    assert card["tables"][0]["rows"][0][0] == "Ban Dalam Karet"
     assert svc.pending_action("thread-auto-1") == aid
     assert H.action(aid).status.value == "PROPOSED" and _pos() == []
 
@@ -159,7 +159,7 @@ def test_supplier_label_with_code_and_name_resolves(seeded):
                                                           supplier_query="SUP-CPT CV Cipta Logam")})
     card = svc.run("buatlah PO untuk supplier tersebut, 150 biji", "thread-sup-1")
     table = card["actions"][_action_id(card)]["tables"][0]
-    assert table["title"].startswith("SUP-CPT CV Cipta Logam") and table["rows"][0][0] == "RM-SBR-01"
+    assert table["title"].startswith("CV Cipta Logam") and table["rows"][0][0] == "Rangka Besi Dudukan Jok"
 
 
 def test_unknown_supplier_is_clarified_with_supplier_options(seeded):
@@ -179,7 +179,7 @@ def test_new_request_does_not_inherit_a_failed_supplier(seeded):
     svc.run("buat PO 150 rangka besi dari Toko Antah", "thread-sup-3")
     card = svc.run("Buat PO 50 Ban Luar Karet", "thread-sup-3")
     table = card["actions"][_action_id(card)]["tables"][0]
-    assert table["rows"][0][0] == "RM-RUB-01" and "Toko Antah" not in table["title"]
+    assert table["rows"][0][0] == "Ban Luar Karet" and "Toko Antah" not in table["title"]
 
 
 def test_new_request_flag_resets_clarification_rounds(seeded):
@@ -203,7 +203,7 @@ def test_rewriter_sees_what_a_proposal_card_contained(seeded):
     import json
     history = json.loads([c for c in fake.calls if c["agent"] == "PromptRewriterOutput"][-1]["messages"][-1]["content"])
     card_line = next(h["content"] for h in history["conversation_history"] if "[Kartu usulan PO" in h["content"])
-    assert "RM-SBR-01 Rangka Besi Dudukan Jok 100 Buah" in card_line and "SUP-CPT" in card_line
+    assert "Rangka Besi Dudukan Jok 100 Buah" in card_line and "CV Cipta Logam" in card_line
 
 
 # ------------------------------ production request: schedule + multi-PO ------------------------------
@@ -219,7 +219,7 @@ def _produce(qty: int, days: int) -> dict:
 
 
 def _po_tables(card: dict) -> dict[str, list]:
-    return {t["title"].split(" ")[0]: t["rows"] for t in card["tables"][1:]}
+    return {t["title"].split(" · ")[0]: t["rows"] for t in card["tables"][1:-1]}   # tabel PO per supplier (tanpa jadwal bayar)
 
 
 def test_production_request_schedules_and_orders_from_the_fewest_suppliers(seeded):
@@ -228,16 +228,26 @@ def test_production_request_schedules_and_orders_from_the_fewest_suppliers(seede
     out = svc.run("Saya membutuhkan 100 sepeda gunung, materialnya harus siap 10 hari lagi", "thread-prod-1")
     aid = _action_id(out)
     card = out["actions"][aid]
-    assert card["kind"] == "produce" and card["title"] == "Jadwal produksi & PO"
+    assert card["kind"] == "produce" and card["title"] == "Production schedule & PO"   # bahasa terdeteksi: en
     check = {r[0]: r for r in card["tables"][0]["rows"]}
-    assert check["RM-STEEL-01"][5] == "100" and check["RM-SBR-01"][5] == "65" and check["RM-TUB-01"][5] == "–"
+    assert check["Besi Tubing / Pipa Baja"][4] == "100" and check["Rangka Besi Dudukan Jok"][4] == "65" \
+        and check["Ban Dalam Karet"][4] == "–"
     pos = _po_tables(card)
-    assert set(pos) == {"SUP-CPT", "SUP-KRT", "SUP-MKM"}                    # BJU lebih murah utk baja, tapi CPT
-    assert {r[0] for r in pos["SUP-CPT"]} == {"RM-STEEL-01", "RM-SBR-01"}   # juga memasok rangka jok: 1 PO saja
-    assert any("+Rp100.000" in w and "hemat 1 PO" in w for w in card["warnings"])
+    assert set(pos) == {"CV Cipta Logam", "PT Karet Nusantara", "CV Makmur Bersama"}                    # BJU lebih murah utk baja, tapi CPT
+    assert {r[0] for r in pos["CV Cipta Logam"]} == {"Besi Tubing / Pipa Baja", "Rangka Besi Dudukan Jok"}   # juga memasok rangka jok: 1 PO saja
+    assert any("+Rp100.000" in w and "saving 1 PO(s)" in w for w in card["warnings"])
+    pay = card["tables"][-1]                                                # jadwal pembayaran sebelum dikirim
+    assert pay["title"] == "Payment schedule" and pay["rows"][-1][0] == "Total to pay"
+    assert len(pay["rows"]) == 4 and all(r[5] for r in pay["rows"])
+    intro = out["blocks"][0]["text"]
+    assert "All materials are ready by" in intro and "Total to pay:" in intro
+    assert not any(b["type"] == "options" for b in out["blocks"])           # tanggal target bisa dipenuhi
 
     done = svc.run(None, "thread-prod-1", {"action_id": aid, "decision": "approve"})
     assert done["action_updates"][aid]["status"] == "approved"
+    summary, table = done["blocks"]                                         # satu ringkasan + satu tabel PO
+    assert summary["type"] == "text" and summary["text"].startswith("Approved.") and "3 POs" in summary["text"]
+    assert table["type"] == "table" and len(table["rows"]) == 3 and table["columns"][-1] == "Pay by"
     when = date.today() + timedelta(days=10)
     with SessionLocal() as db:
         [s] = db.query(Schedule).all()
@@ -253,12 +263,17 @@ def test_production_request_schedules_and_orders_from_the_fewest_suppliers(seede
 
 def test_production_for_tomorrow_uses_fastest_suppliers_with_warnings(seeded):
     svc, _ = _service({"AutomationParserOutput": _produce(100, 1)})
-    card = svc.run("butuh 100 sepeda gunung besok", "thread-prod-2")
-    card = card["actions"][_action_id(card)]
+    out = svc.run("butuh 100 sepeda gunung besok", "thread-prod-2")
+    card = out["actions"][_action_id(out)]
     pos = _po_tables(card)
-    assert set(pos) == {"SUP-CPT", "SUP-RBR", "SUP-IND"}                    # RBR satu-satunya yang tepat waktu
-    late = [w for w in card["warnings"] if "paling cepat tiba" in w]
-    assert len(late) == 3 and any(w.startswith("RM-PDL-01: PT Industri Lokal") for w in late)
+    assert set(pos) == {"CV Cipta Logam", "CV Rubber Indonesia", "PT Industri Lokal"}                    # RBR satu-satunya yang tepat waktu
+    late = [w for w in card["warnings"] if "at the earliest" in w]
+    p = H.action(_action_id(out)).proposal
+    assert p["feasible"] is False and p["earliest_ready_date"] > p["needed_by_date"]
+    option = next(b for b in out["blocks"] if b["type"] == "options")["options"][0]
+    assert option["label"] == f"Schedule on {p['earliest_ready_date']}" and p["earliest_ready_date"] in option["value"]
+    assert "cannot be met" in out["blocks"][0]["text"]
+    assert len(late) == 3 and any(w.startswith("Pedal Sepeda: PT Industri Lokal") for w in late)
 
 
 def test_production_with_enough_stock_only_schedules(seeded):

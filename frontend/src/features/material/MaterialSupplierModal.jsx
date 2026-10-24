@@ -11,6 +11,7 @@ import { materialService } from '../../services/materialService';
 import { useMasterStore } from '../../store/masterStore';
 import { toast } from '../../store/toastStore';
 import { formatLead, formatQty, formatRupiah } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 const EMPTY = { supplier_id: '', unit_price: '', lead_time_days: '', moq: '1' };
 
@@ -76,24 +77,24 @@ export default function MaterialSupplierModal({ open, material, onClose }) {
   return (
     <>
       <Modal open={open} onClose={onClose} size="lg"
-             title={material ? `Supplier untuk ${material.sku} · ${material.name}` : 'Supplier'}
-             footer={<Button variant="secondary" onClick={onClose}>Tutup</Button>}>
+             title={material ? t('Supplier untuk {name}', { name: material.name }) : t('Supplier')}
+             footer={<Button variant="secondary" onClick={onClose}>{t('Tutup')}</Button>}>
         {loading ? <Spinner /> : (
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
-                <th className="px-2 py-2 text-left font-medium">Supplier</th>
-                <th className="px-2 py-2 text-right font-medium">Harga/Unit</th>
-                <th className="px-2 py-2 text-right font-medium">Lead Time</th>
+                <th className="px-2 py-2 text-left font-medium">{t('Supplier')}</th>
+                <th className="px-2 py-2 text-right font-medium">{t('Harga/Unit')}</th>
+                <th className="px-2 py-2 text-right font-medium">{t('Lead Time')}</th>
                 <th className="px-2 py-2 text-right font-medium">MOQ</th>
-                <th className="px-2 py-2 text-left font-medium">Label</th>
-                <th className="px-2 py-2 text-right font-medium">Aksi</th>
+                <th className="px-2 py-2 text-left font-medium">{t('Label')}</th>
+                <th className="px-2 py-2 text-right font-medium">{t('Aksi')}</th>
               </tr>
             </thead>
             <tbody>
               {(links ?? []).length === 0 && (
                 <tr><td colSpan={6} className="px-2 py-6 text-center text-slate-500">
-                  Belum ada supplier — tambahkan di bawah.</td></tr>
+                  {t('Belum ada supplier — tambahkan di bawah.')}</td></tr>
               )}
               {(links ?? []).map((l) => {
                 const isEdit = editing?.supplier_id === l.supplier_id;
@@ -118,23 +119,23 @@ export default function MaterialSupplierModal({ open, material, onClose }) {
                     )}
                     <td className="px-2">
                       <span className="flex flex-wrap gap-1">
-                        {l.is_cheapest && <Badge tone="green">Termurah</Badge>}
-                        {l.is_fastest && <Badge tone="indigo">Tercepat</Badge>}
-                        {!l.is_active && <Badge tone="slate">Nonaktif</Badge>}
+                        {l.is_cheapest && <Badge tone="green">{t('Termurah')}</Badge>}
+                        {l.is_fastest && <Badge tone="indigo">{t('Tercepat')}</Badge>}
+                        {!l.is_active && <Badge tone="slate">{t('Nonaktif')}</Badge>}
                       </span>
                     </td>
                     <td className="px-2 text-right">
                       {isEdit ? (
                         <span className="inline-flex gap-1">
-                          <Button size="sm" loading={busy} onClick={saveEdit}>Simpan</Button>
-                          <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Batal</Button>
+                          <Button size="sm" loading={busy} onClick={saveEdit}>{t('Simpan')}</Button>
+                          <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>{t('Batal')}</Button>
                         </span>
                       ) : (
                         <span className="inline-flex gap-1">
-                          <Button size="sm" variant="ghost" aria-label="Edit relasi"
+                          <Button size="sm" variant="ghost" aria-label={t('Edit relasi')}
                             onClick={() => setEditing({ supplier_id: l.supplier_id, unit_price: l.unit_price,
                               lead_time_days: l.lead_time_days, moq: l.moq })}><Icon name="edit" /></Button>
-                          <Button size="sm" variant="ghost" className="text-red-600" aria-label="Hapus relasi"
+                          <Button size="sm" variant="ghost" className="text-red-600" aria-label={t('Hapus relasi')}
                             onClick={() => setDeleting(l)}><Icon name="trash" /></Button>
                         </span>
                       )}
@@ -148,21 +149,21 @@ export default function MaterialSupplierModal({ open, material, onClose }) {
 
         <div className="mt-4 grid grid-cols-[1fr_7rem_6rem_5rem_auto] items-end gap-2 border-t border-slate-200 pt-4">
           <Select value={adding.supplier_id} onChange={(e) => setAdding({ ...adding, supplier_id: e.target.value })}>
-            <option value="">Pilih supplier…</option>
+            <option value="">{t('Pilih supplier…')}</option>
             {available.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </Select>
-          <Input type="number" min="0" placeholder="Harga" value={adding.unit_price}
+          <Input type="number" min="0" placeholder={t('Harga')} value={adding.unit_price}
                  onChange={(e) => setAdding({ ...adding, unit_price: e.target.value })} />
-          <Input type="number" min="0" placeholder="Lead (hari)" value={adding.lead_time_days}
+          <Input type="number" min="0" placeholder={t('Lead (hari)')} value={adding.lead_time_days}
                  onChange={(e) => setAdding({ ...adding, lead_time_days: e.target.value })} />
-          <Input type="number" min="0" step="any" placeholder="MOQ" value={adding.moq}
+          <Input type="number" min="0" step="any" placeholder={t('MOQ')} value={adding.moq}
                  onChange={(e) => setAdding({ ...adding, moq: e.target.value })} />
-          <Button loading={busy} onClick={add}><Icon name="plus" /> Tambah</Button>
+          <Button loading={busy} onClick={add}><Icon name="plus" /> {t('Tambah')}</Button>
         </div>
       </Modal>
 
       <ConfirmDialog open={!!deleting} loading={busy}
-        message={`Hapus relasi dengan ${deleting?.supplier_name}?`}
+        message={t('Hapus relasi dengan {name}?', { name: deleting?.supplier_name })}
         onConfirm={remove} onCancel={() => setDeleting(null)} />
     </>
   );

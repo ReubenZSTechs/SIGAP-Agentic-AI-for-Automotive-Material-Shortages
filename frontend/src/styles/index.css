@@ -54,3 +54,51 @@ select {
 .fc { --fc-border-color: var(--color-slate-200); --fc-today-bg-color: var(--color-primary-50); --fc-neutral-bg-color: var(--color-slate-50); }
 .fc .fc-button { border-radius: .5rem; }
 .fc .fc-col-header-cell-cushion, .fc .fc-daygrid-day-number { color: var(--color-slate-600); font-size: .75rem; }
+
+/* ======================================================================================
+   Mode gelap. Diaktifkan dengan <html data-theme="dark"> (lihat store/settingsStore.js).
+   Komponen tidak perlu diubah: palet warna yang sudah dipakai di-"balik" di sini.
+   ====================================================================================== */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #131c29;                         /* pengganti bg-white (kartu, tabel, modal) */
+  /* Netral: skala slate dibalik (50 = latar paling gelap, 900 = teks paling terang) */
+  --color-slate-50: #0d141e;  --color-slate-100: #172231; --color-slate-200: #223044;
+  --color-slate-300: #31415a; --color-slate-400: #5f708a; --color-slate-500: #8a9ab0;
+  --color-slate-600: #a7b4c5; --color-slate-700: #c3cdda; --color-slate-800: #dbe2eb; --color-slate-900: #eef2f7;
+  /* Tint biru untuk latar lembut. primary-100..300 TIDAK diubah: sidebar memakainya untuk teks terang. */
+  --color-primary-50: #15243b;
+  /* Tint status: latar lembut gelap, garis redup */
+  --color-red-50: #2a1416;    --color-red-100: #3a1a1d;    --color-red-200: #5c2328;
+  --color-amber-50: #2a2111;  --color-amber-100: #3a2d14;  --color-amber-200: #5a4519;
+  --color-green-50: #11251a;  --color-green-100: #163021;  --color-green-200: #1f4a31;
+  --color-emerald-50: #10261f; --color-emerald-200: #1d4a3b;
+  --color-violet-50: #221a36; --color-violet-200: #3b2d5e;
+}
+[data-theme="dark"] .bg-white,
+[data-theme="dark"] .bg-white\/80 { background-color: var(--surface); }
+[data-theme="dark"] :is(.bg-primary-100, .hover\:bg-primary-100:hover) { background-color: #1b2e4a; }
+[data-theme="dark"] :is(.border-primary-100, .border-primary-200, .border-indigo-200) { border-color: #26406a; }
+[data-theme="dark"] :is(.ring-primary-100, .ring-primary-200) { --tw-ring-color: #26406a; }
+[data-theme="dark"] .ring-slate-200,
+[data-theme="dark"] .border-slate-200 { --tw-ring-color: var(--color-slate-300); border-color: var(--color-slate-300); }
+
+/* Teks berwarna: versi terang agar terbaca di latar gelap */
+[data-theme="dark"] :is(.text-primary-600, .text-primary-700, .text-primary-800, .text-primary-900,
+  .text-indigo-700, .hover\:text-primary-700:hover, .hover\:text-indigo-700:hover) { color: #9dbcf0; }
+[data-theme="dark"] :is(.text-red-600, .text-red-700, .text-red-800, .text-red-900) { color: #f2a3a3; }
+[data-theme="dark"] :is(.text-amber-600, .text-amber-700, .text-amber-800, .text-amber-900) { color: #f3cd7e; }
+[data-theme="dark"] :is(.text-green-600, .text-green-700, .text-green-800,
+  .text-emerald-600, .text-emerald-700) { color: #8fdcaa; }
+[data-theme="dark"] .text-violet-700 { color: #c7b4f5; }
+
+/* Input & select */
+[data-theme="dark"] :is(input, textarea, select):not([type="checkbox"]):not([type="radio"]) { color: var(--color-slate-900); }
+[data-theme="dark"] select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a9ab0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+/* Kalender produksi */
+[data-theme="dark"] .fc .fc-event { background: color-mix(in srgb, var(--c) 22%, var(--surface)); }
+[data-theme="dark"] .fc .fc-button { background: var(--surface); }
+[data-theme="dark"] .fc :is(.fc-col-header, .fc-col-header-cell, .fc-scrollgrid, th) { background: var(--color-slate-100); }

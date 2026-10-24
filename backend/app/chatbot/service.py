@@ -41,12 +41,13 @@ class ChatService:
                 return value["action_id"]
         return None
 
-    def stream(self, message: str | None, thread_id: str, resume: dict | None = None) -> Iterator[dict]:
+    def stream(self, message: str | None, thread_id: str, resume: dict | None = None,
+               language: str | None = None) -> Iterator[dict]:
         """Yields progress events, then exactly one `final` (or `error`) event.
 
         `resume={action_id, decision: approve|reject}` answers a pending confirmation card;
         `resume={action_id, decision: submit, values}` answers a pending chat form. A new `message` while a
-        card or form is pending first marks it as superseded.
+        card or form is pending first marks it as superseded. `language` ("id"/"en") fixes the reply language.
         """
         config = self._config(thread_id)
         trace = tracing.new_trace("chat", thread_id=thread_id)     # semua agent dalam giliran ini satu trace
@@ -57,12 +58,13 @@ class ChatService:
                     yield {"type": "error", "message": "Usulan ini sudah tidak menunggu konfirmasi.",
                            "detail": "no matching pending action"}
                     return
+                update = {"language": language} if language else None      # bahasa UI bisa berganti antar giliran
                 graph_input = Command(resume={"decision": resume["decision"], "action_id": pending,
-                                              "values": resume.get("values")})
+                                              "values": resume.get("values")}, update=update)
             else:
                 if pending:
                     self.graph.invoke(Command(resume={"decision": "superseded", "action_id": pending}), config)
-                graph_input = new_turn(message, thread_id)
+                graph_input = new_turn(message, thread_id, language)
             events = iter(self.graph.stream(graph_input, config, stream_mode="custom"))
             while True:                                           # trace aktif per langkah, tidak melewati yield
                 with tracing.activate(trace):
@@ -76,10 +78,11 @@ class ChatService:
             log.exception("chat turn failed (thread=%s)", thread_id)
             yield {"type": "error", "message": ERROR_TEXT["id"], "detail": f"{type(e).__name__}: {e}"}
 
-    def run(self, message: str | None, thread_id: str, resume: dict | None = None) -> dict:
+    def run(self, message: str | None, thread_id: str, resume: dict | None = None,
+            language: str | None = None) -> dict:
         """Runs one turn and returns the final event (or the error event)."""
         last = {}
-        for event in self.stream(message, thread_id, resume):
+        for event in self.stream(message, thread_id, resume, language):
             last = event
         return last
 

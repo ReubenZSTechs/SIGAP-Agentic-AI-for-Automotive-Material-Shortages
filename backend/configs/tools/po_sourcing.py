@@ -68,7 +68,7 @@ def assign_suppliers(db: Session, needs: list[dict], deadline: date | None = Non
             fastest = min(links, key=lambda l: (l["lead_time_days"], l["unit_price"], l["supplier_code"]))
             ok, earliest = [fastest], today + timedelta(days=fastest["lead_time_days"])
             late.add(n)
-            warnings.append(f"{need['sku']}: {fastest['supplier_name']} paling cepat tiba {earliest.isoformat()} "
+            warnings.append(f"{need['name']}: {fastest['supplier_name']} paling cepat tiba {earliest.isoformat()} "
                             f"(setelah {deadline.isoformat()})")
         cands[n] = {l["supplier_id"]: l for l in ok}
 
@@ -129,3 +129,29 @@ def _group_by_supplier(db: Session, lines: list[tuple[dict, dict]]) -> list[dict
                     "payment_term_days": sup.payment_term_days, "items": items,
                     "total_amount": sum(i["line_total"] for i in items)})
     return out
+
+
+def payment_schedule(groups: list[dict], today: date | None = None) -> dict:
+    """When each supplier must be paid, before the POs are sent (one row per supplier, earliest first).
+
+    Expected arrival = today + the longest lead time of the supplier's lines. Pay by = arrival + payment term
+    (Net N days); Net 0 (cash) = pay on arrival. Returns {rows, total, last_pay_by, latest_arrival}.
+    """
+    today = today or date.today()
+    rows = []
+    for g in groups:
+        arrival = today + timedelta(days=max((i.get("lead_time_days") or 0) for i in g["items"]))
+        term = g.get("payment_term_days") or 0
+        rows.append({"supplier_name": g["supplier_name"], "materials": ", ".join(i["name"] for i in g["items"]),
+                     "amount": g["total_amount"], "payment_term_days": term,
+                     "arrival_date": arrival.isoformat(), "pay_by": (arrival + timedelta(days=term)).isoformat()})
+    rows.sort(key=lambda r: (r["pay_by"], r["supplier_name"]))
+    return {"rows": rows, "total": sum(r["amount"] for r in rows),
+            "last_pay_by": max((r["pay_by"] for r in rows), default=None),
+            "latest_arrival": max((r["arrival_date"] for r in rows), default=None)}
+
+
+def earliest_arrival(db: Session, material_id: int, today: date) -> date | None:
+    """The soonest a material can arrive: today + the shortest lead time among its active suppliers."""
+    links = active_links(db, material_id)
+    return today + timedelta(days=min(l["lead_time_days"] for l in links)) if links else None

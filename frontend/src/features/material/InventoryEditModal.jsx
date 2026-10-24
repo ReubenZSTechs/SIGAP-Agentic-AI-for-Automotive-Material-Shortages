@@ -5,6 +5,7 @@ import FormField from '../../components/common/FormField';
 import Input, { Select } from '../../components/common/Input';
 import { inventoryService } from '../../services/inventoryService';
 import { toast } from '../../store/toastStore';
+import { t } from '../../i18n';
 
 // row = baris inventory -> edit; row = null -> atur stok awal material yang belum punya stok (pilih dari `candidates`).
 export default function InventoryEditModal({ open, row, candidates = [], onClose, onSaved }) {
@@ -37,26 +38,26 @@ export default function InventoryEditModal({ open, row, candidates = [], onClose
 
   return (
     <Modal open={open} onClose={onClose}
-      title={row ? `Edit Stok · ${row.sku}` : 'Atur Stok Material'}
+      title={row ? t('Edit Stok · {name}', { name: row.name }) : t('Atur Stok Material')}
       footer={(
         <>
-          <Button variant="secondary" onClick={onClose}>Batal</Button>
-          <Button loading={saving} onClick={submit}>Simpan</Button>
+          <Button variant="secondary" onClick={onClose}>{t('Batal')}</Button>
+          <Button loading={saving} onClick={submit}>{t('Simpan')}</Button>
         </>
       )}>
       <div className="space-y-3">
         {!row && (
-          <FormField label="Material" hint="Hanya material beli yang belum memiliki data stok.">
+          <FormField label={t('Material')} hint={t('Hanya material beli yang belum memiliki data stok.')}>
             <Select value={materialId} onChange={(e) => setMaterialId(e.target.value)}>
-              <option value="">Pilih material…</option>
+              <option value="">{t('Pilih material…')}</option>
               {candidates.map((m) => <option key={m.id} value={m.id}>{m.sku} · {m.name}</option>)}
             </Select>
           </FormField>
         )}
-        <FormField label="Stok Fisik (on hand)" hint={row ? 'Perubahan dicatat sebagai penyesuaian stok.' : undefined}>
+        <FormField label={t('Stok Fisik (on hand)')} hint={row ? 'Perubahan dicatat sebagai penyesuaian stok.' : undefined}>
           <Input type="number" min="0" step="any" value={onHand} onChange={(e) => setOnHand(e.target.value)} />
         </FormField>
-        <FormField label="Safety Stock">
+        <FormField label={t('Safety Stock')}>
           <Input type="number" min="0" step="any" value={safety} onChange={(e) => setSafety(e.target.value)} />
         </FormField>
       </div>

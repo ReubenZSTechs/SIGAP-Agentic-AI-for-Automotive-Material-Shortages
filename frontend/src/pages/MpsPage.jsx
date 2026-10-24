@@ -17,6 +17,7 @@ import useFetch from '../hooks/useFetch';
 import { scheduleService } from '../services/scheduleService';
 import { planningService } from '../services/planningService';
 import { useMasterStore } from '../store/masterStore';
+import { t } from '../i18n';
 
 // FullCalendar (+68 KB gzip) hanya diunduh saat tampilan Kalender dibuka.
 const ScheduleCalendar = lazy(() => import('../features/mps/ScheduleCalendar'));
@@ -56,27 +57,27 @@ export default function MpsPage() {
 
   return (
     <>
-      <PageHeader title="MPS & Stock Planning" subtitle="Jadwal produksi, status stok, lalu planning"
+      <PageHeader title={t('MPS & Stock Planning')} subtitle={t('Jadwal produksi, status stok, lalu planning')}
         actions={(
           <>
             <Tabs variant="segmented" value={view} onChange={setView}
                   tabs={[{ id: 'table', label: 'Tabel' }, { id: 'calendar', label: 'Kalender' }]} />
-            <Button onClick={() => setForm({ open: true, schedule: null })}><Icon name="plus" /> Tambah Jadwal</Button>
+            <Button onClick={() => setForm({ open: true, schedule: null })}><Icon name="plus" /> {t('Tambah Jadwal')}</Button>
           </>
         )} />
       <StaleRunBanner run={latestRun} onRerun={rerun} />
 
       <div className="space-y-5">
-        <Card title={view === 'calendar' ? 'Kalender Produksi' : 'Jadwal Produksi'} padded={view === 'calendar'}
+        <Card title={view === 'calendar' ? t('Kalender Produksi') : t('Jadwal Produksi')} padded={view === 'calendar'}
           actions={view === 'calendar' ? (
             <>
-              <Select className="w-36 py-1 text-xs" aria-label="Filter line" value={lineId} onChange={(e) => setLineId(e.target.value)}>
-                <option value="">Line: Semua</option>
+              <Select className="w-36 py-1 text-xs" aria-label={t('Filter line')} value={lineId} onChange={(e) => setLineId(e.target.value)}>
+                <option value="">{t('Line: Semua')}</option>
                 {lines.map((l) => <option key={l.id} value={l.id}>{l.code}</option>)}
               </Select>
               <label className="flex items-center gap-1 text-xs text-slate-600">
                 <input type="checkbox" checked={showCancelled} onChange={(e) => setShowCancelled(e.target.checked)} />
-                Tampilkan dibatalkan
+                {t('Tampilkan dibatalkan')}
               </label>
             </>
           ) : null}>
@@ -95,15 +96,15 @@ export default function MpsPage() {
         </Card>
         {view === 'calendar' && (
           <p className="-mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-            <span>Seret jadwal <b>Planned</b> untuk memindah tanggal.</span>
-            <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-primary-600" />Planned</span>
-            <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-amber-500" />In Progress</span>
-            <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-green-600" />Completed</span>
-            <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-slate-200" style={{ backgroundImage: 'repeating-linear-gradient(135deg, transparent 0 3px, rgb(0 0 0 / .15) 3px 6px)' }} />Rentang run basi</span>
+            <span>{t('Seret jadwal')} <b>{t('Planned')}</b> {t('untuk memindah tanggal.')}</span>
+            <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-primary-600" />{t('Planned')}</span>
+            <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-amber-500" />{t('In Progress')}</span>
+            <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-green-600" />{t('Completed')}</span>
+            <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-slate-200" style={{ backgroundImage: 'repeating-linear-gradient(135deg, transparent 0 3px, rgb(0 0 0 / .15) 3px 6px)' }} />{t('Rentang run basi')}</span>
           </p>
         )}
         <div ref={panelRef}><RunPlanningPanel schedules={schedules.data} prefill={prefill} /></div>
-        <Card title="Riwayat Run" padded={false}>
+        <Card title={t('Riwayat Run')} padded={false}>
           <PlanningRunList runs={runs.data} loading={runs.loading} />
         </Card>
       </div>

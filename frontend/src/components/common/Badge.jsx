@@ -1,3 +1,5 @@
+import { tx } from '../../i18n';
+
 const TONES = {
   slate: 'bg-slate-100 text-slate-700 ring-slate-200',
   indigo: 'bg-primary-50 text-primary-700 ring-primary-200',
@@ -10,7 +12,7 @@ const TONES = {
 export default function Badge({ tone = 'slate', children }) {
   return (
     <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${TONES[tone]}`}>
-      {children}
+      {tx(children)}
     </span>
   );
 }

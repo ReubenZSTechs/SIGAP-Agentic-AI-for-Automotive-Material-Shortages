@@ -6,6 +6,7 @@ import { Spinner } from '../../components/common/EmptyState';
 import { scheduleService } from '../../services/scheduleService';
 import { toast } from '../../store/toastStore';
 import { formatQty } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 // Pratinjau dampak stok (dari GET /schedules/{id}/materials). Keputusan akhir tetap milik server:
 // bila 409, dialog yang SAMA berganti menampilkan material yang kurang.
@@ -28,11 +29,11 @@ export default function StartProductionDialog({ open, schedule, materials, onClo
 
   return (
     <Modal open={open} onClose={onClose} size="lg" layer={60}
-      title={`Mulai Produksi · ${schedule?.batch_code ?? ''}`}
-      footer={shortages ? <Button variant="secondary" onClick={onClose}>Tutup</Button> : (
+      title={t('Mulai Produksi · {batch}', { batch: schedule?.batch_code ?? '' })}
+      footer={shortages ? <Button variant="secondary" onClick={onClose}>{t('Tutup')}</Button> : (
         <>
-          <Button variant="secondary" onClick={onClose}>Batal</Button>
-          <Button loading={busy} onClick={start}>Mulai Produksi</Button>
+          <Button variant="secondary" onClick={onClose}>{t('Batal')}</Button>
+          <Button loading={busy} onClick={start}>{t('Mulai Produksi')}</Button>
         </>
       )}>
       {shortages ? (
@@ -55,13 +56,13 @@ export default function StartProductionDialog({ open, schedule, materials, onClo
       ) : !materials ? <Spinner /> : (
         <div>
           <p className="mb-3 text-sm text-slate-600">
-            Material akan keluar dari stok fisik sekarang dan <b>tidak dapat dibatalkan</b>.
+            Material akan keluar dari stok fisik sekarang dan <b>{t('tidak dapat dibatalkan')}</b>.
           </p>
           <div className="max-h-72 overflow-y-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-xs uppercase tracking-wide text-slate-500">
-                <tr><th className="py-1 font-medium">Material</th><th className="py-1 text-right font-medium">Butuh</th>
-                  <th className="py-1 text-right font-medium">Stok fisik: sebelum ke sesudah</th></tr>
+                <tr><th className="py-1 font-medium">{t('Material')}</th><th className="py-1 text-right font-medium">{t('Butuh')}</th>
+                  <th className="py-1 text-right font-medium">{t('Stok fisik: sebelum ke sesudah')}</th></tr>
               </thead>
               <tbody>
                 {materials.lines.map((l) => (
@@ -75,7 +76,7 @@ export default function StartProductionDialog({ open, schedule, materials, onClo
             </table>
           </div>
           <p className="mt-3 text-xs text-slate-500">
-            <Icon name="check" className="mr-1 inline h-3.5 w-3.5 text-green-600" />Stok <i>tersedia</i> tidak berubah: stok fisik dan stok terkunci turun sebesar kebutuhan batch.
+            <Icon name="check" className="mr-1 inline h-3.5 w-3.5 text-green-600" />{t('Stok')} <i>{t('tersedia')}</i> tidak berubah: stok fisik dan stok terkunci turun sebesar kebutuhan batch.
           </p>
         </div>
       )}

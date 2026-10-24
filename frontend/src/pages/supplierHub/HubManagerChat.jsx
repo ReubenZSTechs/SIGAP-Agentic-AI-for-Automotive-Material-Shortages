@@ -12,6 +12,7 @@ import usePolling from '../../hooks/usePolling';
 import { hubService } from '../../services/hubService';
 import { useHubStore } from '../../store/hubStore';
 import { toast } from '../../store/toastStore';
+import { t } from '../../i18n';
 
 // Cermin chat Telegram manajer. Tombol dan balasan di sini berjalan lewat jalur yang sama dengan Telegram,
 // lalu tombol yang sudah tidak berlaku dihapus di Telegram (dan sebaliknya), jadi kedua sisi tetap sinkron.
@@ -40,7 +41,7 @@ export default function HubManagerChat() {
     if (body && await run('send', () => hubService.managerSend(body, approverName()))) setText('');
   };
 
-  if (error && !data) return <Card><p className="text-sm text-red-600">{error.message}</p><Button className="mt-3" variant="secondary" onClick={reload}>Coba lagi</Button></Card>;
+  if (error && !data) return <Card><p className="text-sm text-red-600">{error.message}</p><Button className="mt-3" variant="secondary" onClick={reload}>{t('Coba lagi')}</Button></Card>;
   if (!data) return <Spinner />;
 
   let lastDay = null;
@@ -49,18 +50,18 @@ export default function HubManagerChat() {
       {!data.manager_chat && (
         <div role="status" className="mb-3 flex items-start gap-2.5 rounded-xl border border-amber-200 border-l-4 border-l-amber-500 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
           <Icon name="alert" className="mt-0.5 h-4 w-4 text-amber-600" />
-          <span>TELEGRAM_MANAGER_CHAT_ID belum diisi: pesan agent untuk manajer hanya tampil di sini, tidak terkirim ke Telegram.</span>
+          <span>{t('TELEGRAM_MANAGER_CHAT_ID belum diisi: pesan agent untuk manajer hanya tampil di sini, tidak terkirim ke Telegram.')}</span>
         </div>
       )}
       <Card padded={false}>
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3 text-sm">
           <Icon name="send" className="h-4 w-4 text-slate-500" />
-          <span className="font-semibold text-slate-900">Chat manajer</span>
-          <span className="text-slate-500">· {data.mode === 'sandbox' ? 'sandbox' : 'tersinkron dengan Telegram'}</span>
+          <span className="font-semibold text-slate-900">{t('Chat manajer')}</span>
+          <span className="text-slate-500">· {data.mode === 'sandbox' ? 'sandbox' : t('tersinkron dengan Telegram')}</span>
           {data.pending > 0 && <span className="ml-auto text-xs font-medium text-amber-700">{data.pending} revisi menunggu keputusan</span>}
         </div>
-        <div ref={scroller} className="h-[calc(100dvh-24rem)] min-h-[22rem] overflow-y-auto bg-slate-50/70 px-3 py-3 sm:px-5" aria-live="polite" aria-label="Isi chat manajer">
-          {data.messages.length === 0 && <p className="py-10 text-center text-sm text-slate-500">Belum ada pesan untuk manajer.</p>}
+        <div ref={scroller} className="h-[calc(100dvh-24rem)] min-h-[22rem] overflow-y-auto bg-slate-50/70 px-3 py-3 sm:px-5" aria-live="polite" aria-label={t('Isi chat manajer')}>
+          {data.messages.length === 0 && <p className="py-10 text-center text-sm text-slate-500">{t('Belum ada pesan untuk manajer.')}</p>}
           {data.messages.map((m) => {
             const day = dayLabel(m.at);
             const sep = day !== lastDay;
@@ -74,13 +75,13 @@ export default function HubManagerChat() {
           })}
         </div>
         <div className="border-t border-slate-200 bg-white px-4 py-3">
-          <Textarea rows={2} value={text} aria-label="Balasan manajer" disabled={!aiConfigured}
-            placeholder={aiConfigured ? 'Balas seperti di Telegram, mis. "setujui saja revisinya"…' : 'AI Core belum dikonfigurasi: gunakan tombol opsi'}
+          <Textarea rows={2} value={text} aria-label={t('Balasan manajer')} disabled={!aiConfigured}
+            placeholder={aiConfigured ? t('Balas seperti di Telegram, mis. "setujui saja revisinya"…') : t('AI Core belum dikonfigurasi: gunakan tombol opsi')}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }} />
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="text-xs text-slate-500">Balasan teks selalu diminta konfirmasi lewat tombol sebelum dijalankan. Pesan Anda juga tampil di Telegram manajer.</span>
-            <Button size="sm" className="ml-auto" loading={busy === 'send'} disabled={!text.trim() || !aiConfigured} onClick={send}><Icon name="send" /> Kirim</Button>
+            <span className="text-xs text-slate-500">{t('Balasan teks selalu diminta konfirmasi lewat tombol sebelum dijalankan. Pesan Anda juga tampil di Telegram manajer.')}</span>
+            <Button size="sm" className="ml-auto" loading={busy === 'send'} disabled={!text.trim() || !aiConfigured} onClick={send}><Icon name="send" /> {t('Kirim')}</Button>
           </div>
         </div>
       </Card>

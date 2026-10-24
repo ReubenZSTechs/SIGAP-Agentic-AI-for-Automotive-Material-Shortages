@@ -13,6 +13,7 @@ import useFetch from '../../../hooks/useFetch';
 import { hubService } from '../../../services/hubService';
 import { COMPANY, formatDeadline, greeting, templateParts } from '../../../utils/template';
 import { formatQty, formatRupiah } from '../../../utils/formatters';
+import { t } from '../../../i18n';
 
 const STEPS = ['Sumber & skenario', 'Item & supplier', 'Tenggat & otonomi', 'Pratinjau'];
 const pad = (n) => String(n).padStart(2, '0');
@@ -73,7 +74,7 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
     if (!data) return [];
     if (fromPo) {
       if (!poData) return [];
-      const rows = poData.suppliers.map((s) => ({ s, note: s.role === 'PO' ? 'supplier PO' : `alternatif: ${s.skus.join(', ')}`, role: s.role }));
+      const rows = poData.suppliers.map((s) => ({ s, note: s.role === 'PO' ? t('supplier PO') : t('alternatif: {list}', { list: s.skus.join(', ') }), role: s.role }));
       return sc?.poOnly || sc?.poSupplierOnly ? rows.filter((r) => r.role === 'PO') : rows;
     }
     const linked = new Map((mat?.suppliers ?? []).map((l) => [l.supplier_id, l]));
@@ -81,7 +82,7 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
       .sort((a, b) => Number(linked.has(b.id)) - Number(linked.has(a.id)) || a.name.localeCompare(b.name))
       .map((s) => {
         const l = linked.get(s.id);
-        return { s, note: l ? `harga saat ini ${formatRupiah(l.unit_price)} · ${l.lead_time_days} hari` : null };
+        return { s, note: l ? t('harga saat ini {price} · {n} hari', { price: formatRupiah(l.unit_price), n: l.lead_time_days }) : null };
       });
   }, [data, fromPo, poData, sc, mat]);
 
@@ -122,7 +123,7 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
   const next = () => {
     if (!valid[step]) return setErr(ERR[step]);
     setErr('');
-    if (step === 2) set({ message: data.templates.find((t) => t.scenario === f.scenario)?.body ?? '' });
+    if (step === 2) set({ message: data.templates.find((item) => item.scenario === f.scenario)?.body ?? '' });
     return setStep(step + 1);
   };
   const submit = async () => {
@@ -157,15 +158,15 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
   } : {};
 
   return (
-    <Modal open={open} onClose={onClose} size="lg" title="Misi baru"
+    <Modal open={open} onClose={onClose} size="lg" title={t('Misi baru')}
       footer={(
         <>
           {err && <p role="alert" className="mr-auto self-center text-xs font-medium text-red-600">{err}</p>}
           <Button variant="secondary" onClick={step === 0 ? onClose : () => { setErr(''); setStep(step - 1); }}>{step === 0 ? 'Batal' : 'Kembali'}</Button>
-          {step < 3 ? <Button onClick={next}>Lanjut</Button> : <Button loading={busy} onClick={submit}><Icon name="send" /> Mulai misi</Button>}
+          {step < 3 ? <Button onClick={next}>{t('Lanjut')}</Button> : <Button loading={busy} onClick={submit}><Icon name="send" /> {t('Mulai misi')}</Button>}
         </>
       )}>
-      <ol className="mb-5 flex flex-wrap gap-x-4 gap-y-1 text-xs" aria-label="Langkah">
+      <ol className="mb-5 flex flex-wrap gap-x-4 gap-y-1 text-xs" aria-label={t('Langkah')}>
         {STEPS.map((s, i) => (
           <li key={s} aria-current={i === step ? 'step' : undefined} className={`flex items-center gap-1.5 font-medium ${i === step ? 'text-primary-700' : i < step ? 'text-slate-700' : 'text-slate-400'}`}>
             <span className={`flex h-5 w-5 items-center justify-center rounded-full ${i < step ? 'bg-primary-600 text-white' : i === step ? 'ring-2 ring-primary-600' : 'bg-slate-100'}`}>
@@ -182,9 +183,9 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
               <Tabs variant="segmented" value={f.source} onChange={(v) => set({ ...blank(), source: v })}
                 tabs={[{ id: 'MATERIAL', label: 'Dari material' }, { id: 'PO', label: 'Dari PO' }]} />
               {fromPo && (
-                <FormField label="Purchase Order" hint="Item, qty, dan supplier diambil dari PO. PO tidak diubah oleh misi.">
+                <FormField label={t('Purchase Order')} hint={t('Item, qty, dan supplier diambil dari PO. PO tidak diubah oleh misi.')}>
                   <Select value={f.po_id} onChange={(e) => set({ po_id: e.target.value, scenario: '', supplier_ids: [] })}>
-                    <option value="">Pilih PO…</option>
+                    <option value="">{t('Pilih PO…')}</option>
                     {data.pos.map((p) => <option key={p.id} value={p.id}>{p.po_number} · {p.supplier_name} · {p.status}</option>)}
                   </Select>
                 </FormField>
@@ -194,13 +195,13 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
                 <div className="grid gap-3 sm:grid-cols-2">
                   {Object.entries(SCENARIO).map(([k, s]) => {
                     const info = poData?.scenarios.find((x) => x.key === k);
-                    const why = !fromPo && s.poOnly ? 'Hanya dari PO' : fromPo && !info?.allowed ? `Tidak berlaku untuk PO ${poData.po.status}` : info?.blocked_reason;
+                    const why = !fromPo && s.poOnly ? t('Hanya dari PO') : fromPo && !info?.allowed ? t('Tidak berlaku untuk PO {status}', { status: poData.po.status }) : info?.blocked_reason;
                     return (
                       <Choice key={k} active={f.scenario === k} disabled={!scenarioAllowed(k)} onClick={() => pickScenario(k)}>
                         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><Icon name={s.icon} className="h-5 w-5" /></span>
                         <span>
-                          <span className="block text-sm font-semibold text-slate-900">{s.label}</span>
-                          <span className="mt-0.5 block text-xs text-slate-500">{s.desc}</span>
+                          <span className="block text-sm font-semibold text-slate-900">{t(s.label)}</span>
+                          <span className="mt-0.5 block text-xs text-slate-500">{t(s.desc)}</span>
                           {why && <span className="mt-1 block text-xs font-medium text-amber-700">{why}</span>}
                         </span>
                       </Choice>
@@ -232,14 +233,14 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
                     </fieldset>
                   )}
                   {f.scenario === 'DOC_REQUEST' && (
-                    <FormField label="Dokumen yang diminta"><Input value={f.topic} onChange={(e) => set({ topic: e.target.value })} /></FormField>
+                    <FormField label={t('Dokumen yang diminta')}><Input value={f.topic} onChange={(e) => set({ topic: e.target.value })} /></FormField>
                   )}
                 </>
               ) : sc.needsItem ? (
                 <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
-                  <FormField label="Material beli">
+                  <FormField label={t('Material beli')}>
                     <Select value={f.material_id} onChange={(e) => pickMaterial(e.target.value)}>
-                      <option value="">Pilih material…</option>
+                      <option value="">{t('Pilih material…')}</option>
                       {data.materials.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.sku})</option>)}
                     </Select>
                   </FormField>
@@ -248,13 +249,13 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
                   </FormField>
                 </div>
               ) : (
-                <FormField label="Topik / dokumen yang diminta" hint="Dipakai sebagai {item} di template pesan">
-                  <Input value={f.topic} placeholder="mis. Faktur pajak Oktober" onChange={(e) => set({ topic: e.target.value })} />
+                <FormField label={t('Topik / dokumen yang diminta')} hint="Dipakai sebagai {item} di template pesan">
+                  <Input value={f.topic} placeholder={t('mis. Faktur pajak Oktober')} onChange={(e) => set({ topic: e.target.value })} />
                 </FormField>
               )}
               <fieldset>
                 <legend className="mb-1.5 text-sm font-medium text-slate-700">Supplier ({f.supplier_ids.length} dipilih)</legend>
-                {supplierChoices.length === 0 ? <p className="text-sm text-slate-500">Pilih material dulu.</p> : (
+                {supplierChoices.length === 0 ? <p className="text-sm text-slate-500">{t('Pilih material dulu.')}</p> : (
                   <ul className="max-h-72 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
                     {supplierChoices.map(({ s, note }) => (
                       <SupplierRow key={s.id} s={s} note={note} checked={f.supplier_ids.includes(s.id)}
@@ -269,41 +270,41 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
 
           {step === 2 && (
             <div className="space-y-4">
-              <FormField label="Tenggat balasan" hint="Lewat tenggat, misi ditutup otomatis dan balasan yang ada dirangkum">
+              <FormField label={t('Tenggat balasan')} hint={t('Lewat tenggat, misi ditutup otomatis dan balasan yang ada dirangkum')}>
                 <Input type="datetime-local" value={f.deadline} min={localInput(new Date())} onChange={(e) => set({ deadline: e.target.value })} className="sm:w-64" />
               </FormField>
               <fieldset>
-                <legend className="mb-1.5 text-sm font-medium text-slate-700">Pesan keluar</legend>
+                <legend className="mb-1.5 text-sm font-medium text-slate-700">{t('Pesan keluar')}</legend>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {Object.entries(AUTONOMY).map(([k, a]) => (
                     <Choice key={k} active={f.autonomy === k} onClick={() => set({ autonomy: k })}>
-                      <span><span className="block text-sm font-semibold text-slate-900">{a.label}</span><span className="mt-0.5 block text-xs text-slate-500">{a.desc}</span></span>
+                      <span><span className="block text-sm font-semibold text-slate-900">{t(a.label)}</span><span className="mt-0.5 block text-xs text-slate-500">{t(a.desc)}</span></span>
                     </Choice>
                   ))}
                 </div>
               </fieldset>
               <p className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-600">
                 <Icon name="shield" className="mt-0.5 h-4 w-4 text-primary-600" />
-                Apa pun pilihannya, perubahan harga dan jadwal dari hasil misi tetap masuk Inbox Persetujuan. Misi tidak membuat atau mengubah PO.
+                {t('Apa pun pilihannya, perubahan harga dan jadwal dari hasil misi tetap masuk Inbox Persetujuan. Misi tidak membuat atau mengubah PO.')}
               </p>
             </div>
           )}
 
           {step === 3 && (
             <div className="space-y-4">
-              <FormField label="Template pesan" hint="Variabel dalam {kurung kurawal} diisi per supplier oleh server">
+              <FormField label={t('Template pesan')} hint="Variabel dalam {kurung kurawal} diisi per supplier oleh server">
                 <Textarea rows={4} value={f.message} onChange={(e) => set({ message: e.target.value })} />
               </FormField>
               <div>
                 <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm font-medium text-slate-700">Pratinjau untuk</span>
-                  <Select className="h-8 w-auto! min-w-0 text-xs" value={previewSupplier?.id ?? ''} onChange={(e) => setPreview(e.target.value)} aria-label="Supplier pratinjau">
+                  <span className="text-sm font-medium text-slate-700">{t('Pratinjau untuk')}</span>
+                  <Select className="h-8 w-auto! min-w-0 text-xs" value={previewSupplier?.id ?? ''} onChange={(e) => setPreview(e.target.value)} aria-label={t('Supplier pratinjau')}>
                     {chosen.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </Select>
                 </div>
                 <div className="rounded-xl bg-slate-50 p-4">
                   <div className="ml-auto w-fit max-w-[90%]">
-                    <div className="mb-1 flex items-center justify-end gap-1.5 text-xs text-slate-500"><AgentTile /> <b className="font-semibold text-slate-700">Agent</b> · template</div>
+                    <div className="mb-1 flex items-center justify-end gap-1.5 text-xs text-slate-500"><AgentTile /> <b className="font-semibold text-slate-700">{t('Agent')}</b> {t('· template')}</div>
                     <p className={`whitespace-pre-line rounded-2xl rounded-tr-md px-3.5 py-2.5 text-sm text-slate-800 ${f.autonomy === 'REVIEW' ? 'border border-dashed border-primary-400 bg-primary-50/50' : 'bg-primary-50 ring-1 ring-inset ring-primary-100'}`}>
                       {templateParts(f.message, vars).map((p, i) => (p.key
                         ? <mark key={i} className={`rounded px-0.5 ${p.key.startsWith('!') ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-slate-900'}`}>{p.text}</mark>
@@ -312,13 +313,13 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
                   </div>
                 </div>
                 <p className="mt-1.5 text-xs text-slate-500">
-                  Sorotan kuning = nilai variabel, merah = variabel tidak dikenal. Server menambahkan {fromPo && (sc.poOnly || sc.poSupplierOnly) ? 'ringkasan PO' : 'daftar item (tanpa harga)'} secara otomatis bila relevan.
+                  Sorotan kuning = nilai variabel, merah = variabel tidak dikenal. Server menambahkan {fromPo && (sc.poOnly || sc.poSupplierOnly) ? t('ringkasan PO') : t('daftar item (tanpa harga)')} secara otomatis bila relevan.
                 </p>
               </div>
               <dl className="grid grid-cols-3 gap-3 rounded-lg border border-slate-200 p-3 text-sm">
-                <div><dt className="text-xs text-slate-500">Penerima</dt><dd className="font-medium">{chosen.length} supplier</dd></div>
-                <div><dt className="text-xs text-slate-500">Tenggat</dt><dd className="font-medium">{formatDeadline(new Date(f.deadline))}</dd></div>
-                <div><dt className="text-xs text-slate-500">Pesan keluar</dt><dd className="font-medium">{AUTONOMY[f.autonomy]?.label}</dd></div>
+                <div><dt className="text-xs text-slate-500">{t('Penerima')}</dt><dd className="font-medium">{chosen.length} supplier</dd></div>
+                <div><dt className="text-xs text-slate-500">{t('Tenggat')}</dt><dd className="font-medium">{formatDeadline(new Date(f.deadline))}</dd></div>
+                <div><dt className="text-xs text-slate-500">{t('Pesan keluar')}</dt><dd className="font-medium">{t(AUTONOMY[f.autonomy]?.label)}</dd></div>
               </dl>
             </div>
           )}

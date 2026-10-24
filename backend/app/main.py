@@ -9,6 +9,7 @@ import app.models  # noqa: F401  (registrasi semua model ke Base.metadata)
 from app.api.v1.api import api_router
 from app.config import settings
 from app.core.exceptions import AppError
+from app.core.i18n import translate
 from app.database import Base, engine
 
 
@@ -36,8 +37,10 @@ app.include_router(api_router, prefix="/api/v1")
 
 
 @app.exception_handler(AppError)
-async def app_error_handler(_: Request, exc: AppError):
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, **exc.extra})
+async def app_error_handler(request: Request, exc: AppError):
+    """Error body {detail}; translated to English when the browser asks for it (Accept-Language: en)."""
+    lang = "en" if request.headers.get("accept-language", "").lower().startswith("en") else "id"
+    return JSONResponse(status_code=exc.status_code, content={"detail": translate(exc.detail, lang), **exc.extra})
 
 
 @app.exception_handler(IntegrityError)

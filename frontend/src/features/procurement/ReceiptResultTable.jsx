@@ -2,6 +2,7 @@ import Card from '../../components/common/Card';
 import DataTable from '../../components/common/DataTable';
 import StatusBadge from '../../components/common/StatusBadge';
 import { formatQty } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 // Cermin tabel Phase 5 dokumen alur. Terkunci = Fisik Baru − Tersedia.
 export default function ReceiptResultTable({ changes, items }) {
@@ -16,7 +17,7 @@ export default function ReceiptResultTable({ changes, items }) {
     { key: 'status', header: 'Status', render: (c) => <StatusBadge status={c.status} /> },
   ];
   return (
-    <Card title="Hasil Penerimaan — Pembaruan Stok" padded={false}>
+    <Card title={t('Hasil Penerimaan — Pembaruan Stok')} padded={false}>
       <DataTable columns={columns} rows={changes} rowKey="material_id" />
     </Card>
   );

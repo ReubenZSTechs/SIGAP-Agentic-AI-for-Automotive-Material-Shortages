@@ -5,6 +5,7 @@ import Modal from '../../../components/common/Modal';
 import FilePreview from '../document/FilePreview';
 import { hubService } from '../../../services/hubService';
 import { purchaseOrderService } from '../../../services/purchaseOrderService';
+import { t } from '../../../i18n';
 
 // Pratinjau lampiran di dalam panel; validasi lengkap ada di halaman Dokumen. PDF PO final dari agent dibuka dari PO-nya.
 export default function AttachmentPreview({ attachment: a, onClose }) {
@@ -19,8 +20,8 @@ export default function AttachmentPreview({ attachment: a, onClose }) {
             <Icon name="download" /> Unduh
           </a>
           {a.outbound
-            ? <Button onClick={() => navigate(`/purchase-orders/${a.po_id}`)}><Icon name="file" /> Buka PO</Button>
-            : <Button onClick={() => navigate(`/supplier-hub/documents/${a.doc_id}`)}><Icon name="file" /> Validasi di Dokumen</Button>}
+            ? <Button onClick={() => navigate(`/purchase-orders/${a.po_id}`)}><Icon name="file" /> {t('Buka PO')}</Button>
+            : <Button onClick={() => navigate(`/supplier-hub/documents/${a.doc_id}`)}><Icon name="file" /> {t('Validasi di Dokumen')}</Button>}
         </>
       )}>
       <FilePreview url={url} kind={a.kind} name={a.name} />

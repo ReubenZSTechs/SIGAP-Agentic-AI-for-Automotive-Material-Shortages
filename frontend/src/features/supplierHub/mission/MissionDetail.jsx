@@ -16,6 +16,7 @@ import { hubService } from '../../../services/hubService';
 import { useHubStore } from '../../../store/hubStore';
 import { toast } from '../../../store/toastStore';
 import { formatQty } from '../../../utils/formatters';
+import { t } from '../../../i18n';
 
 const WAITING = ['SENT', 'NO_REPLY'];
 
@@ -37,46 +38,46 @@ export default function MissionDetail({ id }) {
     try { const r = await fn(); toast.success(typeof ok === 'function' ? ok(r) : ok); await reload(); refreshStatus(); } catch (e) { toast.error(e.message); } finally { setBusy(null); }
   };
 
-  if (error && !m) return <Card><p className="text-sm text-red-600">{error.message}</p><Button className="mt-3" variant="secondary" onClick={reload}>Coba lagi</Button></Card>;
+  if (error && !m) return <Card><p className="text-sm text-red-600">{error.message}</p><Button className="mt-3" variant="secondary" onClick={reload}>{t('Coba lagi')}</Button></Card>;
   if (!m) return <Spinner />;
 
   const me = approverName();
   const active = m.status === 'ACTIVE';
-  const waiting = m.targets.filter((t) => WAITING.includes(t.state));
-  const remindCopy = (r) => (r.drafted ? `${r.count} draf pengingat menunggu review di Percakapan` : `Pengingat dikirim ke ${r.count} supplier`);
-  const notLinked = m.targets.filter((t) => t.state === 'QUEUED' && t.supplier.telegram !== 'CONNECTED');
+  const waiting = m.targets.filter((item) => WAITING.includes(item.state));
+  const remindCopy = (r) => (r.drafted ? t('{n} draf pengingat menunggu review di Percakapan', { n: r.count }) : t('Pengingat dikirim ke {n} supplier', { n: r.count }));
+  const notLinked = m.targets.filter((item) => item.state === 'QUEUED' && item.supplier.telegram !== 'CONNECTED');
 
   const columns = [
-    { key: 'supplier', header: 'Supplier', render: (t) => (
-      <span><span className="block font-medium text-slate-800">{t.supplier.name}</span>
-        {t.supplier.telegram !== 'CONNECTED' && t.state === 'QUEUED' && <span className="text-xs text-amber-700">Telegram belum terhubung</span>}</span>
+    { key: 'supplier', header: 'Supplier', render: (item) => (
+      <span><span className="block font-medium text-slate-800">{item.supplier.name}</span>
+        {item.supplier.telegram !== 'CONNECTED' && item.state === 'QUEUED' && <span className="text-xs text-amber-700">{t('Telegram belum terhubung')}</span>}</span>
     ) },
-    { key: 'state', header: 'Status', render: (t) => (
-      <span className="inline-flex flex-wrap items-center gap-1.5"><StateBadge meta={TARGET_STATE[t.state]} />
-        {t.draft && <span className="text-xs font-medium text-primary-700">draf menunggu review</span>}
-        {t.waiting && <span className="text-xs text-slate-500">{t.waiting}</span>}</span>
+    { key: 'state', header: 'Status', render: (item) => (
+      <span className="inline-flex flex-wrap items-center gap-1.5"><StateBadge meta={TARGET_STATE[item.state]} />
+        {item.draft && <span className="text-xs font-medium text-primary-700">{t('draf menunggu review')}</span>}
+        {item.waiting && <span className="text-xs text-slate-500">{item.waiting}</span>}</span>
     ) },
-    { key: 'sent', header: 'Terkirim', className: 'tabular-nums text-slate-600 whitespace-nowrap', render: (t) => (t.sent_at ? dayTime(t.sent_at) : '—') },
-    { key: 'replied', header: 'Dibalas', className: 'tabular-nums text-slate-600 whitespace-nowrap', render: (t) => (t.replied_at ? dayTime(t.replied_at) : '—') },
-    { key: 'result', header: 'Hasil', render: (t) => (t.result ? <b className="font-semibold tabular-nums text-slate-900">{t.result}</b> : <span className="text-slate-400">—</span>) },
-    { key: 'actions', header: 'Aksi', align: 'right', render: (t) => (
+    { key: 'sent', header: 'Terkirim', className: 'tabular-nums text-slate-600 whitespace-nowrap', render: (item) => (item.sent_at ? dayTime(item.sent_at) : '—') },
+    { key: 'replied', header: 'Dibalas', className: 'tabular-nums text-slate-600 whitespace-nowrap', render: (item) => (item.replied_at ? dayTime(item.replied_at) : '—') },
+    { key: 'result', header: 'Hasil', render: (item) => (item.result ? <b className="font-semibold tabular-nums text-slate-900">{item.result}</b> : <span className="text-slate-400">—</span>) },
+    { key: 'actions', header: 'Aksi', align: 'right', render: (item) => (
       <span className="inline-flex gap-1">
-        {active && WAITING.includes(t.state) && (
-          <Button size="sm" variant="ghost" loading={busy === `remind-${t.supplier_id}`}
-            onClick={() => run(`remind-${t.supplier_id}`, () => hubService.remindMission(id, [t.supplier_id], me), remindCopy)}><Icon name="bell" /> Ingatkan</Button>
+        {active && WAITING.includes(item.state) && (
+          <Button size="sm" variant="ghost" loading={busy === `remind-${item.supplier_id}`}
+            onClick={() => run(`remind-${item.supplier_id}`, () => hubService.remindMission(id, [item.supplier_id], me), remindCopy)}><Icon name="bell" /> {t('Ingatkan')}</Button>
         )}
-        {active && WAITING.includes(t.state) && (
-          <Button size="sm" variant="ghost" className="text-red-700" loading={busy === `esc-${t.supplier_id}`}
-            onClick={() => run(`esc-${t.supplier_id}`, () => hubService.escalateTarget(id, t.supplier_id, me), 'Draf eskalasi dibuat dan manajer diberi tahu. Tinjau di Percakapan.')}><Icon name="flag" /> Eskalasi</Button>
+        {active && WAITING.includes(item.state) && (
+          <Button size="sm" variant="ghost" className="text-red-700" loading={busy === `esc-${item.supplier_id}`}
+            onClick={() => run(`esc-${item.supplier_id}`, () => hubService.escalateTarget(id, item.supplier_id, me), 'Draf eskalasi dibuat dan manajer diberi tahu. Tinjau di Percakapan.')}><Icon name="flag" /> {t('Eskalasi')}</Button>
         )}
-        <Button size="sm" variant="ghost" onClick={() => navigate(`/supplier-hub/conversations/${t.thread_id}`)}>{t.draft ? 'Tinjau draf' : 'Buka'}</Button>
+        <Button size="sm" variant="ghost" onClick={() => navigate(`/supplier-hub/conversations/${item.thread_id}`)}>{item.draft ? t('Tinjau draf') : t('Buka')}</Button>
       </span>
     ) },
   ];
 
   return (
     <>
-      <Button className="mb-3" variant="ghost" size="sm" onClick={() => navigate('/supplier-hub/missions')}><Icon name="arrowLeft" /> Misi</Button>
+      <Button className="mb-3" variant="ghost" size="sm" onClick={() => navigate('/supplier-hub/missions')}><Icon name="arrowLeft" /> {t('Misi')}</Button>
 
       <Card>
         <div className="flex flex-wrap items-start gap-3">
@@ -84,21 +85,21 @@ export default function MissionDetail({ id }) {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <StateBadge meta={MISSION_STATUS[m.status]} />
-              <span className="text-xs text-slate-500">{SCENARIO[m.scenario].label}{m.source === 'PO' ? ' · dari PO' : ''}</span>
+              <span className="text-xs text-slate-500">{t(SCENARIO[m.scenario].label)}{m.source === 'PO' ? ` · ${t('dari PO')}` : ''}</span>
             </div>
-            <h2 className="mt-1 text-xl font-bold tracking-tight text-slate-900">Misi #{m.number} · {m.title}</h2>
+            <h2 className="mt-1 text-xl font-bold tracking-tight text-slate-900">Misi #{m.number} · {t(m.title)}</h2>
           </div>
           <div className="w-full text-sm sm:w-auto sm:text-right">
-            <p className="text-slate-500">Tenggat</p>
+            <p className="text-slate-500">{t('Tenggat')}</p>
             <p className="font-semibold text-slate-900">{dayTime(m.deadline)}</p>
             {active && <p className={`text-xs ${msLeft(m.deadline) < 6 * 3600e3 ? 'font-semibold text-amber-700' : 'text-slate-500'}`}>Sisa {timeLeft(m.deadline)}</p>}
           </div>
         </div>
         <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-slate-200 pt-4 sm:grid-cols-4">
-          <Meta label="Item / topik">{m.item}</Meta>
-          <Meta label="Pesan keluar">{AUTONOMY[m.autonomy].label}</Meta>
-          <Meta label="Dibuat oleh">{m.created_by}</Meta>
-          <Meta label={m.po_id ? 'Sumber PO' : 'Dimulai'}>
+          <Meta label={t('Item / topik')}>{m.item}</Meta>
+          <Meta label={t('Pesan keluar')}>{t(AUTONOMY[m.autonomy].label)}</Meta>
+          <Meta label={t('Dibuat oleh')}>{m.created_by}</Meta>
+          <Meta label={m.po_id ? t('Sumber PO') : t('Dimulai')}>
             {m.po_id ? <Link className="font-mono text-primary-700 hover:underline" to={`/purchase-orders/${m.po_id}`}>{m.po_number}</Link>
               : m.po_number ? <span className="font-mono">{m.po_number} (dihapus)</span> : dayTime(m.created_at)}
           </Meta>
@@ -114,8 +115,8 @@ export default function MissionDetail({ id }) {
       {notLinked.length > 0 && active && (
         <div role="status" className="mt-4 flex flex-wrap items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <Icon name="alert" className="h-4 w-4 text-amber-600" />
-          <span className="flex-1">{notLinked.map((t) => t.supplier.name).join(', ')} belum terhubung ke Telegram, jadi pesan belum terkirim.</span>
-          <Button size="sm" variant="secondary" onClick={() => navigate('/supplier-hub/settings?tab=telegram')}>Hubungkan</Button>
+          <span className="flex-1">{notLinked.map((item) => item.supplier.name).join(', ')} belum terhubung ke Telegram, jadi pesan belum terkirim.</span>
+          <Button size="sm" variant="secondary" onClick={() => navigate('/supplier-hub/settings?tab=telegram')}>{t('Hubungkan')}</Button>
         </div>
       )}
 
@@ -125,13 +126,13 @@ export default function MissionDetail({ id }) {
           <span className="flex-1">{m.summary}</span>
           {m.proposals.map((p) => (
             <Link key={p.id} to={`/supplier-hub?item=${p.id}`} className="inline-flex items-center gap-2 font-semibold text-primary-700 hover:underline">
-              {p.title} <StateBadge meta={DECISION[p.status] ?? DECISION.PENDING} />
+              {t(p.title)} <StateBadge meta={DECISION[p.status] ?? DECISION.PENDING} />
             </Link>
           ))}
         </div>
       )}
 
-      <Card className="mt-4" padded={false} title={`Supplier (${m.replied}/${m.total} membalas)`}>
+      <Card className="mt-4" padded={false} title={t('Supplier ({a}/{b} membalas)', { a: m.replied, b: m.total })}>
         <DataTable columns={columns} rows={m.targets} rowKey="supplier_id" />
         {active && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3">
@@ -140,20 +141,20 @@ export default function MissionDetail({ id }) {
                 onClick={() => run('remind', () => hubService.remindMission(id, null, me), remindCopy)}>
                 <Icon name="bell" /> Kirim pengingat ke yang belum balas ({waiting.length})
               </Button>
-              <Button variant="ghost" className="text-red-600" onClick={() => setDialog('cancel')}>Batalkan misi</Button>
+              <Button variant="ghost" className="text-red-600" onClick={() => setDialog('cancel')}>{t('Batalkan misi')}</Button>
             </div>
             <Button onClick={() => setDialog('close')}>Tutup lebih awal & rangkum</Button>
           </div>
         )}
       </Card>
-      <p className="mt-2 text-xs text-slate-500">Pengingat dikirim langsung atau ditahan sebagai draf sesuai aturan otonomi. Eskalasi selalu berupa draf yang perlu Anda review. Misi tidak pernah mengubah PO.</p>
+      <p className="mt-2 text-xs text-slate-500">{t('Pengingat dikirim langsung atau ditahan sebagai draf sesuai aturan otonomi. Eskalasi selalu berupa draf yang perlu Anda review. Misi tidak pernah mengubah PO.')}</p>
 
-      <ConfirmDialog open={dialog === 'close'} variant="primary" title="Tutup misi lebih awal" confirmLabel="Tutup & rangkum" loading={busy === 'close'}
-        message={`${waiting.length + m.targets.filter((t) => ['QUEUED', 'PAUSED'].includes(t.state)).length} supplier yang belum membalas akan ditandai "Tanpa balasan". Agent merangkum ${m.replied} balasan yang sudah masuk lalu mengajukannya ke Inbox Persetujuan.`}
+      <ConfirmDialog open={dialog === 'close'} variant="primary" title={t('Tutup misi lebih awal')} confirmLabel={t('Tutup & rangkum')} loading={busy === 'close'}
+        message={`${waiting.length + m.targets.filter((item) => ['QUEUED', 'PAUSED'].includes(item.state)).length} supplier yang belum membalas akan ditandai "Tanpa balasan". Agent merangkum ${m.replied} balasan yang sudah masuk lalu mengajukannya ke Inbox Persetujuan.`}
         onCancel={() => setDialog(null)}
         onConfirm={async () => { await run('close', () => hubService.closeMission(id, me), 'Misi ditutup dan dirangkum'); setDialog(null); }} />
-      <ConfirmDialog open={dialog === 'cancel'} title="Batalkan misi" confirmLabel="Ya, batalkan" loading={busy === 'cancel'}
-        message="Misi dihentikan tanpa ringkasan. Draf yang belum dikirim dibuang. Pesan yang sudah terkirim tidak ditarik."
+      <ConfirmDialog open={dialog === 'cancel'} title={t('Batalkan misi')} confirmLabel={t('Ya, batalkan')} loading={busy === 'cancel'}
+        message={t('Misi dihentikan tanpa ringkasan. Draf yang belum dikirim dibuang. Pesan yang sudah terkirim tidak ditarik.')}
         onCancel={() => setDialog(null)}
         onConfirm={async () => { await run('cancel', () => hubService.cancelMission(id, me), 'Misi dibatalkan'); setDialog(null); }} />
     </>

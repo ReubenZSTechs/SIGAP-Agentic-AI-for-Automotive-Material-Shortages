@@ -24,6 +24,7 @@ from langgraph.types import interrupt
 
 from app.chatbot import tracing
 from app.chatbot.progress import emit
+from app.core.i18n import translate_blocks, translate_card
 from app.core.exceptions import AppError
 from app.database import SessionLocal
 from app.models import AutomationAction
@@ -65,7 +66,14 @@ def _text_draft(*blocks: dict) -> dict:
 
 
 def _reply(blocks: list[dict], meta: dict, **extra) -> dict:
-    """State update that shows `blocks` as this turn's answer (used by nodes that end the run themselves)."""
+    """State update that shows `blocks` as this turn's answer (used by nodes that end the run themselves).
+
+    Texts and cards are translated to the user's language (`meta["language"]`) here, in one place.
+    """
+    lang = meta.get("language")
+    blocks = translate_blocks(blocks, lang)
+    if "actions" in extra:
+        extra["actions"] = {aid: translate_card(card, lang) for aid, card in extra["actions"].items()}
     text = "\n".join(b["text"] for b in blocks if b.get("type") == "text")
     final = {"blocks": blocks, "meta": meta, **extra}
     return {"final": final, "messages": [AIMessage(content=text, additional_kwargs={"blocks": blocks, "meta": meta,
@@ -92,13 +100,14 @@ class MasterDataWorkflow:
         payload = {"latest_message": state["question"], "rewritten": state["rewritten"],
                    "current_entity": draft.get("entity"), "current_values": draft.get("values")}
         out = self.agents["master_data_parser"].run(json.dumps(payload, ensure_ascii=False, default=str))
+        lang = state["language"]
         if out["user_cancelled"]:
             return {"master_draft": None, "master_step": "done",
-                    "draft": _text_draft({"type": "text", "text": TEXT["cancelled"]})}
+                    "draft": _text_draft(*translate_blocks([{"type": "text", "text": TEXT["cancelled"]}], lang))}
         entity = out["entity"] if out["entity"] in M.ENTITIES else draft.get("entity")
         if entity is None:                                     # belum jelas: tawarkan pilihan
-            return {"master_step": "done", "draft": _text_draft({"type": "text", "text": TEXT["ask_entity"]},
-                                                                {"type": "options", "options": ENTITY_OPTIONS})}
+            blocks = [{"type": "text", "text": TEXT["ask_entity"]}, {"type": "options", "options": ENTITY_OPTIONS}]
+            return {"master_step": "done", "draft": _text_draft(*translate_blocks(blocks, lang))}
         keep = draft.get("entity") == entity and not out["is_new_request"]
         values = draft.get("values") if keep else None
         with tracing.record_tool("apply_parsed", "read", {"entity": entity, "items": out["items"]}) as run, \

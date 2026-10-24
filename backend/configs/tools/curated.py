@@ -10,6 +10,8 @@ from app.models import (Material, MaterialSupplier, PlanningRun, POChangeRequest
                         PurchaseOrder, Schedule, Supplier, SupplierConversation)
 from app.models.enums import ItemCategory, ScheduleStatus, StockStatus
 from app.services import bom_service, inventory_service, master_service, planning_service
+from configs.tools import costing
+from configs.tools.po_sourcing import active_links
 
 ToolOutput = tuple[list[dict], dict]
 
@@ -107,9 +109,34 @@ def find_materials(db: Session, query: str | None = None, **_) -> ToolOutput:
     return rows, _match_meta(query or "", matches)
 
 
-def get_material_suppliers(db: Session, material: str | None = None, **_) -> ToolOutput:
-    """Suppliers for a material with price, lead time, MOQ and cheapest/fastest flags."""
+def _compare_suppliers(db: Session, m: Material, qty: float) -> ToolOutput:
+    """Suppliers of one material compared for buying `qty` units: MOQ-aware total cost, arrival date."""
+    terms = {s.id: s.payment_term_days for s in db.scalars(select(Supplier))}
+    rows = [{"material_name": m.name, "supplier_name": r["supplier_name"], "unit_price": r["unit_price"],
+             "moq": r["moq"], "order_qty": r["order_qty"], "total_cost": r["total_cost"],
+             "difference_vs_cheapest": r["difference_vs_cheapest"], "lead_time_days": r["lead_time_days"],
+             "arrival_date": r["arrival_date"], "payment_term_days": terms.get(r["supplier_id"]),
+             "is_preferred": r["is_preferred"]}
+            for r in costing.compare_links(active_links(db, m.id), qty)]
+    meta = {"material": m.name, "qty": qty, "uom": m.uom, "supplier_count": len(rows)}
+    if rows:
+        fastest = min(rows, key=lambda r: (r["lead_time_days"], r["total_cost"]))
+        meta.update(cheapest_supplier=rows[0]["supplier_name"], cheapest_total=rows[0]["total_cost"],
+                    fastest_supplier=fastest["supplier_name"], fastest_arrival_date=fastest["arrival_date"],
+                    most_expensive_total=rows[-1]["total_cost"],
+                    preferred_suppliers=[r["supplier_name"] for r in rows if r["is_preferred"]])
+    return rows, meta
+
+
+def get_material_suppliers(db: Session, material: str | None = None, qty: float | None = None,
+                           **_) -> ToolOutput:
+    """Suppliers for a material with price, lead time, MOQ and cheapest/fastest flags.
+
+    With `qty`: compares the suppliers for buying that amount (see `_compare_suppliers`).
+    """
     matches = resolve_materials(db, material or "")
+    if qty and len(matches) == 1:
+        return _compare_suppliers(db, matches[0], qty)
     terms = {s.id: s.payment_term_days for s in db.scalars(select(Supplier))}
     rows = []
     for m in matches:
@@ -196,14 +223,15 @@ def get_bom(db: Session, product: str | None = None, qty: float | None = None, *
         meta["note"] = f"'{product}' matched {len(matches)} items; showing {root.sku}."
     rows = []
 
-    def walk(node: dict, parent_sku: str | None):
+    def walk(node: dict, parent: Material | None):
         m = node["material"]
         if node["level"] > 0:
-            rows.append({"level": node["level"], "parent_sku": parent_sku, "sku": m.sku, "name": m.name,
+            rows.append({"level": node["level"], "parent_sku": parent.sku, "parent_name": parent.name,
+                         "sku": m.sku, "name": m.name,
                          "category": m.category, "uom": m.uom, "qty_per_parent": node["qty_per_parent"],
                          "required_qty": round(node["qty_cumulative"] * qty, 6)})
         for child in node["children"]:
-            walk(child, m.sku)
+            walk(child, m)
 
     walk(bom_service.build_tree(db, root.id), None)
     meta["product"] = f"{root.sku} {root.name}"
@@ -256,6 +284,21 @@ def get_po_supplier_status(db: Session, query: str | None = None, supplier: str 
     return rows, {"po_count": len(rows)}
 
 
+def estimate_production_profit(db: Session, product: str | None = None, qty: float | None = None,
+                               strategy: str | None = None, date_to: str | None = None, **_) -> ToolOutput:
+    """Cost of producing `qty` units (one row per purchased material + chosen supplier) and the profit."""
+    qty = qty or 1
+    matches = resolve_materials(db, product or "", (ItemCategory.FINISHED,))
+    meta = _match_meta(product or "", matches)
+    if not matches:                                   # bantu langkah berikutnya memakai nama yang benar
+        meta["available_products"] = [m.name for m in db.scalars(
+            select(Material).where(Material.category == ItemCategory.FINISHED, Material.is_active))]
+        return [], meta
+    deadline = date.fromisoformat(date_to) if date_to else None
+    rows, summary = costing.estimate(db, matches[0], qty, strategy or "CHEAPEST", deadline)
+    return rows, {**meta, **summary, **costing.compare_strategies(db, matches[0], qty, deadline)}
+
+
 def list_products(db: Session, query: str | None = None, **_) -> ToolOutput:
     """Finished products (Produk Final): price, specification, active flag and number of BOM components.
 
@@ -280,6 +323,7 @@ CURATED = {
     "get_latest_planning_run": get_latest_planning_run,
     "get_bom": get_bom,
     "list_products": list_products,
+    "estimate_production_profit": estimate_production_profit,
     "get_production_schedules": get_production_schedules,
     "get_po_supplier_status": get_po_supplier_status,
 }

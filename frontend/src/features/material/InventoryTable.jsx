@@ -3,6 +3,7 @@ import StatusBadge from '../../components/common/StatusBadge';
 import Button from '../../components/common/Button';
 import StockLevel from './StockLevel';
 import { formatQty } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 export default function InventoryTable({ rows, loading, onEdit, onHistory }) {
   const columns = [
@@ -22,11 +23,11 @@ export default function InventoryTable({ rows, loading, onEdit, onHistory }) {
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
     { key: 'actions', header: '', align: 'right', render: (r) => (
       <span className="inline-flex gap-1">
-        <Button size="sm" variant="ghost" onClick={() => onHistory(r)}>Riwayat</Button>
-        <Button size="sm" variant="ghost" onClick={() => onEdit(r)}>Edit</Button>
+        <Button size="sm" variant="ghost" onClick={() => onHistory(r)}>{t('Riwayat')}</Button>
+        <Button size="sm" variant="ghost" onClick={() => onEdit(r)}>{t('Edit')}</Button>
       </span>
     ) },
   ];
   return <DataTable columns={columns} rows={rows} loading={loading} rowKey="material_id"
-                    emptyText="Belum ada data stok" />;
+                    emptyText={t('Belum ada data stok')} />;
 }

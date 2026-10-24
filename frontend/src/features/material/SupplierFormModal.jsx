@@ -5,6 +5,7 @@ import FormField from '../../components/common/FormField';
 import Input from '../../components/common/Input';
 import { supplierService } from '../../services/supplierService';
 import { toast } from '../../store/toastStore';
+import { t } from '../../i18n';
 
 const EMPTY = { code: '', name: '', contact: '', payment_term_days: '0', is_active: true };
 
@@ -45,21 +46,21 @@ export default function SupplierFormModal({ open, supplier, onClose, onSaved }) 
     <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Supplier' : 'Tambah Supplier'}
       footer={(
         <>
-          <Button variant="secondary" onClick={onClose}>Batal</Button>
-          <Button loading={saving} onClick={submit}>Simpan</Button>
+          <Button variant="secondary" onClick={onClose}>{t('Batal')}</Button>
+          <Button loading={saving} onClick={submit}>{t('Simpan')}</Button>
         </>
       )}>
       <div className="space-y-3">
-        <FormField label="Kode" error={errors.code}>
-          <Input value={form.code} onChange={set('code')} disabled={isEdit} placeholder="SUP-XXX" />
+        <FormField label={t('Kode')} error={errors.code}>
+          <Input value={form.code} onChange={set('code')} disabled={isEdit} placeholder={t('SUP-XXX')} />
         </FormField>
-        <FormField label="Nama" error={errors.name}>
+        <FormField label={t('Nama')} error={errors.name}>
           <Input value={form.name} onChange={set('name')} />
         </FormField>
-        <FormField label="Kontak">
-          <Input value={form.contact} onChange={set('contact')} placeholder="Telepon / email" />
+        <FormField label={t('Kontak')}>
+          <Input value={form.contact} onChange={set('contact')} placeholder={t('Telepon / email')} />
         </FormField>
-        <FormField label="Termin pembayaran (hari)" error={errors.payment_term_days} hint="0 = tunai; 30 = Net 30">
+        <FormField label={t('Termin pembayaran (hari)')} error={errors.payment_term_days} hint={t('0 = tunai; 30 = Net 30')}>
           <Input type="number" min="0" max="365" step="1" value={form.payment_term_days} onChange={set('payment_term_days')} />
         </FormField>
         {isEdit && (

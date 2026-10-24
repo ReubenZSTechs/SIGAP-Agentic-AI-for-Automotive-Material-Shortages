@@ -4,6 +4,8 @@ import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import { scheduleService } from '../../services/scheduleService';
 import { toast } from '../../store/toastStore';
+import { t } from '../../i18n';
+import { currentLang } from '../../store/settingsStore';
 
 const inStale = (d, runs) => runs.some((r) => d >= r.date_from && d <= r.date_to);
 
@@ -37,8 +39,8 @@ export default function ScheduleCalendar({ schedules, staleRuns, showCancelled, 
       plugins={[dayGridPlugin, interactionPlugin]} // tanpa timeGrid: jadwal hanya punya tanggal
       initialView="dayGridMonth"
       headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridDay,dayGridWeek,dayGridMonth' }}
-      buttonText={{ today: 'Hari ini', day: 'Harian', week: 'Mingguan', month: 'Bulanan' }}
-      locale="id" firstDay={1} height="auto" dayMaxEvents={4}
+      buttonText={{ today: t('Hari ini'), day: t('Harian'), week: t('Mingguan'), month: t('Bulanan') }}
+      locale={currentLang() === 'en' ? 'en' : 'id'} firstDay={1} height="auto" dayMaxEvents={4}
       events={events}
       eventDurationEditable={false}
       eventDrop={onDrop}

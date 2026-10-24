@@ -5,6 +5,7 @@ import Input, { Textarea } from '../../components/common/Input';
 import Modal from '../../components/common/Modal';
 import { purchaseOrderService } from '../../services/purchaseOrderService';
 import { toast } from '../../store/toastStore';
+import { t } from '../../i18n';
 
 const KEY = 'approverName';
 const read = () => { try { return localStorage.getItem(KEY) ?? ''; } catch { return ''; } };
@@ -33,19 +34,19 @@ export default function ApprovalDialog({ open, mode, po, onClose, onDone }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={isReject ? `Tolak ${po?.po_number}` : `Setujui ${po?.po_number}`}
+    <Modal open={open} onClose={onClose} title={isReject ? t('Tolak {po}', { po: po?.po_number }) : t('Setujui {po}', { po: po?.po_number })}
       footer={(
         <>
-          <Button variant="secondary" onClick={onClose}>Batal</Button>
+          <Button variant="secondary" onClick={onClose}>{t('Batal')}</Button>
           <Button variant={isReject ? 'danger' : 'primary'} loading={busy} onClick={submit}>
             {isReject ? 'Reject' : 'Approve'}
           </Button>
         </>
       )}>
       <div className="space-y-3">
-        <FormField label="Nama approver"><Input value={name} onChange={(e) => setName(e.target.value)} /></FormField>
+        <FormField label={t('Nama approver')}><Input value={name} onChange={(e) => setName(e.target.value)} /></FormField>
         {isReject && (
-          <FormField label="Alasan penolakan"><Textarea value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} /></FormField>
+          <FormField label={t('Alasan penolakan')}><Textarea value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} /></FormField>
         )}
       </div>
     </Modal>

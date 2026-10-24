@@ -10,6 +10,7 @@ import SourcingPanel from '../features/procurement/SourcingPanel';
 import PoGeneratePanel from '../features/procurement/PoGeneratePanel';
 import { usePlanningStore } from '../store/planningStore';
 import { formatDate } from '../utils/formatters';
+import { t } from '../i18n';
 
 // Halaman kerja utama Phase 2–4: Hasil Planning · Sourcing · Purchase Order
 export default function PlanningRunPage() {
@@ -21,8 +22,8 @@ export default function PlanningRunPage() {
   useEffect(() => { setTab('result'); loadRun(runId); }, [runId, loadRun]);
 
   if (error?.status === 404) {
-    return <EmptyState title="Data tidak ditemukan" description={`Planning run #${runId} tidak ada.`}
-      action={<Link className="text-indigo-700 underline" to="/mps">Kembali ke MPS</Link>} />;
+    return <EmptyState title={t('Data tidak ditemukan')} description={t('Planning run #{id} tidak ada.', { id: runId })}
+      action={<Link className="text-indigo-700 underline" to="/mps">{t('Kembali ke MPS')}</Link>} />;
   }
   if (busy || !run) return <Spinner />;
 

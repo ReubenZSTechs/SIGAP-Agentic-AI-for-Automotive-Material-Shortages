@@ -11,6 +11,7 @@ import useFetch from '../hooks/useFetch';
 import { productService } from '../services/productService';
 import { useMasterStore } from '../store/masterStore';
 import { toast } from '../store/toastStore';
+import { t } from '../i18n';
 
 // Master Produk Final: barang jadi yang dijual ke customer.
 export default function ProductsPage() {
@@ -21,7 +22,7 @@ export default function ProductsPage() {
   const [busy, setBusy] = useState(false);
   const { ensureLoaded, invalidate } = useMasterStore();
 
-  useEffect(() => { const t = setTimeout(() => setQ(qInput), 300); return () => clearTimeout(t); }, [qInput]);
+  useEffect(() => { const item = setTimeout(() => setQ(qInput), 300); return () => clearTimeout(item); }, [qInput]);
   const { data, loading, error, reload } = useFetch(
     () => productService.list({ q: q || undefined, limit: 500 }), [q]);
 
@@ -34,20 +35,19 @@ export default function ProductsPage() {
       toast.success('Produk dihapus');
       afterChange();
     } catch (e) {
-      toast.error(e.status === 409 ? 'Produk masih dipakai (BOM/jadwal/planning) — nonaktifkan lewat Edit.' : e.message);
+      toast.error(e.status === 409 ? t('Produk masih dipakai (BOM/jadwal/planning) — nonaktifkan lewat Edit.') : e.message);
     } finally { setBusy(false); setDeleting(null); }
   };
 
   return (
     <>
-      <PageHeader title="Produk Final" subtitle="Master Data — barang jadi yang siap dijual ke customer"
-        actions={<Button onClick={() => setForm({ open: true, product: null })}><Icon name="plus" /> Tambah Produk</Button>} />
+      <PageHeader title={t('Produk Final')} subtitle={t('Master Data — barang jadi yang siap dijual ke customer')}
+        actions={<Button onClick={() => setForm({ open: true, product: null })}><Icon name="plus" /> {t('Tambah Produk')}</Button>} />
       <p className="mb-3 text-sm text-slate-500">
-        Struktur produk (sub-part dan material pendukung) disusun di menu <b>BOM</b>. Produk yang sudah
-        memiliki BOM dapat dijadwalkan di <b>MPS & Planning</b>.
+        {t('Struktur produk (sub-part dan material pendukung) disusun di menu BOM. Produk yang sudah memiliki BOM dapat dijadwalkan di MPS & Planning.')}
       </p>
       <div className="mb-3">
-        <Input className="max-w-xs" placeholder="Cari SKU / nama produk…" value={qInput}
+        <Input className="max-w-xs" placeholder={t('Cari SKU / nama produk…')} value={qInput}
                onChange={(e) => setQInput(e.target.value)} />
       </div>
       <Card padded={false}>
@@ -60,7 +60,7 @@ export default function ProductsPage() {
         onClose={() => setForm({ open: false, product: null })}
         onSaved={() => { setForm({ open: false, product: null }); afterChange(); }} />
       <ConfirmDialog open={!!deleting} loading={busy}
-        message={`Hapus produk ${deleting?.sku} · ${deleting?.name}?`}
+        message={t('Hapus produk {name}?', { name: `${deleting?.sku} · ${deleting?.name}` })}
         onConfirm={remove} onCancel={() => setDeleting(null)} />
     </>
   );

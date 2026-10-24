@@ -10,7 +10,7 @@ from tests import chat_fakes as F
 
 
 def _service(script: dict):
-    base = {"PromptRewriterOutput": F.REWRITE, "RouterOutput": F.ROUTE_MASTER}
+    base = {"PromptRewriterOutput": {**F.REWRITE, "language": "id"}, "RouterOutput": F.ROUTE_MASTER}   # teks Indonesia
     agents, fake, registry = F.fake_agents({**base, **script})
     graph = build_graph(agents, registry.chatbot, checkpointer=InMemorySaver(), automation_cfg=registry.automation)
     return ChatService(graph), fake

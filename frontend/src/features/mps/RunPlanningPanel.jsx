@@ -7,6 +7,7 @@ import Input from '../../components/common/Input';
 import { planningService } from '../../services/planningService';
 import { toast } from '../../store/toastStore';
 import { todayISO } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 // Default rentang = jadwal PLANNED paling awal s.d. paling akhir (bisa diubah user).
 export default function RunPlanningPanel({ schedules, prefill }) {
@@ -32,23 +33,23 @@ export default function RunPlanningPanel({ schedules, prefill }) {
     setRunning(true);
     try {
       const res = await planningService.createRun({ date_from: from, date_to: to });
-      toast.success(`Planning run #${res.id} dibuat`);
+      toast.success(t('Planning run #{id} dibuat', { id: res.id }));
       navigate(`/planning/${res.id}`);
     } catch (e) { toast.error(e.message); } finally { setRunning(false); } // 400 tanpa jadwal / 422 BOM tak lengkap
   };
 
   return (
-    <Card title="Jalankan Stock Planning">
+    <Card title={t('Jalankan Stock Planning')}>
       <div className="flex flex-wrap items-end gap-3">
-        <label className="text-sm font-medium text-slate-700">Dari
+        <label className="text-sm font-medium text-slate-700">{t('Dari')}
           <Input type="date" className="mt-1" value={from}
                  onChange={(e) => { touched.current = true; setFrom(e.target.value); }} />
         </label>
-        <label className="text-sm font-medium text-slate-700">Sampai
+        <label className="text-sm font-medium text-slate-700">{t('Sampai')}
           <Input type="date" className="mt-1" value={to}
                  onChange={(e) => { touched.current = true; setTo(e.target.value); }} />
         </label>
-        <Button loading={running} onClick={run}><Icon name="play" /> Jalankan Planning</Button>
+        <Button loading={running} onClick={run}><Icon name="play" /> {t('Jalankan Planning')}</Button>
       </div>
     </Card>
   );

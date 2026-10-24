@@ -91,7 +91,8 @@ def test_resolve_materials_is_fuzzy(db, seeded):
 def test_every_curated_tool_runs_on_seed(tool, client, seeded):
     _schedule_two_days(client, seeded["BIKE"])
     args = {"get_material_suppliers": {"material": "Ban Luar Karet"}, "find_materials": {"query": "ban"},
-            "get_bom": {"product": "Sepeda Gunung", "qty": 50}}.get(tool, {})
+            "get_bom": {"product": "Sepeda Gunung", "qty": 50},
+            "estimate_production_profit": {"product": "Sepeda Gunung", "qty": 10}}.get(tool, {})
     ev = run_curated(tool, args, "", "E1", 200)
     assert ev["error"] is None
     assert ev["row_count"] > 0 or tool in ("get_open_purchase_orders", "get_po_supplier_status")   # seed tanpa PO

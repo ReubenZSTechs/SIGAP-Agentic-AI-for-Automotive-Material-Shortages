@@ -79,7 +79,23 @@ _LABELS = {
            "qty_remaining": "Sisa", "line_total": "Total Baris", "product_name": "Produk",
            "production_date": "Tanggal Produksi", "target_qty": "Target", "batch_code": "Batch",
            "gross_requirement": "Kebutuhan Kotor", "qty_per_parent": "Qty per Induk",
-           "required_qty": "Qty Dibutuhkan", "level": "Level"},
+           "required_qty": "Qty Dibutuhkan", "level": "Level", "parent_name": "Induk", "order_qty": "Qty Beli", "cost": "Biaya",
+           "total_cost": "Total Biaya", "difference_vs_cheapest": "Selisih vs Termurah",
+           "arrival_date": "Perkiraan Tiba", "late": "Terlambat", "payment_term_days": "Termin (hari)",
+           "is_preferred": "Utama", "selling_price": "Harga Jual", "bom_item_count": "Komponen BOM",
+           "is_active": "Aktif", "specification": "Spesifikasi", "supplier_count": "Jumlah Supplier",
+           "cheapest_supplier": "Supplier Termurah", "cheapest_cost": "Biaya Termurah",
+           "most_expensive_supplier": "Supplier Termahal", "most_expensive_cost": "Biaya Termahal",
+           "cost_difference": "Selisih Biaya"},
+    "en": {"sku": "SKU", "name": "Name", "material_name": "Material", "supplier_name": "Supplier",
+           "required_qty": "Required Qty", "order_qty": "Order Qty", "unit_price": "Unit Price", "cost": "Cost",
+           "total_cost": "Total Cost", "difference_vs_cheapest": "Diff. vs Cheapest", "arrival_date": "Arrival",
+           "lead_time_days": "Lead Time (days)", "late": "Late", "cheapest_supplier": "Cheapest Supplier",
+           "cheapest_cost": "Cheapest Cost", "most_expensive_supplier": "Most Expensive Supplier",
+           "most_expensive_cost": "Most Expensive Cost", "cost_difference": "Cost Difference",
+           "payment_term_days": "Payment Term (days)", "is_preferred": "Preferred", "uom": "Unit",
+           "on_hand": "On Hand", "available": "Available", "safety_stock": "Safety Stock", "status": "Status",
+           "parent_name": "Parent", "selling_price": "Selling Price", "bom_item_count": "BOM Items"},
 }
 
 
@@ -100,10 +116,27 @@ def _cell(value: Any, language: str) -> str:
     return str(value)
 
 
+# Code column -> the name column that replaces it in chat tables (users read names, not SKU/supplier codes).
+_CODE_TO_NAME = {"sku": "name", "material_sku": "material_name", "supplier_code": "supplier_name",
+                 "parent_sku": "parent_name"}
+
+
+def names_instead_of_codes(cols: list[str], available: list[str]) -> list[str]:
+    """Drops a code column when its name column is available, and puts the name where the code was."""
+    out = []
+    for c in cols:
+        if c in _CODE_TO_NAME and _CODE_TO_NAME[c] in available:
+            c = _CODE_TO_NAME[c]
+        if c not in out:
+            out.append(c)
+    return out
+
+
 def render_table(ev: Evidence, columns: list[str] | None, language: str,
                  title: str | None = None) -> dict:
     """Frontend table block built from real evidence rows (never from model text)."""
     cols = [c for c in (columns or ev["columns"]) if c in ev["columns"]] or ev["columns"]
+    cols = names_instead_of_codes(cols, ev["columns"])
     block = {"type": "table", "columns": [_label(c, language) for c in cols],
              "rows": [[_cell(r.get(c), language) for c in cols] for r in ev["rows"]],
              "evidence_id": ev["id"]}

@@ -5,6 +5,7 @@ import FormField from '../../components/common/FormField';
 import Input, { Textarea } from '../../components/common/Input';
 import { productService } from '../../services/productService';
 import { toast } from '../../store/toastStore';
+import { t } from '../../i18n';
 
 const EMPTY = { sku: '', name: '', uom: 'Unit', selling_price: '', specification: '', is_active: true };
 
@@ -56,26 +57,26 @@ export default function ProductFormModal({ open, product, onClose, onSaved }) {
     <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Produk Final' : 'Tambah Produk Final'}
       footer={(
         <>
-          <Button variant="secondary" onClick={onClose}>Batal</Button>
-          <Button loading={saving} onClick={submit}>Simpan</Button>
+          <Button variant="secondary" onClick={onClose}>{t('Batal')}</Button>
+          <Button loading={saving} onClick={submit}>{t('Simpan')}</Button>
         </>
       )}>
       <div className="space-y-3">
-        <FormField label="SKU / Kode Produk" error={errors.sku}>
-          <Input value={form.sku} onChange={set('sku')} disabled={isEdit} placeholder="FG-XXX-01" />
+        <FormField label={t('SKU / Kode Produk')} error={errors.sku}>
+          <Input value={form.sku} onChange={set('sku')} disabled={isEdit} placeholder={t('FG-XXX-01')} />
         </FormField>
-        <FormField label="Nama Produk" error={errors.name}>
+        <FormField label={t('Nama Produk')} error={errors.name}>
           <Input value={form.name} onChange={set('name')} />
         </FormField>
         <div className="grid grid-cols-2 gap-3">
-          <FormField label="Satuan" error={errors.uom}>
+          <FormField label={t('Satuan')} error={errors.uom}>
             <Input value={form.uom} onChange={set('uom')} />
           </FormField>
-          <FormField label="Harga Jual (Rp)" error={errors.selling_price}>
+          <FormField label={t('Harga Jual (Rp)')} error={errors.selling_price}>
             <Input type="number" min="0" step="1" value={form.selling_price} onChange={set('selling_price')} />
           </FormField>
         </div>
-        <FormField label="Spesifikasi" hint="Opsional — maks. 500 karakter.">
+        <FormField label={t('Spesifikasi')} hint={t('Opsional — maks. 500 karakter.')}>
           <Textarea value={form.specification} onChange={set('specification')} maxLength={500} />
         </FormField>
         {isEdit && (

@@ -3,6 +3,7 @@ import DataTable from '../../components/common/DataTable';
 import useFetch from '../../hooks/useFetch';
 import { inventoryService } from '../../services/inventoryService';
 import { formatDateTime, formatQty } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 // Riwayat penerimaan stok milik PO ini (dari GET /stock-movements).
 export default function PoMovementHistory({ po }) {
@@ -19,8 +20,8 @@ export default function PoMovementHistory({ po }) {
     { key: 'qty', header: 'Qty Masuk', align: 'right', render: (m) => `+${formatQty(m.qty)}` },
   ];
   return (
-    <Card title="Riwayat Penerimaan" padded={false}>
-      <DataTable columns={columns} rows={data} loading={loading} emptyText="Belum ada penerimaan" />
+    <Card title={t('Riwayat Penerimaan')} padded={false}>
+      <DataTable columns={columns} rows={data} loading={loading} emptyText={t('Belum ada penerimaan')} />
     </Card>
   );
 }

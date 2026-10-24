@@ -5,6 +5,7 @@ import DataTable from '../../components/common/DataTable';
 import Input from '../../components/common/Input';
 import { bomService } from '../../services/bomService';
 import { formatQty } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 export default function ExplosionTable({ productId }) {
   const [qty, setQty] = useState('50');
@@ -28,13 +29,13 @@ export default function ExplosionTable({ productId }) {
   ];
 
   return (
-    <Card title="Eksplosi BOM (kebutuhan kotor material BUY)">
+    <Card title={t('Eksplosi BOM (kebutuhan kotor material BUY)')}>
       <div className="mb-3 flex items-end gap-2">
-        <label className="text-sm font-medium text-slate-700">Jumlah produk
+        <label className="text-sm font-medium text-slate-700">{t('Jumlah produk')}
           <Input type="number" min="1" className="mt-1 w-32" value={qty} onChange={(e) => setQty(e.target.value)}
                  onKeyDown={(e) => e.key === 'Enter' && compute()} />
         </label>
-        <Button loading={loading} onClick={compute}>Hitung</Button>
+        <Button loading={loading} onClick={compute}>{t('Hitung')}</Button>
       </div>
       {error && (
         <p className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{error}</p>

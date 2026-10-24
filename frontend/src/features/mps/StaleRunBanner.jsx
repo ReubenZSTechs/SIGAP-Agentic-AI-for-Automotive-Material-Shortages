@@ -1,6 +1,7 @@
 import Button from '../../components/common/Button';
 import Icon from '../../components/common/Icon';
 import { formatDate } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 // Tampil bila run TERBARU basi: jadwal / PO / stok berubah setelah run dibuat. Tidak dihitung ulang otomatis.
 export default function StaleRunBanner({ run, onRerun }) {
@@ -10,11 +11,10 @@ export default function StaleRunBanner({ run, onRerun }) {
       <span className="flex items-start gap-2.5">
         <Icon name="alert" className="mt-0.5 h-4 w-4 text-amber-600" />
         <span>
-          <b>Planning Run #{run.id}</b> ({formatDate(run.date_from)} – {formatDate(run.date_to)}) sudah basi —
-          jadwal, PO, atau stok berubah setelah run dibuat. Jalankan ulang agar angka defisit akurat.
+          <b>Planning Run #{run.id}</b> ({formatDate(run.date_from)} – {formatDate(run.date_to)}) {t('sudah basi — jadwal, PO, atau stok berubah setelah run dibuat. Jalankan ulang agar angka defisit akurat.')}
         </span>
       </span>
-      <Button size="sm" onClick={() => onRerun(run)}>Jalankan Ulang</Button>
+      <Button size="sm" onClick={() => onRerun(run)}>{t('Jalankan Ulang')}</Button>
     </div>
   );
 }

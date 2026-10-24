@@ -1,22 +1,23 @@
 import Icon from '../../../components/common/Icon';
 import { MISSION_STEPS } from '../meta';
+import { t } from '../../../i18n';
 
 // Stepper bernomor karena alurnya berurutan: Rencana > Kirim > Kumpulkan > Rangkum > Ajukan.
 export default function MissionStepper({ mission: m }) {
   const done = m.status === 'DONE';
   const sub = (i) => {
     const n = i + 1;
-    if (done || n < m.step) return 'selesai';
-    if (n > m.step) return 'menunggu';
-    if (n === 2) return 'antre / draf menunggu review';
-    if (n === 3) return `${m.replied} dari ${m.total} balas`;
-    if (n === 4) return 'Agent merangkum…';
-    return 'berjalan';
+    if (done || n < m.step) return t('selesai');
+    if (n > m.step) return t('menunggu');
+    if (n === 2) return t('antre / draf menunggu review');
+    if (n === 3) return t('{a} dari {b} balas', { a: m.replied, b: m.total });
+    if (n === 4) return t('Agent merangkum…');
+    return t('berjalan');
   };
   const cur = Math.min(m.step, MISSION_STEPS.length) - 1;
   return (
     <>
-      <ol className="grid grid-cols-5 gap-1 sm:gap-2" aria-label="Tahap misi">
+      <ol className="grid grid-cols-5 gap-1 sm:gap-2" aria-label={t('Tahap misi')}>
         {MISSION_STEPS.map((label, i) => {
           const n = i + 1;
           const state = done || n < m.step ? 'done' : n === m.step ? 'current' : 'todo';
@@ -36,7 +37,7 @@ export default function MissionStepper({ mission: m }) {
         })}
       </ol>
       <p className="mt-2 text-xs text-slate-600 sm:hidden">
-        {done ? 'Semua tahap selesai' : <>Tahap {cur + 1} dari 5: <b className="text-slate-900">{MISSION_STEPS[cur]}</b> · <span className="text-primary-700">{sub(cur)}</span></>}
+        {done ? t('Semua tahap selesai') : <>{t('Tahap {n} dari 5:', { n: cur + 1 })} <b className="text-slate-900">{t(MISSION_STEPS[cur])}</b> · <span className="text-primary-700">{sub(cur)}</span></>}
       </p>
     </>
   );

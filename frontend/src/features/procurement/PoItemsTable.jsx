@@ -1,6 +1,7 @@
 import Card from '../../components/common/Card';
 import DataTable from '../../components/common/DataTable';
 import { formatDate, formatQty, formatRupiah } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 export default function PoItemsTable({ items }) {
   const columns = [
@@ -12,5 +13,5 @@ export default function PoItemsTable({ items }) {
     { key: 'needed_by_date', header: 'Dibutuhkan', render: (i) => (i.needed_by_date ? formatDate(i.needed_by_date) : '—') },
     { key: 'qty_received', header: 'Diterima', align: 'right', render: (i) => formatQty(i.qty_received) },
   ];
-  return <Card title="Item PO" padded={false}><DataTable columns={columns} rows={items} /></Card>;
+  return <Card title={t('Item PO')} padded={false}><DataTable columns={columns} rows={items} /></Card>;
 }

@@ -2,6 +2,7 @@ import Icon from '../../components/common/Icon';
 import { useState } from 'react';
 import CategoryBadge from '../../components/common/CategoryBadge';
 import { formatQty } from '../../utils/formatters';
+import { t } from '../../i18n';
 
 export default function BomNode({ node, onAdd, onEdit, onDelete }) {
   const [open, setOpen] = useState(true);
@@ -28,9 +29,9 @@ export default function BomNode({ node, onAdd, onEdit, onDelete }) {
           </span>
         )}
         <span className={`flex gap-0.5 text-sm opacity-0 focus-within:opacity-100 group-hover:opacity-100 ${isRoot ? 'ml-auto' : ''}`}>
-          {isMake && <button onClick={() => onAdd(material, children)} aria-label="Tambah komponen" title="Tambah komponen" className="rounded-md p-1.5 text-slate-500 hover:bg-primary-100 hover:text-primary-700"><Icon name="plus" /></button>}
-          {!isRoot && <button onClick={() => onEdit(node)} aria-label="Ubah qty" title="Ubah qty" className="rounded-md p-1.5 text-slate-500 hover:bg-primary-100 hover:text-primary-700"><Icon name="edit" /></button>}
-          {!isRoot && <button onClick={() => onDelete(node)} aria-label="Hapus" title="Hapus" className="rounded-md p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600"><Icon name="trash" /></button>}
+          {isMake && <button onClick={() => onAdd(material, children)} aria-label={t('Tambah komponen')} title={t('Tambah komponen')} className="rounded-md p-1.5 text-slate-500 hover:bg-primary-100 hover:text-primary-700"><Icon name="plus" /></button>}
+          {!isRoot && <button onClick={() => onEdit(node)} aria-label={t('Ubah qty')} title={t('Ubah qty')} className="rounded-md p-1.5 text-slate-500 hover:bg-primary-100 hover:text-primary-700"><Icon name="edit" /></button>}
+          {!isRoot && <button onClick={() => onDelete(node)} aria-label={t('Hapus')} title={t('Hapus')} className="rounded-md p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600"><Icon name="trash" /></button>}
         </span>
       </div>
       {open && children.length > 0 && (

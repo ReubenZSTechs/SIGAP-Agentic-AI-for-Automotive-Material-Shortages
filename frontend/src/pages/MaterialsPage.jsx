@@ -12,6 +12,7 @@ import useFetch from '../hooks/useFetch';
 import { materialService } from '../services/materialService';
 import { useMasterStore } from '../store/masterStore';
 import { toast } from '../store/toastStore';
+import { t } from '../i18n';
 
 export default function MaterialsPage() {
   const [qInput, setQInput] = useState('');
@@ -23,7 +24,7 @@ export default function MaterialsPage() {
   const { ensureLoaded, invalidate } = useMasterStore();
 
   useEffect(() => { ensureLoaded(); }, [ensureLoaded]); // dropdown supplier untuk modal relasi
-  useEffect(() => { const t = setTimeout(() => setQ(qInput), 300); return () => clearTimeout(t); }, [qInput]);
+  useEffect(() => { const item = setTimeout(() => setQ(qInput), 300); return () => clearTimeout(item); }, [qInput]);
 
   const { data, loading, error, reload } = useFetch(
     () => materialService.list({ category: 'PURCHASED', q: q || undefined, limit: 500 }), [q]);
@@ -37,17 +38,17 @@ export default function MaterialsPage() {
       toast.success('Material dihapus');
       setDeleting(null); afterChange();
     } catch (e) {
-      toast.error(e.status === 409 ? 'Material masih dipakai BOM/PO/jadwal — nonaktifkan lewat Edit.' : e.message);
+      toast.error(e.status === 409 ? t('Material masih dipakai BOM/PO/jadwal — nonaktifkan lewat Edit.') : e.message);
       setDeleting(null);
     } finally { setBusy(false); }
   };
 
   return (
     <>
-      <PageHeader title="Material Beli" subtitle="Master Data — material yang dibeli dari supplier (purchased)"
-        actions={<Button onClick={() => setForm({ open: true, material: null })}><Icon name="plus" /> Tambah Material</Button>} />
+      <PageHeader title={t('Material Beli')} subtitle={t('Master Data — material yang dibeli dari supplier (purchased)')}
+        actions={<Button onClick={() => setForm({ open: true, material: null })}><Icon name="plus" /> {t('Tambah Material')}</Button>} />
       <div className="mb-3 flex flex-wrap gap-2">
-        <Input className="max-w-xs" placeholder="Cari SKU / nama…" value={qInput}
+        <Input className="max-w-xs" placeholder={t('Cari SKU / nama…')} value={qInput}
                onChange={(e) => setQInput(e.target.value)} />
       </div>
       <Card padded={false}>
@@ -64,7 +65,7 @@ export default function MaterialsPage() {
         onSaved={() => { setForm({ open: false, material: null }); afterChange(); }} />
       <MaterialSupplierModal open={!!supplierFor} material={supplierFor} onClose={() => setSupplierFor(null)} />
       <ConfirmDialog open={!!deleting} loading={busy}
-        message={`Hapus material ${deleting?.sku} · ${deleting?.name}?`}
+        message={t('Hapus material {name}?', { name: `${deleting?.sku} · ${deleting?.name}` })}
         onConfirm={remove} onCancel={() => setDeleting(null)} />
     </>
   );

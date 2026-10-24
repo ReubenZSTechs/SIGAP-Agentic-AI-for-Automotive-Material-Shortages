@@ -1,5 +1,6 @@
 import Icon from '../../components/common/Icon';
 import { RISK, isUrgent, timeLeft, typeMeta } from './meta';
+import { t } from '../../i18n';
 
 const DOT = { LOW: 'bg-slate-400', MEDIUM: 'bg-amber-500', HIGH: 'bg-red-500' };
 
@@ -15,10 +16,10 @@ export default function ApprovalList({ items, selectedId, onSelect, emptyText })
               className={`block w-full border-l-[3px] px-4 py-3 text-left transition-colors ${active ? 'border-l-primary-600 bg-primary-50' : 'border-l-transparent hover:bg-slate-50'}`}>
               <span className="flex items-center gap-2 text-xs text-slate-500">
                 <span className="font-medium text-slate-700">{typeMeta(it.type).label}</span>
-                <span className="inline-flex items-center gap-1.5"><i className={`h-2 w-2 rounded-full ${DOT[it.risk]}`} />{RISK[it.risk].label}</span>
-                {it.stale && it.status === 'PENDING' && <span className="font-medium text-amber-700">Basi</span>}
+                <span className="inline-flex items-center gap-1.5"><i className={`h-2 w-2 rounded-full ${DOT[it.risk]}`} />{t(RISK[it.risk].label)}</span>
+                {it.stale && it.status === 'PENDING' && <span className="font-medium text-amber-700">{t('Basi')}</span>}
               </span>
-              <span className="mt-1 block text-sm font-semibold text-slate-900">{it.title}</span>
+              <span className="mt-1 block text-sm font-semibold text-slate-900">{t(it.title)}</span>
               <span className="mt-0.5 flex items-center justify-between gap-2 text-xs text-slate-500">
                 <span className="truncate">{it.supplier.name}</span>
                 {it.status === 'PENDING' && (

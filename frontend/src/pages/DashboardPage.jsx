@@ -9,6 +9,7 @@ import { inventoryService } from '../services/inventoryService';
 import { purchaseOrderService } from '../services/purchaseOrderService';
 import { useMasterStore } from '../store/masterStore';
 import { OPEN_PO_STATUSES } from '../utils/constants';
+import { t } from '../i18n';
 
 /* -------------------------------------------------------------------------- */
 /*  Konfigurasi                                                               */
@@ -24,16 +25,16 @@ const QUICK_ACTIONS = [
   'Daftarkan supplier baru',
 ];
 
-const GREETING = {
+const greeting = () => ({
   id: 'm0',
   role: 'agent',
   blocks: [
     {
       type: 'text',
-      text: 'Halo, saya Agent MRP. Tanyakan ringkasan stok, item critical, supplier per material, BOM, jadwal produksi, hasil planning, atau PO terbuka; setiap jawaban diverifikasi terhadap database. Saya juga bisa membuat, mengubah, atau menghapus Purchase Order (mis. "Buat PO 50 Ban Luar Karet") — selalu dengan konfirmasi Anda dulu, lalu supplier dihubungi via Telegram — serta menambah produk final, material beli, dan supplier baru lewat formulir di chat.',
+      text: t('Halo, saya Agent MRP. Tanyakan ringkasan stok, item critical, supplier per material, BOM, jadwal produksi, hasil planning, atau PO terbuka; setiap jawaban diverifikasi terhadap database. Saya juga bisa membuat, mengubah, atau menghapus Purchase Order (mis. "Buat PO 50 Ban Luar Karet") — selalu dengan konfirmasi Anda dulu, lalu supplier dihubungi via Telegram — serta menambah produk final, material beli, dan supplier baru lewat formulir di chat.'),
     },
   ],
-};
+});
 
 const TOOL_LABELS = {
   get_stock_summary: 'Ringkasan stok',
@@ -45,6 +46,7 @@ const TOOL_LABELS = {
   get_latest_planning_run: 'Planning terakhir',
   get_bom: 'BOM',
   list_products: 'Produk final',
+  estimate_production_profit: 'Estimasi keuntungan',
   get_production_schedules: 'Jadwal produksi',
   get_po_supplier_status: 'Konfirmasi supplier',
   query_database: 'Query database',
@@ -75,7 +77,7 @@ function AgentBadge({ busy }) {
         {busy && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75 motion-reduce:animate-none" />}
         <span className={`relative inline-flex h-2 w-2 rounded-full ${busy ? 'bg-indigo-600' : 'bg-emerald-500'}`} />
       </span>
-      {busy ? 'Agent bekerja' : 'Agent aktif'}
+      {busy ? t('Agent bekerja') : t('Agent aktif')}
     </div>
   );
 }
@@ -135,16 +137,16 @@ function ActionCard({ action, onResolve, busy }) {
   const danger = action.kind === 'delete';
   return (
     <div className={`my-2 rounded-xl border border-l-4 p-4 ${danger ? 'border-red-200 border-l-red-600 bg-red-50/60' : 'border-primary-200 border-l-primary-600 bg-primary-50/70'}`}>
-      <div className="text-sm font-medium text-slate-900">{action.title}</div>
-      <p className="mt-0.5 text-xs text-slate-600">{action.detail}</p>
-      {action.tables?.map((t, i) => (
-        <DataTable key={i} columns={t.columns} rows={t.rows} title={t.title} />
+      <div className="text-sm font-medium text-slate-900">{t(action.title)}</div>
+      <p className="mt-0.5 text-xs text-slate-600">{t(action.detail)}</p>
+      {action.tables?.map((item, i) => (
+        <DataTable key={i} columns={item.columns} rows={item.rows} title={t(item.title)} />
       ))}
       {action.warnings?.map((w) => <Notice key={w} text={w} />)}
       {done ? (
         <p className={`mt-2 inline-flex items-center gap-1 text-xs font-medium ${st?.tone ?? 'text-slate-500'}`}>
           <CommonIcon name={st?.icon ?? 'info'} className="h-3.5 w-3.5" />
-          {st?.label ?? action.status}
+          {t(st?.label ?? action.status)}
         </p>
       ) : (
         <div className="mt-3 flex gap-2">
@@ -154,7 +156,7 @@ function ActionCard({ action, onResolve, busy }) {
             onClick={() => onResolve(action.id, 'approve')}
             className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white shadow-sm disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${danger ? 'bg-red-600 hover:bg-red-700 focus-visible:outline-red-600' : 'bg-primary-600 hover:bg-primary-700 focus-visible:outline-indigo-600'}`}
           >
-            {action.approveLabel}
+            {t(action.approveLabel)}
           </button>
           <button
             type="button"
@@ -162,7 +164,7 @@ function ActionCard({ action, onResolve, busy }) {
             onClick={() => onResolve(action.id, 'reject')}
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
           >
-            Batal
+            {t('Batal')}
           </button>
         </div>
       )}
@@ -181,7 +183,7 @@ function Options({ options, onPick, disabled }) {
           onClick={() => onPick(o.value)}
           className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
         >
-          {o.label}
+          {t(o.label)}
         </button>
       ))}
     </div>
@@ -206,7 +208,7 @@ function ConfidenceBadge({ meta }) {
   return (
     <span title={title} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${tone}`}>
       {meta.passed && <CommonIcon name="check" className="h-3 w-3" />}
-      {meta.passed ? 'Terverifikasi' : 'Belum terverifikasi'} · skor {meta.score.toFixed(2)}
+      {meta.passed ? t('Terverifikasi') : t('Belum terverifikasi')} · {t('skor')} {meta.score.toFixed(2)}
     </span>
   );
 }
@@ -217,12 +219,12 @@ function Sources({ sources }) {
     <details className="group text-xs text-slate-500">
       <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded px-1 hover:text-slate-700">
         <CommonIcon name="chevronDown" className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
-        Sumber data ({sources.length})
+        {t('Sumber data ({n})', { n: sources.length })}
       </summary>
       <ul className="mt-1.5 space-y-1.5">
         {sources.map((s) => (
           <li key={s.id} className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
-            <span className="font-medium text-slate-700">[{s.id}] {TOOL_LABELS[s.tool] ?? s.tool}</span>
+            <span className="font-medium text-slate-700">[{s.id}] {t(TOOL_LABELS[s.tool] ?? s.tool)}</span>
             {Object.keys(s.args ?? {}).length > 0 && <span> · {Object.entries(s.args).map(([k, v]) => `${k}: ${v}`).join(', ')}</span>}
             <span> · {s.row_count} baris</span>
             {s.error && <span className="text-red-600"> · {s.error}</span>}
@@ -246,12 +248,12 @@ function Message({ msg, actions, onResolve, onPick, onSubmitForm, onCancelForm, 
       <div className={`max-w-[85%] text-sm leading-relaxed ${isUser ? 'rounded-2xl rounded-br-md bg-primary-700 px-4 py-2.5 text-white' : 'min-w-0 text-slate-800'}`}>
         {msg.blocks.map((b, i) => {
           if (b.type === 'text') return <p key={i} className="whitespace-pre-wrap py-0.5">{b.text}</p>;
-          if (b.type === 'table') return <DataTable key={i} columns={b.columns} rows={b.rows} title={b.title} />;
+          if (b.type === 'table') return <DataTable key={i} columns={b.columns} rows={b.rows} title={t(b.title)} />;
           if (b.type === 'notice') return <Notice key={i} text={b.text} />;
           if (b.type === 'action') return <ActionCard key={i} action={actions[b.actionId]} onResolve={onResolve} busy={busy} />;
           if (b.type === 'options') return <Options key={i} options={b.options} onPick={onPick} disabled={busy || !isLast} />;
           if (b.type === 'form') return <ChatForm key={i} block={b} editable={isLast && !busy} onSubmit={onSubmitForm} onCancel={onCancelForm} />;
-          if (b.type === 'link') return <PageLink key={i} to={b.to} label={b.label} />;
+          if (b.type === 'link') return <PageLink key={i} to={b.to} label={t(b.label)} />;
           return null;
         })}
         {!isUser && msg.meta && (
@@ -267,7 +269,7 @@ function Message({ msg, actions, onResolve, onPick, onSubmitForm, onCancelForm, 
 
 function Progress({ steps }) {
   return (
-    <div className="flex gap-3" role="status" aria-label="Agent sedang bekerja">
+    <div className="flex gap-3" role="status" aria-label={t('Agent sedang bekerja')}>
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-900 text-white" aria-hidden="true"><CommonIcon name="spark" className="h-4 w-4" /></div>
       <ol className="space-y-1 pt-1.5 text-xs text-slate-500">
         {steps.length === 0 && (
@@ -284,8 +286,8 @@ function Progress({ steps }) {
               {active
                 ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600 motion-reduce:animate-none" />
                 : <CommonIcon name="check" className="h-3.5 w-3.5 text-emerald-600" />}
-              {s.label}
-              {s.tool && <span className="text-slate-400">· {TOOL_LABELS[s.tool] ?? s.tool}</span>}
+              {t(s.label)}
+              {s.tool && <span className="text-slate-400">· {t(TOOL_LABELS[s.tool] ?? s.tool)}</span>}
               {s.score != null && <span className={s.passed ? 'text-emerald-700' : 'text-amber-700'}>· skor {s.score.toFixed(2)}</span>}
             </li>
           );
@@ -307,7 +309,7 @@ function Composer({ onSend, busy }) {
   return (
     <div className="border-t border-slate-200 bg-slate-50/60 p-4">
       <div className="mb-3 flex flex-wrap gap-2">
-        {QUICK_ACTIONS.map((q) => (
+        {QUICK_ACTIONS.map((q) => t(q)).map((q) => (   // dikirim dalam bahasa yang dipilih
           <button
             key={q}
             type="button"
@@ -329,12 +331,12 @@ function Composer({ onSend, busy }) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
           }}
-          placeholder="Tanyakan data MRP, minta ubah PO, atau tambah produk/material/supplier baru"
+          placeholder={t('Tanyakan data MRP, minta ubah PO, atau tambah produk/material/supplier baru')}
           className="max-h-32 min-h-[2.25rem] flex-1 resize-none bg-transparent px-1 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
         />
         <button
           type="button"
-          aria-label="Kirim"
+          aria-label={t('Kirim')}
           onClick={submit}
           disabled={busy || !text.trim()}
           className="rounded-lg bg-primary-600 p-2 text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-slate-300"
@@ -342,7 +344,7 @@ function Composer({ onSend, busy }) {
           <CommonIcon name="send" className="h-5 w-5" />
         </button>
       </div>
-      <p className="mt-1.5 text-xs text-slate-400">Enter untuk kirim, Shift+Enter untuk baris baru.</p>
+      <p className="mt-1.5 text-xs text-slate-400">{t('Enter untuk kirim, Shift+Enter untuk baris baru.')}</p>
     </div>
   );
 }
@@ -358,7 +360,7 @@ export default function AgenticMrpPage() {
   const openPo = pos.data?.filter((p) => OPEN_PO_STATUSES.includes(p.status)).length;
 
   const [threadId, setThreadId] = useState(() => chatService.threadId());
-  const [messages, setMessages] = useState([GREETING]);
+  const [messages, setMessages] = useState(() => [greeting()]);
   const [actions, setActions] = useState({});
   const [busy, setBusy] = useState(false);
   const [steps, setSteps] = useState([]);
@@ -371,12 +373,12 @@ export default function AgenticMrpPage() {
 
   useEffect(() => {
     let alive = true;
-    setMessages([GREETING]);
+    setMessages([greeting()]);
     chatService
       .history(threadId)
       .then((res) => {
         if (alive && res.messages?.length) {
-          setMessages([GREETING, ...res.messages.map((m) => ({ id: nextId('h'), ...m }))]);
+          setMessages([greeting(), ...res.messages.map((m) => ({ id: nextId('h'), ...m }))]);
         }
         if (alive && res.actions) setActions(res.actions);
       })
@@ -418,11 +420,11 @@ export default function AgenticMrpPage() {
           useMasterStore.getState().invalidate();
         }
       } else {
-        push({ role: 'agent', blocks: [{ type: 'text', text: res.message ?? 'Agent gagal merespons. Coba kirim ulang.' }] });
+        push({ role: 'agent', blocks: [{ type: 'text', text: res.message ?? t('Agent gagal merespons. Coba kirim ulang.') }] });
       }
     } catch (e) {
       if (e?.name !== 'AbortError') {
-        push({ role: 'agent', blocks: [{ type: 'text', text: `Agent gagal merespons: ${e.message}` }] });
+        push({ role: 'agent', blocks: [{ type: 'text', text: t('Agent gagal merespons: {msg}', { msg: e.message }) }] });
       }
     } finally {
       setBusy(false);
@@ -447,7 +449,7 @@ export default function AgenticMrpPage() {
 
   const handleSubmitForm = async (formId, values, title) => {
     if (busy) return;
-    push({ role: 'user', blocks: [{ type: 'text', text: `Formulir ${title.toLowerCase()} dikirim.` }] });
+    push({ role: 'user', blocks: [{ type: 'text', text: t('Formulir {title} dikirim.', { title: title.toLowerCase() }) }] });
     await runTurn({ resume: { actionId: formId, decision: 'submit', values } });
   };
 
@@ -463,7 +465,7 @@ export default function AgenticMrpPage() {
 
   return (
     <>
-      <PageHeader title="Agentic MRP Assistant" />
+      <PageHeader title={t('Agentic MRP Assistant')} />
 
       {(inv.error || pos.error) && (
         <p className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -475,22 +477,22 @@ export default function AgenticMrpPage() {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <AgentBadge busy={busy} />
         <span className="mx-1 hidden h-6 w-px bg-slate-200 sm:block" aria-hidden="true" />
-        <MiniStat label="Stok Critical" value={count('CRITICAL')} to="/inventory" tone="border-red-200 bg-red-50 text-red-700" />
-        <MiniStat label="Stok Warning" value={count('WARNING')} to="/inventory" tone="border-amber-200 bg-amber-50 text-amber-800" />
-        <MiniStat label="PO Terbuka" value={openPo} to="/purchase-orders" tone="border-indigo-200 bg-indigo-50 text-indigo-700" />
+        <MiniStat label={t('Stok Critical')} value={count('CRITICAL')} to="/inventory" tone="border-red-200 bg-red-50 text-red-700" />
+        <MiniStat label={t('Stok Warning')} value={count('WARNING')} to="/inventory" tone="border-amber-200 bg-amber-50 text-amber-800" />
+        <MiniStat label={t('PO Terbuka')} value={openPo} to="/purchase-orders" tone="border-indigo-200 bg-indigo-50 text-indigo-700" />
         <button
           type="button"
           onClick={newConversation}
           className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
         >
           <CommonIcon name="plus" className="h-3.5 w-3.5" />
-          Percakapan baru
+          {t('Percakapan baru')}
         </button>
       </div>
 
       {/* Split view */}
       <div className="relative flex h-[calc(100vh-17rem)] min-h-[34rem] overflow-hidden rounded-2xl border border-slate-200 bg-white">
-        <section className="flex min-w-0 flex-1 flex-col" aria-label="Percakapan dengan Agent">
+        <section className="flex min-w-0 flex-1 flex-col" aria-label={t('Percakapan dengan Agent')}>
           <div className="flex-1 space-y-5 overflow-y-auto px-5 py-6" role="log" aria-live="polite">
             {messages.map((m, i) => (
               <Message

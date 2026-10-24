@@ -1,3 +1,4 @@
+import { t } from '../../i18n';
 // Helper kecil untuk formulir chat (produk / material / supplier baru).
 // Nilai form adalah objek bersarang; kolom dirujuk dengan path bertitik, mis. "components.0.qty".
 
@@ -39,13 +40,13 @@ export const ROWS_KEY = { product: 'components', material: 'suppliers', supplier
 export function checkRequired(entity, values) {
   const errors = {};
   const need = (path) => {
-    if (blank(getIn(values, path))) errors[path] = 'Wajib diisi';
+    if (blank(getIn(values, path))) errors[path] = t('Wajib diisi');
   };
   const needNumber = (path, { positive = false } = {}) => {
     need(path);
     const v = getIn(values, path);
     if (!blank(v) && (Number.isNaN(Number(v)) || Number(v) < 0 || (positive && Number(v) <= 0))) {
-      errors[path] = positive ? 'Harus lebih dari 0' : 'Harus angka ≥ 0';
+      errors[path] = positive ? t('Harus lebih dari 0') : t('Harus angka ≥ 0');
     }
   };
   const needNewMaterial = (base) => ['sku', 'name', 'uom'].forEach((k) => need(`${base}.${k}`));
@@ -64,11 +65,11 @@ export function checkRequired(entity, values) {
     const base = `${rowsKey}.${i}`;
     if (entity === 'material') {
       if (row.new_supplier) ['code', 'name'].forEach((k) => need(`${base}.new_supplier.${k}`));
-      else if (blank(row.supplier_id)) errors[`${base}.supplier_id`] = 'Pilih supplier';
+      else if (blank(row.supplier_id)) errors[`${base}.supplier_id`] = t('Pilih supplier');
     } else if (row.new_material) {
       needNewMaterial(`${base}.new_material`);
     } else if (blank(row.material_id)) {
-      errors[`${base}.material_id`] = 'Pilih material';
+      errors[`${base}.material_id`] = t('Pilih material');
     }
     if (entity === 'product') {
       needNumber(`${base}.qty`, { positive: true });

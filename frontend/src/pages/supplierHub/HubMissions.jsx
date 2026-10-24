@@ -14,6 +14,7 @@ import usePolling from '../../hooks/usePolling';
 import { hubService } from '../../services/hubService';
 import { useHubStore } from '../../store/hubStore';
 import { toast } from '../../store/toastStore';
+import { t } from '../../i18n';
 
 function MissionIndex() {
   const navigate = useNavigate();
@@ -33,22 +34,22 @@ function MissionIndex() {
       <Card padded={false}>
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3">
           <Tabs variant="segmented" value={view} onChange={setView} tabs={[{ id: 'ACTIVE', label: `Berjalan (${activeCount})` }, { id: 'DONE', label: 'Selesai' }]} />
-          <Button className="ml-auto" onClick={wizard.show}><Icon name="plus" /> Misi baru</Button>
+          <Button className="ml-auto" onClick={wizard.show}><Icon name="plus" /> {t('Misi baru')}</Button>
         </div>
         {error ? (
-          <div className="p-4"><p className="text-sm text-red-600">{error.message}</p><Button className="mt-3" variant="secondary" onClick={reload}>Coba lagi</Button></div>
+          <div className="p-4"><p className="text-sm text-red-600">{error.message}</p><Button className="mt-3" variant="secondary" onClick={reload}>{t('Coba lagi')}</Button></div>
         ) : loading && !data ? <Spinner /> : (
           <MissionList missions={rows} onOpen={(id) => navigate(`/supplier-hub/missions/${id}`)}
-            emptyText={view === 'ACTIVE' ? 'Tidak ada misi berjalan. Mulai misi baru untuk bertanya ke beberapa supplier sekaligus.' : 'Belum ada misi selesai'} />
+            emptyText={view === 'ACTIVE' ? t('Tidak ada misi berjalan. Mulai misi baru untuk bertanya ke beberapa supplier sekaligus.') : t('Belum ada misi selesai')} />
         )}
       </Card>
       <MissionWizard open={wizard.open} poId={poId} onClose={() => { wizard.hide(); if (poId) setParams({}, { replace: true }); }}
         onCreated={(ms) => {
           wizard.hide(); refreshStatus();
-          const sent = ms.targets.filter((t) => t.state === 'SENT').length;
-          const drafts = ms.targets.filter((t) => t.draft).length;
-          const queued = ms.targets.filter((t) => t.state === 'QUEUED' && !t.draft).length;
-          toast.success(`Misi #${ms.number} dimulai: ${sent} terkirim${drafts ? `, ${drafts} draf menunggu review` : ''}${queued ? `, ${queued} antre` : ''}`);
+          const sent = ms.targets.filter((item) => item.state === 'SENT').length;
+          const drafts = ms.targets.filter((item) => item.draft).length;
+          const queued = ms.targets.filter((item) => item.state === 'QUEUED' && !item.draft).length;
+          toast.success(t('Misi #{n} dimulai: {sent} terkirim', { n: ms.number, sent }) + (drafts ? `, ${t('{n} draf menunggu review', { n: drafts })}` : '') + (queued ? `, ${t('{n} antre', { n: queued })}` : ''));
           navigate(`/supplier-hub/missions/${ms.id}`);
         }} />
     </>

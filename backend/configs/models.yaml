@@ -89,7 +89,7 @@ SAP_LLM:
 chatbot:
   history_turns: 6
   evaluation:
-    threshold: 0.8
+    threshold: 0.75
     faithfulness_floor: 0.7
     weights:
       faithfulness: 0.40

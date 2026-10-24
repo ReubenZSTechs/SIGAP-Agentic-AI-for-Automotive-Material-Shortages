@@ -8,6 +8,7 @@ import useFetch from '../hooks/useFetch';
 import { purchaseOrderService } from '../services/purchaseOrderService';
 import { useMasterStore } from '../store/masterStore';
 import { toast } from '../store/toastStore';
+import { t } from '../i18n';
 
 // /purchase-orders/new  dan  /purchase-orders/:id/edit (Manual PO berstatus DRAFT / REJECTED)
 export default function ManualPoPage() {
@@ -20,13 +21,13 @@ export default function ManualPoPage() {
 
   if (!loaded || (id && po.loading)) return <Spinner />;
   if (id && (po.error || !po.data)) {
-    return <EmptyState title="Data tidak ditemukan" description={po.error?.message}
-      action={<Link className="text-indigo-700 underline" to="/purchase-orders">Kembali ke daftar PO</Link>} />;
+    return <EmptyState title={t('Data tidak ditemukan')} description={po.error?.message}
+      action={<Link className="text-indigo-700 underline" to="/purchase-orders">{t('Kembali ke daftar PO')}</Link>} />;
   }
   if (id && !(po.data.source === 'MANUAL' && ['DRAFT', 'REJECTED'].includes(po.data.status))) {
-    return <EmptyState title="PO ini tidak dapat diedit"
-      description="Hanya Manual PO berstatus Draft atau Ditolak yang dapat diedit."
-      action={<Link className="text-indigo-700 underline" to={`/purchase-orders/${id}`}>Lihat detail PO</Link>} />;
+    return <EmptyState title={t('PO ini tidak dapat diedit')}
+      description={t('Hanya Manual PO berstatus Draft atau Ditolak yang dapat diedit.')}
+      action={<Link className="text-indigo-700 underline" to={`/purchase-orders/${id}`}>{t('Lihat detail PO')}</Link>} />;
   }
 
   const save = async (payload, submit) => {
@@ -34,7 +35,7 @@ export default function ManualPoPage() {
     try {
       const saved = id ? await purchaseOrderService.update(id, payload) : await purchaseOrderService.createManual(payload);
       if (saved.warnings?.length) toast.info(`Perhatian: ${saved.warnings.join('; ')}`);
-      if (submit) { await purchaseOrderService.submit(saved.id); toast.success('PO disimpan & dikirim untuk approval'); }
+      if (submit) { await purchaseOrderService.submit(saved.id); toast.success(t('PO disimpan & dikirim untuk approval')); }
       else toast.success('Draft PO disimpan');
       navigate(`/purchase-orders/${saved.id}`);
     } catch (e) { toast.error(e.message); } finally { setSaving(null); }
@@ -42,8 +43,8 @@ export default function ManualPoPage() {
 
   return (
     <>
-      <PageHeader title={id ? `Edit ${po.data.po_number}` : 'Buat PO Manual'}
-        subtitle={<Link className="inline-flex items-center gap-1 font-medium text-primary-700 hover:underline" to="/purchase-orders"><Icon name="arrowLeft" className="h-3.5 w-3.5" /> Semua PO</Link>} />
+      <PageHeader title={id ? t('Edit {po}', { po: po.data.po_number }) : t('Buat PO Manual')}
+        subtitle={<Link className="inline-flex items-center gap-1 font-medium text-primary-700 hover:underline" to="/purchase-orders"><Icon name="arrowLeft" className="h-3.5 w-3.5" /> {t('Semua PO')}</Link>} />
       <ManualPoForm initial={po.data} saving={saving} onSubmit={save} />
     </>
   );

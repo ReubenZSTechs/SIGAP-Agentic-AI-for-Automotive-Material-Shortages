@@ -3,7 +3,7 @@ applications:
   # 1. Container Backend Python
   - name: mrp-backend-suppliers
     path: ./backend
-    memory: 256M
+    memory: 512M
     instances: 1
     random-route: true
     buildpack: python_buildpack
@@ -12,7 +12,7 @@ applications:
   # 2. Container Frontend React
   - name: mrp-frontend-suppliers
     path: ./frontend
-    memory: 128M
+    memory: 256M
     instances: 1
     random-route: true
     buildpack: staticfile_buildpack

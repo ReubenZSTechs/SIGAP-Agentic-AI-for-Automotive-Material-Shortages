@@ -87,9 +87,10 @@ Prasyarat: **Python 3.11+** dan **Node.js 18+** (diuji dengan Node 22).
 ### Terminal 1 — Backend (http://localhost:8000)
 
 ```bash
+ # Windows: .venv\Scripts\activate
 cd backend
 python -m venv .venv
-source .venv/bin/activate              # Windows: .venv\Scripts\activate
+source .venv/bin/activate             
 pip install -r requirements.txt
 
 python -m scripts.seed --demo-schedules    # data contoh + jadwal Senin 30 / Selasa 20 unit

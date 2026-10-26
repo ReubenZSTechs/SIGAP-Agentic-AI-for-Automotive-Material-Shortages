@@ -4,7 +4,7 @@ import { currentLang } from '../store/settingsStore';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? '/api/v1',
-  timeout: 15000,
+  timeout: 60000,
 });
 
 // Bahasa pilihan pengguna -> backend menerjemahkan pesan error (Accept-Language).

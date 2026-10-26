@@ -14,13 +14,19 @@ from configs.tools.po_execute import _check_snapshot, _get_po, confirmation
 
 def queue_conversation(db: Session, po: PurchaseOrder, purpose: ConversationPurpose, action_id: str | None = None,
                        change_request_id: int | None = None) -> SupplierConversation:
-    """Queues a supplier conversation; the dispatcher sends the opening message (one active per supplier)."""
+    """Queues a supplier conversation; the dispatcher sends the opening message (one active per supplier).
+
+    Every conversation is tracked by a Hub mission first (`app.hub.po_missions`), so the manager sees the
+    outreach in Hub Supplier -> Misi before the supplier is contacted.
+    """
+    from app.hub.po_missions import ensure_po_mission
     conv = SupplierConversation(po_id=po.id, po_number=po.po_number, po_snapshot=po_snapshot(po),
                                 supplier_id=po.supplier_id, purpose=purpose, status=CS.QUEUED,
                                 transport=settings.TELEGRAM_MODE, automation_action_id=action_id,
                                 change_request_id=change_request_id)
     db.add(conv)
     db.flush()
+    ensure_po_mission(db, conv)
     return conv
 
 
@@ -182,6 +188,26 @@ def update_promised_date(db: Session, po: PurchaseOrder, promised: str) -> list[
             for i in po.items if i.needed_by_date and i.needed_by_date < d]
 
 
+def revise_promised_date(db: Session, po: PurchaseOrder, promised: str, actor: str | None,
+                         change_request_id: int | None = None) -> PORevision:
+    """Accepted new delivery date for a confirmed PO (by the agent within its limits, or by the manager):
+    stored on the confirmation and as a new FINAL PO version, so the PO and its PDF show the new date."""
+    d = date.fromisoformat(promised)
+    conf = confirmation(db, po.id)
+    old = _iso(conf.promised_delivery_date)
+    conf.promised_delivery_date = d
+    conf.note = f"Tanggal kirim diperbarui: {old or '-'} → {d.isoformat()}"
+    record_initial_revision(db, po)
+    change = {"po_item_id": None, "sku": po.po_number, "name": "", "field": "promised_delivery_date",
+              "old": old, "new": d.isoformat()}
+    rev = _add_revision(db, po, {**po_snapshot(po), "promised_delivery_date": d.isoformat(),
+                                 "supplier_reference": conf.supplier_reference}, [change], actor,
+                        change_request_id=change_request_id)
+    rev.status, rev.finalized_at = RS.FINAL, now()
+    db.flush()
+    return rev
+
+
 def valid_future_date(value) -> str | None:
     """YYYY-MM-DD from an agent field, or None when missing, invalid or in the past."""
     try:
@@ -197,14 +223,15 @@ def missing_fields_text(po_number: str, missing: list[str]) -> str:
 
 
 def split_promised_dates(po: PurchaseOrder, proposed: list[dict]) -> tuple[str | None, list[dict]]:
-    """A delivery date for a line that has no needed-by date is the supplier's promise, not a revision.
+    """A delivery date from the supplier is always their promise, never a revision of our needed-by date
+    (the needed-by date stays the deadline; `agent_limits.check_date` compares the two).
 
     Returns (latest such date as YYYY-MM-DD or None, the remaining proposed changes).
     """
     promised, rest = None, []
     for pc in proposed or []:
         line = _match_line(po, pc.get("material_ref"))
-        if _FIELD.get(pc.get("field")) == "needed_by_date" and line is not None and line.needed_by_date is None:
+        if _FIELD.get(pc.get("field")) == "needed_by_date" and line is not None:
             try:
                 d = date.fromisoformat(str(pc.get("new_value")).strip()).isoformat()
             except ValueError:

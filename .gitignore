@@ -7,3 +7,5 @@ dist/
 .pytest_cache/
 backend/.env
 .env
+# Kredensial deploy SAP BTP (Supabase, AI Core, Telegram)
+deploy/vars.yml

@@ -38,6 +38,25 @@ def pick_supplier(links: list[dict], qty: float, exclude_supplier_id: int | None
                                           l["supplier_code"]))
 
 
+def pick_replacement(links: list[dict], qty: float, arrive_by: date | None, exclude_supplier_id: int,
+                     today: date | None = None) -> tuple[dict | None, bool]:
+    """Replacement supplier after a supplier cancels / is too late: (link, arrives_in_time).
+
+    Among MOQ-feasible active links of OTHER suppliers: those arriving by `arrive_by` (today + lead time),
+    cheapest first (then fastest, preferred, code); when none is in time, the fastest one (flagged late).
+    """
+    today = today or date.today()
+    candidates = [l for l in links if l["supplier_id"] != exclude_supplier_id]
+    if not candidates:
+        return None, False
+    candidates = [l for l in candidates if qty >= l["moq"]] or candidates
+    in_time = [l for l in candidates if arrive_by is None or today + timedelta(days=l["lead_time_days"]) <= arrive_by]
+    if in_time:
+        return min(in_time, key=lambda l: (l["unit_price"], l["lead_time_days"], not l["is_preferred"],
+                                           l["supplier_code"])), True
+    return min(candidates, key=lambda l: (l["lead_time_days"], l["unit_price"], l["supplier_code"])), False
+
+
 def assign_suppliers(db: Session, needs: list[dict], deadline: date | None = None, today: date | None = None,
                      order_qty=None) -> dict:
     """Chooses one supplier per material, cross-checked over ALL materials so that fewer POs are needed.

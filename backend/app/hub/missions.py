@@ -1,6 +1,6 @@
-"""Misi multi-supplier: penawaran harga, cek stok, konfirmasi jadwal kirim, minta dokumen.
+"""Misi multi-supplier: penawaran harga, cek stok, konfirmasi jadwal kirim, dan misi PO (lihat `po_missions`).
 
-- Pesan pembuka diisi template oleh KODE (angka selalu dari database, bukan dari LLM).
+- Pesan pembuka diisi oleh KODE dari `MISSION_MESSAGES` (angka selalu dari database, bukan dari LLM).
 - Satu supplier hanya punya satu topik aktif: target misi menunggu selama supplier punya percakapan
   PO terbuka (agent PO lama tidak diubah), lalu ditanyakan setelah percakapan itu selesai.
 - Balasan supplier diklasifikasi `mission_reply_agent`; hasilnya menjadi proposal di Inbox Persetujuan.
@@ -18,9 +18,10 @@ from app.database import SessionLocal
 from app.models import (HubMission, HubMissionTarget, HubOutbox, HubProposal, Material, MaterialSupplier,
                         PurchaseOrder, Supplier, SupplierConversation, SupplierMessage, SupplierTelegramLink)
 from app.models.enums import ItemCategory, MessageDirection, POStatus
-from app.models.hub import (MissionScenario, MissionSource, MissionStatus, OutboxStatus, ProposalStatus,
+from app.models.hub import (PO_SCENARIOS, MissionScenario, MissionSource, MissionStatus, OutboxStatus, ProposalStatus,
                             ProposalType, TargetState)
 from app.hub import common as C
+from app.hub import po_missions
 from app.services import master_service
 from configs.tools import po_actions as A
 
@@ -33,11 +34,23 @@ ALLOWED_PO = {
                      POStatus.PARTIALLY_RECEIVED, POStatus.RECEIVED),
     SC.STOCK_CHECK: (POStatus.DRAFT, POStatus.PENDING_APPROVAL, POStatus.APPROVED, POStatus.ISSUED),
     SC.DELIVERY_CONFIRM: (POStatus.ISSUED, POStatus.PARTIALLY_RECEIVED),
-    SC.DOC_REQUEST: (POStatus.ISSUED, POStatus.PARTIALLY_RECEIVED, POStatus.RECEIVED),
+    SC.PO_CONFIRM: (POStatus.ISSUED,),
+    SC.PO_CANCEL: (POStatus.ISSUED,),
 }
-PO_SUPPLIER_ONLY = (SC.DELIVERY_CONFIRM, SC.DOC_REQUEST)
+PO_SUPPLIER_ONLY = (SC.DELIVERY_CONFIRM, SC.PO_CONFIRM, SC.PO_CANCEL)
 TITLE = {SC.PRICE_QUOTE: "Penawaran harga", SC.STOCK_CHECK: "Cek stok", SC.DELIVERY_CONFIRM: "Konfirmasi jadwal kirim",
-         SC.DOC_REQUEST: "Minta dokumen"}
+         SC.PO_CONFIRM: "Konfirmasi PO", SC.PO_CANCEL: "Pembatalan PO"}
+# Pesan pembuka & pengingat (dulu template yang bisa diedit di Pengaturan). Variabel diisi `compose()`.
+MISSION_MESSAGES = {
+    "PRICE_QUOTE": "Selamat {waktu} {kontak}, kami dari {perusahaan} membutuhkan penawaran {item}. Mohon info harga "
+                   "per satuan dan lead time sebelum {tenggat}. Terima kasih.",
+    "STOCK_CHECK": "Selamat {waktu} {kontak}, apakah tersedia {item}? Mohon konfirmasi qty yang sanggup dan tanggal "
+                   "siapnya sebelum {tenggat}.",
+    "DELIVERY_CONFIRM": "Selamat {waktu} {kontak}, mohon konfirmasi jadwal pengiriman {po}. Apakah masih sesuai "
+                        "rencana? Kami tunggu kabarnya sebelum {tenggat}.",
+    "REMINDER": "Selamat {waktu} {kontak}, mengingatkan permintaan kami terkait {item}. Kami tunggu kabarnya sebelum "
+                "{tenggat}. Terima kasih.",
+}
 DAYS = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
 
@@ -89,9 +102,14 @@ def po_options(db: Session, po_id: int) -> dict:
     for sid, skus in sorted(alts.items()):
         suppliers.append({**_supplier_brief(db, db.get(Supplier, sid)), "role": "ALT", "skus": sorted(skus)})
     open_conv = C.has_open_po_conversation(db, po.supplier_id)
+    this_po = db.scalar(select(SupplierConversation.id).where(SupplierConversation.po_id == po.id,
+                                                              SupplierConversation.status.in_(A.OPEN_CONVERSATION)))
     scenarios = [{"key": s.value, "allowed": po.status in ALLOWED_PO[s],
-                  "blocked_reason": ("Percakapan Telegram untuk PO supplier ini masih berjalan"
-                                     if s in PO_SUPPLIER_ONLY and open_conv and po.status in ALLOWED_PO[s] else None)}
+                  "blocked_reason": ("Percakapan agent PO untuk PO ini masih berjalan (lihat misinya)"
+                                     if s in PO_SCENARIOS and this_po and po.status in ALLOWED_PO[s] else
+                                     "Percakapan Telegram untuk PO supplier ini masih berjalan"
+                                     if s in PO_SUPPLIER_ONLY and s not in PO_SCENARIOS and open_conv
+                                     and po.status in ALLOWED_PO[s] else None)}
                  for s in SC]
     db.commit()
     return {"po": snap, "suppliers": suppliers, "scenarios": scenarios,
@@ -112,19 +130,17 @@ def _items_label(m: HubMission) -> str:
 def _step(m: HubMission) -> int:
     if m.status == MissionStatus.DONE:
         return 5
-    if m.status == MissionStatus.SUMMARIZING:
+    if m.status == MissionStatus.SUMMARIZING or any(t.state == TS.WAITING_MANAGER for t in m.targets):
         return 4
     return 2 if any(t.state == TS.QUEUED for t in m.targets) else 3
 
 
 def target_summary(m: HubMission, t: HubMissionTarget) -> str | None:
     res = t.result or {}
-    if not res.get("decision") and not res.get("documents"):
+    if not res.get("decision"):
         return None
     if res.get("decision") == "declined":
         return "Menolak" + (f": {res['notes']}" if res.get("notes") else "")
-    if res.get("documents"):
-        return f"{len(res['documents'])} dokumen diterima"
     parts = []
     for it in res.get("items") or []:
         bits = []
@@ -153,6 +169,8 @@ def _waiting_reason(db: Session, m: HubMission, t: HubMissionTarget, has_draft: 
     """Kenapa target belum terkirim (ditampilkan di tabel misi)."""
     if m.status != MissionStatus.ACTIVE or t.state not in (TS.QUEUED, TS.PAUSED) or has_draft:
         return None
+    if m.scenario in PO_SCENARIOS:
+        return po_missions.waiting_reason(db, t)
     if C.is_paused(db):
         return "Agent dijeda"
     if C.has_open_po_conversation(db, t.supplier_id):
@@ -177,6 +195,8 @@ def mission_view(db: Session, m: HubMission) -> dict:
         "items": items, "topic": m.topic, "status": m.status.value, "step": _step(m), "deadline": C.iso(m.deadline),
         "autonomy": m.autonomy, "created_by": m.created_by, "created_at": C.iso(m.created_at), "summary": m.summary,
         "replied": sum(1 for t in m.targets if t.state == TS.REPLIED), "total": len(m.targets),
+        "agent_po": m.scenario in PO_SCENARIOS, "automation_action_id": m.automation_action_id,
+        "conversation": _conversation_brief(db, m),
         "targets": [{"supplier_id": t.supplier_id, "supplier": _supplier_brief(db, t.supplier), "thread_id": t.supplier_id,
                      "state": t.state.value, "waiting": _waiting_reason(db, m, t, t.id in drafts), "sent_at": C.iso(t.sent_at), "replied_at": C.iso(t.replied_at),
                      "reminded_at": C.iso(t.reminded_at), "result": target_summary(m, t), "draft": t.id in drafts}
@@ -186,11 +206,35 @@ def mission_view(db: Session, m: HubMission) -> dict:
     }
 
 
+def _conversation_brief(db: Session, m: HubMission) -> dict | None:
+    """Misi PO: percakapan agent PO terkini, revisi PO, dan keputusan manajer yang terkait."""
+    if m.scenario not in PO_SCENARIOS:
+        return None
+    from app.hub.approvals import cr_brief
+    from app.models import POChangeRequest
+    t = m.targets[0] if m.targets else None
+    conv = db.get(SupplierConversation, t.conversation_id) if t and t.conversation_id else None
+    crs = [cr_brief(c) for c in db.scalars(select(POChangeRequest).where(POChangeRequest.po_id == m.po_id)
+                                           .order_by(POChangeRequest.id.desc()).limit(6))] if m.po_id else []
+    revs = [{"version": r.version, "status": r.status.value} for r in A.revisions(db, m.po_id)] if m.po_id else []
+    return {"id": conv.id if conv else None, "purpose": conv.purpose.value if conv else None,
+            "status": conv.status.value if conv else None, "approvals": crs, "revisions": revs}
+
+
+def _sync(db: Session) -> None:
+    if po_missions.sync(db):
+        db.commit()
+    else:
+        db.flush()
+
+
 def list_missions(db: Session) -> list[dict]:
+    _sync(db)
     return [mission_view(db, m) for m in db.scalars(select(HubMission).order_by(HubMission.id.desc()).limit(200))]
 
 
 def get_mission(db: Session, mission_id: int) -> dict:
+    _sync(db)
     m = db.get(HubMission, mission_id)
     if m is None:
         raise AppError(404, "Misi tidak ditemukan")
@@ -199,21 +243,27 @@ def get_mission(db: Session, mission_id: int) -> dict:
 
 def po_context(db: Session, po_id: int) -> dict:
     """Panel read-only di detail PO: misi, percakapan Telegram, proposal yang terkait PO ini."""
-    from app.hub.approvals import CR_STATUS, proposal_brief
+    from app.hub.approvals import CR_STATUS, cr_title, proposal_brief
     from app.models import POChangeRequest
+    _sync(db)
     missions = [mission_brief(m) | {"scenario": m.scenario.value, "summary": m.summary}
                 for m in db.scalars(select(HubMission).where(HubMission.po_id == po_id).order_by(HubMission.id.desc()))]
     convs = [{"id": c.id, "purpose": c.purpose.value, "status": c.status.value, "supplier_id": c.supplier_id,
               "last_activity_at": C.iso(c.last_activity_at or c.created_at)}
              for c in db.scalars(select(SupplierConversation).where(SupplierConversation.po_id == po_id)
                                  .order_by(SupplierConversation.id.desc()))]
-    crs = [{"id": f"cr-{c.id}", "title": f"Revisi {c.po_number}", "status": CR_STATUS[c.status]}
+    crs = [{"id": f"cr-{c.id}", "title": cr_title(c), "status": CR_STATUS[c.status]}
            for c in db.scalars(select(POChangeRequest).where(POChangeRequest.po_id == po_id))]
     props = [proposal_brief(p) for p in db.scalars(select(HubProposal).where(HubProposal.po_id == po_id))]
     conf = db.scalar(select(A.POSupplierConfirmation).where(A.POSupplierConfirmation.po_id == po_id))
+    po = db.get(PurchaseOrder, po_id)
+    from configs.tools import agent_limits as L
+    dl = L.deadline(po) if po is not None else None
+    delta = (conf.promised_delivery_date - dl).days if conf and conf.promised_delivery_date and dl else None
     return {"missions": missions, "conversations": convs, "approvals": crs + props,
             "confirmation": {"status": conf.status.value, "promised_delivery_date": A._iso(conf.promised_delivery_date),
-                             "supplier_reference": conf.supplier_reference} if conf else None}
+                             "supplier_reference": conf.supplier_reference, "deadline": A._iso(dl),
+                             "delta_days": delta} if conf else None}
 
 
 # ------------------------------------------- create -------------------------------------------
@@ -229,7 +279,7 @@ def create_mission(db: Session, body: dict) -> HubMission:
     autonomy = body.get("autonomy") or C.outbound(db, scenario.value)
     if autonomy not in ("AUTO", "REVIEW"):
         raise AppError(422, "Otonomi harus AUTO atau REVIEW")
-    message = (body.get("message") or "").strip() or C.template_for(db, scenario.value)
+    message = (body.get("message") or "").strip() or MISSION_MESSAGES.get(scenario.value, po_missions.AGENT_MESSAGE)
     supplier_ids = list(dict.fromkeys(int(s) for s in body.get("supplier_ids") or []))
     if not supplier_ids:
         raise AppError(422, "Pilih minimal satu supplier")
@@ -247,17 +297,15 @@ def create_mission(db: Session, body: dict) -> HubMission:
         if scenario in PO_SUPPLIER_ONLY:
             if supplier_ids != [po.supplier_id]:
                 raise AppError(400, f"{TITLE[scenario]} hanya dikirim ke supplier PO ({po.supplier.name})")
-            if C.has_open_po_conversation(db, po.supplier_id):
+            if scenario not in PO_SCENARIOS and C.has_open_po_conversation(db, po.supplier_id):
                 raise AppError(409, f"Percakapan Telegram untuk PO {po.supplier.name} masih berjalan. "
                                     "Tunggu sampai selesai agar balasan supplier tidak tertukar.")
         wanted = {int(i["material_id"]) for i in body.get("items") or []} or {i["material_id"] for i in snap["items"]}
         items = [{"material_id": i["material_id"], "sku": i["sku"], "name": i["name"], "qty": i["qty_ordered"],
                   "uom": i["uom"], "needed_by": i["needed_by_date"]} for i in snap["items"] if i["material_id"] in wanted]
-        if scenario == SC.DOC_REQUEST and not topic:
-            topic = f"invoice dan surat jalan {po.po_number}"
     else:
-        if scenario == SC.DELIVERY_CONFIRM:
-            raise AppError(400, "Konfirmasi jadwal kirim harus dibuat dari PO")
+        if scenario in PO_SUPPLIER_ONLY:
+            raise AppError(400, f"{TITLE[scenario]} harus dibuat dari PO")
         for raw in body.get("items") or []:
             mat = db.get(Material, int(raw["material_id"]))
             if mat is None or mat.category != ItemCategory.PURCHASED:
@@ -269,8 +317,6 @@ def create_mission(db: Session, body: dict) -> HubMission:
                           "uom": mat.uom, "needed_by": raw.get("needed_by")})
         if scenario in (SC.PRICE_QUOTE, SC.STOCK_CHECK) and not items:
             raise AppError(422, "Pilih minimal satu material")
-        if scenario == SC.DOC_REQUEST and not topic:
-            raise AppError(422, "Isi topik dokumen yang diminta")
     if scenario in (SC.PRICE_QUOTE, SC.STOCK_CHECK) and not items:
         raise AppError(422, "Pilih minimal satu item PO")
     for sid in supplier_ids:
@@ -285,14 +331,18 @@ def create_mission(db: Session, body: dict) -> HubMission:
     m.targets = [HubMissionTarget(supplier_id=sid, state=TS.QUEUED) for sid in supplier_ids]
     db.add(m)
     db.flush()
-    C.audit(db, actor, "create_mission", "mission", m.id, scenario=scenario.value, suppliers=supplier_ids, po_id=m.po_id)
+    C.audit(db, actor, "create_mission", "mission", m.id, scenario=scenario.value, suppliers=supplier_ids, po_id=m.po_id,
+            po_number=(snap or {}).get("po_number"), supplier_id=supplier_ids[0] if len(supplier_ids) == 1 else None,
+            summary=f"Misi #{m.id} dibuat: {m.title}")
+    if scenario in PO_SCENARIOS:                     # tugas agent PO: agent langsung membuka percakapan PO
+        po_missions.start_for_mission(db, m, po)
     db.commit()
     return m
 
 
 # ------------------------------------------ messages ------------------------------------------
 def _item_values(m: HubMission) -> dict:
-    if m.topic and (not m.items or m.scenario == SC.DOC_REQUEST):
+    if m.topic and not m.items:
         return {"item": m.topic, "qty": "", "satuan": ""}
     if len(m.items) == 1:
         it = m.items[0]
@@ -350,12 +400,15 @@ def tick(svc) -> dict:
 def _tick(svc) -> dict:
     sends, notices, counts = [], [], {"sent": 0, "drafted": 0, "paused": 0, "reminded": 0, "no_reply": 0, "summarized": 0}
     with SessionLocal() as db:
+        counts["po_missions_synced"] = po_missions.sync(db)     # misi PO mengikuti percakapan agent PO
+        db.flush()                                               # autoflush mati: cek "sibuk" di bawah harus melihatnya
         paused = C.is_paused(db)
         can_send = not paused and C.within_working_hours(db)
         now = A.now()
         remind_h, escalate_h = C.threshold(db, "reminder_after_hours"), C.threshold(db, "escalate_after_hours")
         reminder_review = C.outbound(db, "REMINDER") == "REVIEW"
-        for m in db.scalars(select(HubMission).where(HubMission.status == MissionStatus.ACTIVE).order_by(HubMission.id)):
+        for m in db.scalars(select(HubMission).where(HubMission.status == MissionStatus.ACTIVE,
+                                                     HubMission.scenario.not_in(PO_SCENARIOS)).order_by(HubMission.id)):
             if m.deadline < now:
                 _close(db, m, "deadline")
                 counts["summarized"] += 1
@@ -388,7 +441,7 @@ def _tick(svc) -> dict:
                                        f"setelah {int(escalate_h)} jam. Tandai eskalasi dari Hub bila perlu.")
                     elif can_send and t.reminded_at is None and t.sent_at < now - timedelta(hours=remind_h):
                         sup = db.get(Supplier, t.supplier_id)
-                        text = compose(m, sup, C.template_for(db, "REMINDER"))
+                        text = compose(m, sup, MISSION_MESSAGES["REMINDER"])
                         _queue_or_send(svc, db, m, t, text, "reminder", reminder_review, 'Pengingat diatur "Draf dulu"', sends)
                         t.reminded_at = now
                         counts["reminded"] += 1
@@ -424,10 +477,17 @@ def _mission(db: Session, mission_id: int, active: bool = True) -> HubMission:
     return m
 
 
+def _not_agent_po(m: HubMission) -> None:
+    if m.scenario in PO_SCENARIOS:
+        raise AppError(409, "Misi PO dijalankan agent PO (pengingat & eskalasi otomatis). Buka percakapan supplier "
+                            "untuk mengambil alih.")
+
+
 def remind(svc, mission_id: int, supplier_ids: list[int] | None, actor: str) -> dict:
     sends = []
     with SessionLocal() as db:
         m = _mission(db, mission_id)
+        _not_agent_po(m)
         if C.is_paused(db):
             raise AppError(409, "Agent sedang dijeda. Lanjutkan Agent untuk mengirim pengingat.")
         review = C.outbound(db, "REMINDER") == "REVIEW"
@@ -435,13 +495,13 @@ def remind(svc, mission_id: int, supplier_ids: list[int] | None, actor: str) -> 
         for t in m.targets:
             if t.state not in (TS.SENT, TS.NO_REPLY) or (supplier_ids and t.supplier_id not in supplier_ids):
                 continue
-            text = compose(m, db.get(Supplier, t.supplier_id), C.template_for(db, "REMINDER"))
+            text = compose(m, db.get(Supplier, t.supplier_id), MISSION_MESSAGES["REMINDER"])
             _queue_or_send(svc, db, m, t, text, "reminder", review, 'Pengingat diatur "Draf dulu"', sends)
             t.reminded_at = A.now()
             if t.state == TS.NO_REPLY:
                 t.state = TS.SENT
             count += 1
-        C.audit(db, actor, "remind", "mission", m.id, count=count)
+        C.audit(db, actor, "remind", "mission", m.id, count=count, summary=f"Pengingat Misi #{m.id} ke {count} supplier")
         db.commit()
     svc.deliver(sends)
     return {"count": count, "drafted": review}
@@ -450,6 +510,7 @@ def remind(svc, mission_id: int, supplier_ids: list[int] | None, actor: str) -> 
 def escalate(svc, mission_id: int, supplier_id: int, actor: str) -> None:
     with SessionLocal() as db:
         m = _mission(db, mission_id)
+        _not_agent_po(m)
         t = next((x for x in m.targets if x.supplier_id == supplier_id), None)
         if t is None:
             raise AppError(404, "Supplier tidak ada di misi ini")
@@ -459,7 +520,8 @@ def escalate(svc, mission_id: int, supplier_id: int, actor: str) -> None:
                 f"mendapat balasan. Mohon konfirmasi hari ini agar kami bisa menyesuaikan rencana produksi. Terima kasih.")
         db.add(HubOutbox(supplier_id=supplier_id, mission_target_id=t.id, kind="escalation", text=text,
                          review_reason="Eskalasi selalu perlu review"))
-        C.audit(db, actor, "escalate", "supplier", supplier_id, mission=m.id)
+        C.audit(db, actor, "escalate", "supplier", supplier_id, mission=m.id, supplier_id=supplier_id,
+                summary=f"Eskalasi Misi #{m.id}: {sup.name} belum membalas")
         if all(x.state in TERMINAL for x in m.targets):
             summarize(db, m)
         name, title = sup.name, m.title
@@ -471,8 +533,14 @@ def escalate(svc, mission_id: int, supplier_id: int, actor: str) -> None:
 def close(mission_id: int, actor: str) -> None:
     with SessionLocal() as db:
         m = _mission(db, mission_id)
+        if m.scenario in PO_SCENARIOS:
+            m.status, m.closed_at = MissionStatus.DONE, A.now()
+            m.summary = (m.summary or "") + f" Ditutup manual oleh {actor}; percakapan PO tetap berjalan."
+            C.audit(db, actor, "close_mission", "mission", m.id, summary=f"Misi #{m.id} ditutup manual")
+            db.commit()
+            return
         _close(db, m, "manual")
-        C.audit(db, actor, "close_mission", "mission", m.id)
+        C.audit(db, actor, "close_mission", "mission", m.id, summary=f"Misi #{m.id} ditutup & dirangkum")
         db.commit()
 
 
@@ -483,7 +551,7 @@ def cancel(mission_id: int, actor: str) -> None:
         for d in db.scalars(select(HubOutbox).where(HubOutbox.status == OutboxStatus.DRAFT,
                                                     HubOutbox.mission_target_id.in_([t.id for t in m.targets]))):
             d.status = OutboxStatus.DISCARDED
-        C.audit(db, actor, "cancel_mission", "mission", m.id)
+        C.audit(db, actor, "cancel_mission", "mission", m.id, summary=f"Misi #{m.id} dibatalkan")
         db.commit()
 
 
@@ -491,7 +559,8 @@ def cancel(mission_id: int, actor: str) -> None:
 def waiting_target(db: Session, supplier_id: int) -> HubMissionTarget | None:
     return db.scalar(select(HubMissionTarget).join(HubMission).where(
         HubMissionTarget.supplier_id == supplier_id, HubMissionTarget.state.in_((TS.SENT, TS.PAUSED, TS.NO_REPLY)),
-        HubMission.status == MissionStatus.ACTIVE).order_by(HubMissionTarget.sent_at.desc().nullslast()).limit(1))
+        HubMission.status == MissionStatus.ACTIVE, HubMission.scenario.not_in(PO_SCENARIOS))
+        .order_by(HubMissionTarget.sent_at.desc().nullslast()).limit(1))
 
 
 def route_reply(svc, supplier_id: int, chat_id: int, text: str, message_id: int) -> dict | None:
@@ -519,6 +588,12 @@ def _route_reply(svc, supplier_id: int, chat_id: int, text: str, message_id: int
                    "deadline": deadline_text(m.deadline), "conversation": recent, "latest_supplier_message": text}
         target_id = t.id
     out = svc.run_agent("mission_reply_agent", payload)
+    from app.supplier_chat.guardrail import from_llm
+    guard = from_llm(out.get("guard_flag"), "llm_mission")
+    if guard is not None:                                         # lapisan kedua guardrail: misi tidak berubah
+        return {**svc.guard_block(guard, supplier_id, chat_id, text, message_id), "mission_target_id": target_id}
+    reply, blocked = svc.safe_text(supplier_id, out["reply_text"], text)
+    out = {**out, "reply_text": reply, **({"guardrail_output": blocked} if blocked else {})}
     with SessionLocal() as db:
         t = db.get(HubMissionTarget, target_id)
         m = t.mission
@@ -533,21 +608,6 @@ def _route_reply(svc, supplier_id: int, chat_id: int, text: str, message_id: int
         db.commit()
     svc.deliver([send])
     return {"handled": True, "mission_id": mission_id, "target_state": state, "decision": out["decision"]}
-
-
-def attach_documents(db: Session, supplier_id: int, doc_ids: list[int]) -> HubMission | None:
-    """Dokumen masuk saat ada misi DOC_REQUEST yang menunggu -> target dianggap sudah membalas."""
-    t = db.scalar(select(HubMissionTarget).join(HubMission).where(
-        HubMissionTarget.supplier_id == supplier_id, HubMissionTarget.state.in_((TS.SENT, TS.PAUSED, TS.NO_REPLY)),
-        HubMission.status == MissionStatus.ACTIVE, HubMission.scenario == SC.DOC_REQUEST).limit(1))
-    if t is None:
-        return None
-    t.state, t.replied_at = TS.REPLIED, A.now()
-    t.result = {"decision": "answered", "documents": [*(t.result or {}).get("documents", []), *doc_ids]}
-    m = t.mission
-    if all(x.state in TERMINAL for x in m.targets):
-        summarize(db, m)
-    return m
 
 
 # ------------------------------------------ summary ------------------------------------------
@@ -587,7 +647,7 @@ def summarize(db: Session, m: HubMission) -> None:
     declined = [t for t in m.targets if (t.result or {}).get("decision") == "declined"]
     head = f"{len(replied)} dari {len(m.targets)} supplier menjawab" + (f", {len(declined)} menolak" if declined else "") + "."
     evidence = [e for e in (_evidence(db, m, t) for t in replied) if e]
-    pct_high = C.threshold(db, "price_change_pct_high")
+    pct_high = C.threshold(db, "price_increase_pct")
 
     if m.scenario == SC.PRICE_QUOTE:
         rows, best = [], None
@@ -606,7 +666,7 @@ def summarize(db: Session, m: HubMission) -> None:
                 if best is None or it["price_per_unit"] < best[1]:
                     best = (t.supplier.name, it["price_per_unit"], item["name"])
         if rows:
-            changes = [abs(r["after"] - r["before"]) / r["before"] * 100 for r in rows if r["before"]]
+            changes = [(r["after"] - r["before"]) / r["before"] * 100 for r in rows if r["before"]]
             risk = "HIGH" if any(c > pct_high for c in changes) else \
                 "MEDIUM" if any(r["before"] is None or r["after"] > r["before"] for r in rows) else "LOW"
             _proposal(db, m, ProposalType.PRICE_UPDATE, f"Update harga {_items_label(m)}", rows, evidence, risk,
@@ -644,19 +704,27 @@ def summarize(db: Session, m: HubMission) -> None:
             conf = db.scalar(select(A.POSupplierConfirmation).where(A.POSupplierConfirmation.po_id == m.po_id)) if m.po_id else None
             needs = [i["needed_by_date"] for i in m.po_snapshot["items"] if i.get("needed_by_date")]
             before = A._iso(conf.promised_delivery_date) if conf and conf.promised_delivery_date else (max(needs) if needs else None)
-            if before is None or promised > before:
+            if before is None or promised != before:
                 from datetime import date
-                days = (date.fromisoformat(promised) - date.fromisoformat(before)).days if before else 0
+                from app.hub.audit_log import agent as audit_agent
+                from configs.tools import agent_limits as L
+                po = db.get(PurchaseOrder, m.po_id) if m.po_id else None
+                check = L.check_date(db, po, date.fromisoformat(promised)) if po is not None else None
+                if check is not None and check.ok:            # di dalam batas hari agent: langsung diterapkan
+                    rev = A.revise_promised_date(db, po, promised, C.AGENT_ACTOR)
+                    audit_agent(db, "auto_accept_date", "po", po.id,
+                                f"Tanggal kirim {po.po_number} dari Misi #{m.id} diterima agent: {check.describe()}",
+                                supplier_id=t.supplier_id, po_number=po.po_number, mission=m.id, revision=rev.version)
+                    head += f" Jadwal kirim {promised} diterima agent (dalam batas) dan PO direvisi ke versi {rev.version}."
+                    continue
                 rows = [{"key": f"po:{m.po_id}", "label": f"Janji kirim {m.po_snapshot['po_number']}", "before": before,
                          "after": promised, "unit": "date", "direction": "lower-better", "meta": {"po_id": m.po_id}}]
-                _proposal(db, m, ProposalType.PO_DELAY, f"Keterlambatan {m.po_snapshot['po_number']}", rows, evidence,
-                          "HIGH" if days > C.threshold(db, "delay_days_high") else "MEDIUM",
-                          f"{t.supplier.name} mengabarkan jadwal kirim {promised}. Menyetujui memperbarui tanggal janji kirim "
-                          "pada konfirmasi PO; isi PO tidak berubah.", supplier_id=t.supplier_id)
-                head += f" Jadwal mundur ke {promised}."
+                _proposal(db, m, ProposalType.PO_DELAY, f"Jadwal kirim {m.po_snapshot['po_number']}", rows, evidence,
+                          "HIGH", f"{t.supplier.name} mengabarkan jadwal kirim "
+                          + (check.describe() if check is not None else promised)
+                          + ". Di luar batas hari agent; menyetujui memperbarui tanggal kirim dan merevisi PO.",
+                          supplier_id=t.supplier_id)
+                head += f" Jadwal kirim {promised} di luar batas agent; menunggu persetujuan."
             else:
                 head += f" Jadwal sesuai ({promised})."
-    elif m.scenario == SC.DOC_REQUEST:
-        n = sum(len((t.result or {}).get("documents") or []) for t in m.targets)
-        head += f" {n} dokumen diterima; validasi di tab Dokumen."
     m.summary = head[:500]

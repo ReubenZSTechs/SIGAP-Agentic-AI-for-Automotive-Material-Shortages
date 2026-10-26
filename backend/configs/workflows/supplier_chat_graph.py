@@ -1,8 +1,10 @@
 """One supplier reply: load context -> analyze (LLM) -> apply decision (tools) -> escalate/revision -> deliver.
 
 Stateless between messages: the conversation, its messages and the PO live in the DB. The agent
-only classifies the reply and writes text; which PO is touched and how is decided here.
+only classifies the reply and writes text; which PO is touched and how is decided here, including
+the agent's own limits (delivery-date window, price increase) from the Hub policy.
 """
+from datetime import date
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -11,6 +13,7 @@ from app.core.exceptions import AppError
 from app.database import SessionLocal
 from app.models import PurchaseOrder, Supplier, SupplierConversation
 from app.models.enums import AutomationStatus, ConversationPurpose, ConversationStatus, MessageDirection, POStatus
+from configs.tools import agent_limits as L
 from configs.tools import po_actions as A
 
 CS, P = ConversationStatus, ConversationPurpose
@@ -27,6 +30,8 @@ class SupplierTurn(TypedDict, total=False):
     sends: list[dict]
     escalation: dict | None
     change_request_id: int | None
+    guard: dict | None
+    cancellation: dict | None
     result: dict
 
 
@@ -52,7 +57,8 @@ def build_supplier_reply_graph(svc):
                    "chat_id": svc.supplier_chat_id(db, conv.supplier_id)}
             db.commit()
         ctx["messages"] = svc.messages(cid)
-        return {"context": ctx, "sends": [], "escalation": None, "change_request_id": None}
+        return {"context": ctx, "sends": [], "escalation": None, "change_request_id": None, "guard": None,
+                "cancellation": None}
 
     def analyze(state: SupplierTurn) -> SupplierTurn:
         ctx = state["context"]
@@ -70,9 +76,20 @@ def build_supplier_reply_graph(svc):
 
     def apply_decision(state: SupplierTurn) -> SupplierTurn:
         """Deterministic mapping of the agent's decision to DB tools (see docs/SUPPLIER_TELEGRAM.md)."""
+        from app.hub.audit_log import agent as audit_agent
+        from app.supplier_chat.guardrail import from_llm
         ctx, a = state["context"], state["analysis"]
-        purpose, decision, reply = ctx["purpose"], a["decision"], a["reply_text"]
-        escalation, cr_id, result, final_rev = None, None, {"decision": decision}, None
+        purpose, decision = ctx["purpose"], a["decision"]
+        guard = from_llm(a.get("guard_flag"), "llm_reply")
+        if guard is not None:                                   # lapisan kedua guardrail: tanpa perubahan data
+            return {"guard": guard.as_dict(), "result": {"decision": decision, "guardrail": guard.as_dict()}}
+        reply, blocked = svc.safe_text(ctx["supplier_id"], a["reply_text"], state["text"])
+        if blocked:
+            a = {**a, "guardrail_output": blocked}
+        if purpose != P.CANCEL_ORDER.value and decision == "cancel_requested":
+            return {"cancellation": {"reason": a.get("reason") or state["text"][:200]},
+                    "result": {"decision": decision}}
+        escalation, cr_id, result, final_rev, manager_info = None, None, {"decision": decision}, None, None
         with A.write_session() as db:
             conv = db.get(SupplierConversation, ctx["conversation_id"])
             po = db.get(PurchaseOrder, conv.po_id) if conv.po_id else None
@@ -100,23 +117,55 @@ def build_supplier_reply_graph(svc):
                         result["still_needed"] = missing
                     else:
                         got = conv.outcome["collected"]
-                        A.record_supplier_confirmation(db, conv, got.get("promised_delivery_date"),
-                                                       got.get("supplier_reference"))
-                        rev = A.finalize_po_revision(db, po)        # lengkap -> versi FINAL + PDF
-                        final_rev = {"id": rev.id, "version": rev.version}
-                        result["final_revision"] = final_rev
-                        A.note_action(db, conv.automation_action_id, AutomationStatus.EXECUTED,
-                                      supplier_outcome=f"{po.po_number} dikonfirmasi supplier (versi final {rev.version})")
+                        promised = got.get("promised_delivery_date")
+                        check = L.check_date(db, po, date.fromisoformat(promised)) if promised else None
+                        if check is not None and not check.ok:      # di luar batas hari agent -> manajer
+                            conv.outcome = {**conv.outcome, "confirmed_pending": True}
+                            cr = A.open_date_change(db, po, check, state["text"], conv)
+                            cr_id = cr.id
+                            reply = (f"Terima kasih atas konfirmasinya. Tanggal kirim {promised} untuk {po.po_number} "
+                                     "sedang kami konfirmasi ke manajer; kami akan segera mengabari.")
+                            result["date_change"] = check.describe()
+                            audit_agent(db, "escalate_date", "change_request", cr.id,
+                                        f"Tanggal kirim {po.po_number} di luar batas agent: {check.describe()}",
+                                        supplier_id=po.supplier_id, po_number=po.po_number, new_date=promised)
+                        else:
+                            A.record_supplier_confirmation(db, conv, promised, got.get("supplier_reference"))
+                            rev = A.finalize_po_revision(db, po)    # lengkap -> versi FINAL + PDF
+                            final_rev = {"id": rev.id, "version": rev.version}
+                            result["final_revision"] = final_rev
+                            A.note_action(db, conv.automation_action_id, AutomationStatus.EXECUTED,
+                                          supplier_outcome=f"{po.po_number} dikonfirmasi supplier (versi final {rev.version})")
+                            audit_agent(db, "po_confirmed", "po", po.id,
+                                        f"{po.po_number} dikonfirmasi supplier (versi final {rev.version}"
+                                        + (f", kirim {promised}" if promised else "") + ")",
+                                        supplier_id=po.supplier_id, po_number=po.po_number)
                 elif decision == "declined":
                     A.record_supplier_decline(db, conv, a["reason"])
                     A.note_action(db, conv.automation_action_id, supplier_outcome=f"{po.po_number} ditolak supplier")
+                    audit_agent(db, "po_declined", "po", po.id, f"{po.po_number} ditolak supplier: {a['reason']}"[:300],
+                                supplier_id=po.supplier_id, po_number=po.po_number)
                     escalation = {"situation": "declined"}
                 elif decision == "change_requested":
                     if a.get("promised_delivery_date"):
                         A.collect_confirmation(conv, a, required)
                     cr = A.open_change_request(db, conv, proposed, state["text"], cfg.get("max_revision_rounds", 2))
-                    if cr is not None:
+                    if cr is not None and (cr.result or {}).get("auto"):     # harga di dalam batas: agent setuju
+                        lines = "; ".join(A.describe_change(c) for c in cr.proposed_changes)
+                        reply = (f"Terima kasih. Perubahan harga {po.po_number} kami terima ({lines}). Revisi PO "
+                                 "segera kami kirim untuk Anda konfirmasi.")
+                        manager_info = (f"ℹ️ {ctx['supplier_name']} mengubah harga {po.po_number}: {lines}. Masih dalam "
+                                        f"batas kenaikan harga agent ({L.limits(db)['price_increase_pct']}%), jadi agent "
+                                        "menyetujuinya; revisi dikirim ke supplier untuk dikonfirmasi.")
+                        result["auto_price_change"] = cr.id
+                        audit_agent(db, "auto_accept_price", "change_request", cr.id,
+                                    f"Perubahan harga {po.po_number} disetujui agent: {lines}"[:300],
+                                    supplier_id=po.supplier_id, po_number=po.po_number)
+                    elif cr is not None:
                         cr_id = cr.id
+                        audit_agent(db, "escalate_change", "change_request", cr.id,
+                                    f"Permintaan {cr.kind.lower().replace('_', ' ')} {po.po_number} diteruskan ke manajer",
+                                    supplier_id=po.supplier_id, po_number=po.po_number, kind=cr.kind)
                     else:
                         reply = (f"{reply}\nMohon sebutkan perubahan yang Anda minta secara spesifik "
                                  "(qty, harga satuan, atau tanggal kirim per item).")
@@ -145,12 +194,27 @@ def build_supplier_reply_graph(svc):
             result["conversation_status"] = conv.status.value
         sends = [{"chat_id": ctx["chat_id"], "text": reply, "direction": MessageDirection.OUT,
                   "conversation_id": ctx["conversation_id"], "supplier_id": ctx["supplier_id"], "agent_output": a}]
+        if manager_info:
+            sends.append(svc.manager_send(manager_info, conversation_id=ctx["conversation_id"]))
         if final_rev is not None:
             sends.append({"chat_id": ctx["chat_id"], "direction": MessageDirection.OUT,
                           "text": FINAL_CAPTION.format(po=ctx["po"]["po_number"]),
                           "conversation_id": ctx["conversation_id"], "supplier_id": ctx["supplier_id"],
                           "document": {"revision_id": final_rev["id"]}})
         return {"sends": sends, "escalation": escalation, "change_request_id": cr_id, "result": result}
+
+    def guard_block(state: SupplierTurn) -> SupplierTurn:
+        from app.supplier_chat.guardrail import Verdict
+        ctx, g = state["context"], state["guard"]
+        out = svc.guard_block(Verdict(g["category"], g["rule"], g["layer"]), ctx["supplier_id"], ctx["chat_id"],
+                              state["text"], None, ctx["conversation_id"])
+        return {"result": {**state["result"], **out, "conversation_status": "AWAITING_SUPPLIER", "delivered": True}}
+
+    def cancellation(state: SupplierTurn) -> SupplierTurn:
+        ctx = state["context"]
+        out = svc._supplier_cancellation(ctx["supplier_id"], ctx["chat_id"], ctx["po"], state["cancellation"]["reason"],
+                                         state["text"], state["analysis"], ctx["conversation_id"])
+        return {"result": {**state["result"], **out, "conversation_status": "CLOSED", "delivered": True}}
 
     def escalate(state: SupplierTurn) -> SupplierTurn:
         ctx, esc = state["context"], state["escalation"]
@@ -164,25 +228,34 @@ def build_supplier_reply_graph(svc):
         return {"sends": [*state["sends"], *out.get("sends", [])]}
 
     def deliver(state: SupplierTurn) -> SupplierTurn:
-        svc.deliver(state["sends"])
+        if not state["result"].get("delivered"):
+            svc.deliver(state["sends"])
         status = state["result"].get("conversation_status")
         if status not in (CS.AWAITING_SUPPLIER.value, CS.REVISION_REQUESTED.value):
             svc.dispatch_queued()                              # supplier bebas -> percakapan antrean berikutnya
         return {"result": {**state["result"], "change_request_id": state.get("change_request_id"), "handled": True}}
 
     def after_apply(state: SupplierTurn) -> str:
+        if state.get("guard"):
+            return "guard_block"
+        if state.get("cancellation"):
+            return "cancellation"
         if state.get("change_request_id"):
             return "present_revision"
         return "escalate" if state.get("escalation") else "deliver"
 
     g = StateGraph(SupplierTurn)
     for name, fn in [("load_context", load_context), ("analyze", analyze), ("apply_decision", apply_decision),
-                     ("escalate", escalate), ("present_revision", present_revision), ("deliver", deliver)]:
+                     ("escalate", escalate), ("present_revision", present_revision), ("guard_block", guard_block),
+                     ("cancellation", cancellation), ("deliver", deliver)]:
         g.add_node(name, fn)
     g.add_edge(START, "load_context")
     g.add_edge("load_context", "analyze")
     g.add_edge("analyze", "apply_decision")
-    g.add_conditional_edges("apply_decision", after_apply, ["present_revision", "escalate", "deliver"])
+    g.add_conditional_edges("apply_decision", after_apply,
+                            ["present_revision", "escalate", "guard_block", "cancellation", "deliver"])
+    g.add_edge("guard_block", "deliver")
+    g.add_edge("cancellation", "deliver")
     g.add_edge("escalate", "deliver")
     g.add_edge("present_revision", "deliver")
     g.add_edge("deliver", END)

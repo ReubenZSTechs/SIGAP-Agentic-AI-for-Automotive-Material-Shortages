@@ -195,3 +195,22 @@ def test_chat_returns_503_when_sap_connection_fails(client, monkeypatch):
     monkeypatch.setattr(service_module, "build_sap_clients", boom)
     r = client.post("/api/v1/chat", json={"message": "halo", "thread_id": "thread-503-y"})
     assert r.status_code == 503 and "Bad credentials" in r.json()["detail"]
+
+
+def test_table_shows_only_the_rows_the_question_asks_for(critical_state):
+    """"Which items do NOT have critical stock?" -> the stock table must not list CRITICAL rows."""
+    plan = {"calls": [{"tool": "get_stock_summary", "purpose": "stock of all items", "args": F.args()}]}
+    answer = {"blocks": [F.text_block("13 items do not have critical stock."),
+                         F.table_block("E1", ["name", "status", "available"],
+                                       filters=[{"column": "status", "op": "ne", "value": "CRITICAL",
+                                                 "values": None}])],
+              "claims": [{"text": "13 items without critical stock", "evidence_ids": ["E1"]}],
+              "insufficient_data": False}
+    svc, fake = _service(_script(RetrievalPlannerOutput=plan, SynthesizerOutput=answer))
+    final = svc.run("Which items that do not have critical stock?", "thread-not-critical")
+    table = next(b for b in final["blocks"] if b["type"] == "table")
+    statuses = {r[1] for r in table["rows"]}
+    assert "CRITICAL" not in statuses and len(table["rows"]) == 13
+    assert final["meta"]["metrics"]["numeric_grounding"] == 1.0            # "13" = rows shown in the table
+    judged = json.loads([c for c in fake.calls if c["agent"] == "EvaluatorOutput"][-1]["messages"][-1]["content"])
+    assert judged["answer"]["tables_rendered_from_evidence"][0]["rows_shown"] == 13

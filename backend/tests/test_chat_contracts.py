@@ -26,7 +26,7 @@ FIXTURES = {
     "mission_reply_agent": {"decision": "answered", "reply_text": "Terima kasih.", "promised_date": None,
                             "items": [{"material_ref": "RM-PDL-01", "price_per_unit": 41000, "lead_time_days": 4,
                                        "qty_available": None, "ready_date": None}],
-                            "documents_promised": False, "confidence": "HIGH", "notes": None},
+                            "guard_flag": "none", "confidence": "HIGH", "notes": None},
     "supplier_reply_agent": F.reply("change_requested", changes=[F.change("RM-RUB-01", "qty", "40")]),
     "supplier_inbound_triage": F.triage("PO-202610-0001", "revision_request"),
     "manager_escalation_writer": F.ESCALATION,
@@ -113,3 +113,22 @@ def test_gate_weighting_and_faithfulness_floor():
     low = apply_gate({"faithfulness": 0.8, "answer_relevance": 0.7, "numeric_grounding": 0.8, "completeness": 0.7},
                      w, 0.8, 0.7)
     assert not low.passed and low.score < 0.8
+
+
+def test_table_filters_are_deterministic():
+    from app.chatbot.evidence import filter_rows, render_table
+    [ev] = _ev([{"name": "Ban", "status": "CRITICAL", "available": -20},
+                    {"name": "Pedal", "status": "WARNING", "available": 20},
+                    {"name": "Rantai", "status": "SAFE", "available": 250}])
+    names = lambda fs: [r["name"] for r in filter_rows(ev, fs)]          # noqa: E731
+    f = lambda col, op, value=None, values=None: {"column": col, "op": op, "value": value, "values": values}  # noqa: E731
+    assert names([f("status", "ne", "critical")]) == ["Pedal", "Rantai"]          # case-insensitive
+    assert names([f("status", "in", values=["WARNING", "CRITICAL"])]) == ["Ban", "Pedal"]
+    assert names([f("status", "not_in", values=["SAFE"])]) == ["Ban", "Pedal"]
+    assert names([f("available", "gt", 0)]) == ["Pedal", "Rantai"]
+    assert names([f("available", "lte", "20")]) == ["Ban", "Pedal"]
+    assert names([f("name", "contains", "DAL")]) == ["Pedal"]                     # case-insensitive substring
+    assert names([f("status", "ne", "SAFE"), f("available", "gt", 0)]) == ["Pedal"]   # all conditions
+    assert names([f("unknown_col", "eq", 1)]) == ["Ban", "Pedal", "Rantai"]         # unknown column ignored
+    assert names(None) == ["Ban", "Pedal", "Rantai"]
+    assert len(render_table(ev, ["name"], "en", filters=[f("status", "eq", "SAFE")])["rows"]) == 1

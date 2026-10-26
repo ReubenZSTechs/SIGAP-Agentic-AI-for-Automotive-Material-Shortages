@@ -55,6 +55,13 @@ export default function PoHubPanel({ po, onChanged }) {
             <p className="flex flex-wrap items-center gap-x-2 text-slate-700">
               <Icon name="send" className="h-4 w-4 text-slate-500" />{t(CONF[data.confirmation.status] ?? data.confirmation.status)}
               {data.confirmation.promised_delivery_date && <span>{t('· janji kirim')} <b>{formatDate(data.confirmation.promised_delivery_date)}</b></span>}
+              {data.confirmation.delta_days != null && (
+                <span className={`text-xs font-medium ${data.confirmation.delta_days > 0 ? 'text-red-700' : 'text-slate-500'}`}>
+                  ({data.confirmation.delta_days === 0 ? t('tepat tenggat') : data.confirmation.delta_days > 0
+                    ? t('{n} hari setelah tenggat {d}', { n: data.confirmation.delta_days, d: formatDate(data.confirmation.deadline) })
+                    : t('{n} hari sebelum tenggat {d}', { n: -data.confirmation.delta_days, d: formatDate(data.confirmation.deadline) })})
+                </span>
+              )}
               {data.confirmation.supplier_reference && <span className="font-mono text-xs text-slate-500">· ref {data.confirmation.supplier_reference}</span>}
             </p>
           )}

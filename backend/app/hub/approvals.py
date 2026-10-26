@@ -3,8 +3,6 @@
 Keputusan revisi PO dijalankan lewat `manager_graph` yang sama dengan tombol Telegram, jadi aturan
 bisnis, validasi snapshot basi, dan pesan ke supplier tetap satu jalur.
 """
-from datetime import date
-
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -21,9 +19,13 @@ CRS = ChangeRequestStatus
 CR_PENDING = (CRS.PENDING_MANAGER, CRS.AWAITING_MANAGER_CONFIRM)
 CR_STATUS = {CRS.PENDING_MANAGER: "PENDING", CRS.AWAITING_MANAGER_CONFIRM: "PENDING", CRS.CHANGE_APPROVED: "APPROVED",
              CRS.ABORTED: "APPROVED", CRS.RESOURCED: "APPROVED", CRS.EXPIRED: "EXPIRED", CRS.FAILED: "FAILED"}
-CHOICE_LABEL = {"abort": "Batalkan PO", "approve_change": "Setujui perubahan", "resource": "Pesan ke supplier lain"}
+CHOICE_LABEL = A.OPTION_LABEL
 CR_FIELD = {"qty_ordered": ("qty", "qty", "higher-better"), "unit_price": ("harga", "Rp", "lower-better"),
-            "needed_by_date": ("tanggal", "date", "lower-better")}
+            "needed_by_date": ("tanggal", "date", "lower-better"),
+            "promised_delivery_date": ("tanggal kirim", "date", "lower-better"), "status": ("status", "text", "neutral")}
+CR_TYPE = {"REVISION": "PO_REVISION", "PRICE_CHANGE": "PO_PRICE", "DATE_CHANGE": "PO_DATE", "CANCELLATION": "PO_CANCELLED"}
+CR_TITLE = {"REVISION": "Revisi {po}", "PRICE_CHANGE": "Harga naik {po}", "DATE_CHANGE": "Tanggal kirim {po}",
+            "CANCELLATION": "Pembatalan {po}"}
 OPEN_PO_STATUSES = (POStatus.DRAFT, POStatus.PENDING_APPROVAL, POStatus.APPROVED, POStatus.ISSUED,
                     POStatus.PARTIALLY_RECEIVED)
 
@@ -38,8 +40,12 @@ def _hub_decider(db: Session, ref: str) -> HubAuditLog | None:
 
 
 # ------------------------------------------- views -------------------------------------------
+def cr_title(cr: POChangeRequest) -> str:
+    return CR_TITLE.get(cr.kind, "Revisi {po}").format(po=cr.po_number)
+
+
 def cr_brief(cr: POChangeRequest) -> dict:
-    return {"id": f"cr-{cr.id}", "title": f"Revisi {cr.po_number}", "status": CR_STATUS[cr.status], "type": "PO_REVISION"}
+    return {"id": f"cr-{cr.id}", "title": cr_title(cr), "status": CR_STATUS[cr.status], "type": CR_TYPE.get(cr.kind, "PO_REVISION")}
 
 
 def proposal_brief(p: HubProposal) -> dict:
@@ -50,12 +56,15 @@ def cr_view(db: Session, cr: POChangeRequest) -> dict:
     snap = cr.po_snapshot
     po = db.get(PurchaseOrder, cr.po_id) if cr.po_id else None
     pending = cr.status in CR_PENDING
-    stale = pending and (po is None or not A._unchanged(po, snap))
+    stale = pending and cr.kind != "CANCELLATION" and (po is None or not A._unchanged(po, snap))
     rows = []
     for c in cr.proposed_changes:
         label, unit, direction = CR_FIELD.get(c["field"], (c["field"], "text", "neutral"))
-        rows.append({"key": f"{c['po_item_id']}:{c['field']}", "label": f"{c['sku']} {c['name']} · {label}",
+        rows.append({"key": f"{c['po_item_id']}:{c['field']}", "label": f"{c['sku']} {c['name']}".strip() + f" · {label}",
                      "before": c["old"], "after": c["new"], "unit": unit, "direction": direction})
+        if c["field"] == "promised_delivery_date" and c.get("deadline"):
+            rows.append({"key": "deadline", "label": "Tenggat (needed-by)", "before": c["deadline"], "after": c["new"],
+                         "unit": "date", "direction": "lower-better"})
     for c in cr.invalid_changes or []:
         rows.append({"key": f"invalid:{c.get('material_ref')}:{c.get('field')}",
                      "label": f"{c.get('material_ref')} · {c.get('field')} (tidak valid: {c.get('error')})",
@@ -63,20 +72,33 @@ def cr_view(db: Session, cr: POChangeRequest) -> dict:
     approve = next((o for o in cr.options if o["key"] == "approve_change"), None)
     impact_items = [{"label": "Total PO", "before": A.rupiah(approve["total_before"]), "after": A.rupiah(approve["total_after"])}] \
         if approve else []
-    risk = "HIGH" if any(r["direction"] != "neutral" and r["unit"] in ("qty", "date") for r in rows) else "MEDIUM"
+    risk = "HIGH" if cr.kind in ("DATE_CHANGE", "CANCELLATION") or any(
+        r["direction"] != "neutral" and r["unit"] in ("qty", "date") for r in rows) else "MEDIUM"
     if approve and approve["total_before"]:
-        pct = abs(approve["total_after"] - approve["total_before"]) / approve["total_before"] * 100
-        if pct > C.threshold(db, "price_change_pct_high"):
+        pct = (approve["total_after"] - approve["total_before"]) / approve["total_before"] * 100
+        if pct > C.threshold(db, "price_increase_pct"):
             risk = "HIGH"
     hub = _hub_decider(db, str(cr.id))
     decided_by = hub.actor if hub else ("Manajer via Telegram" if cr.decided_at else None)
     note = CHOICE_LABEL.get(cr.manager_choice) if cr.manager_choice else (cr.result or {}).get("error")
+    summary = {
+        "REVISION": f"Supplier meminta revisi {cr.po_number} (total saat ini {A.rupiah(snap['total_amount'])}).",
+        "PRICE_CHANGE": f"Supplier menaikkan harga {cr.po_number} melebihi batas kenaikan agent "
+                        f"({C.threshold(db, 'price_increase_pct')}%). Terima, ajukan harga nego, cari supplier lebih "
+                        "murah, atau batalkan PO.",
+        "DATE_CHANGE": f"Tanggal kirim baru untuk {cr.po_number} di luar batas hari agent: "
+                       f"{(cr.proposed_changes or [{}])[0].get('reason', '')}.",
+        "CANCELLATION": f"Supplier membatalkan {cr.po_number}; PO sudah dibatalkan otomatis. Pengganti di luar batas "
+                        "agent (terlambat / lebih mahal) atau tidak ada; putuskan kelanjutan proyek.",
+    }.get(cr.kind, "")
+    if cr.result and cr.result.get("auto"):
+        summary += " Disetujui otomatis oleh agent (di dalam batas)."
     return {
-        "id": f"cr-{cr.id}", "type": "PO_REVISION", "status": CR_STATUS[cr.status], "risk": risk, "version": 1,
-        "stale": stale, "title": f"Revisi {cr.po_number}", "supplier": {"id": cr.supplier_id, "name": cr.supplier.name},
+        "id": f"cr-{cr.id}", "type": CR_TYPE.get(cr.kind, "PO_REVISION"), "kind": cr.kind, "status": CR_STATUS[cr.status],
+        "risk": risk, "version": 1, "stale": stale, "title": cr_title(cr),
+        "supplier": {"id": cr.supplier_id, "name": cr.supplier.name},
         "created_at": C.iso(cr.created_at), "expires_at": C.iso(C.after(cr.created_at, C.cr_ttl_hours())),
-        "summary": f"Supplier meminta revisi {cr.po_number} (total saat ini {A.rupiah(snap['total_amount'])}). "
-                   "Pilih salah satu opsi; keputusan berlaku sama seperti tombol di Telegram manajer.",
+        "summary": summary + " Pilih salah satu opsi; keputusan berlaku sama seperti tombol di Telegram manajer.",
         "thread_id": cr.supplier_id, "po_id": cr.po_id, "po_number": cr.po_number,
         "diff": {"rows": rows},
         "evidence": [{"id": f"cr{cr.id}", "from": cr.supplier.name, "at": _clock(cr.created_at), "confidence": "HIGH",
@@ -85,9 +107,13 @@ def cr_view(db: Session, cr: POChangeRequest) -> dict:
                    "items": impact_items},
         "options": [{"key": o["key"], "label": o["label"], "effect": o["effect"],
                      "total_before": o.get("total_before"), "total_after": o.get("total_after"),
-                     "purchase_orders": [{"supplier_name": g["supplier_name"], "total_amount": g["total_amount"]}
-                                         for g in o.get("purchase_orders", [])]} for o in cr.options],
-        "decided_by": decided_by, "decided_at": C.iso(cr.decided_at), "decision_note": note,
+                     "purchase_orders": [{"supplier_name": g["supplier_name"], "total_amount": g["total_amount"],
+                                          "lead_time_days": max((i.get("lead_time_days") or 0) for i in g["items"])}
+                                         for g in o.get("purchase_orders", [])],
+                     "warnings": o.get("warnings", []), "needs": o.get("needs"), "lines": o.get("lines"),
+                     "schedules": o.get("schedules")} for o in cr.options],
+        "decided_by": decided_by or (cr.result or {}).get("decided_by"), "decided_at": C.iso(cr.decided_at),
+        "decision_note": note,
     }
 
 
@@ -171,8 +197,11 @@ def get_approval(db: Session, approval_id: str) -> dict:
 
 
 # ----------------------------------------- decisions -----------------------------------------
-def choose_change_request(svc, cr_id: int, choice: str, actor: str) -> dict:
-    """Pilihan opsi revisi PO dari Hub = tombol `cr:<id>:<choice>` milik manajer, dengan actor dari Hub."""
+def choose_change_request(svc, cr_id: int, choice: str, actor: str, params: dict | None = None) -> dict:
+    """Pilihan opsi dari Hub = tombol `cr:<id>:<choice>` milik manajer, dengan actor dari Hub.
+
+    `params`: counter_prices {po_item_id: harga} untuk `negotiate`, schedule_ids untuk `cancel_project`.
+    """
     from app.database import SessionLocal
     with SessionLocal() as db:
         cr = db.get(POChangeRequest, cr_id)
@@ -186,10 +215,13 @@ def choose_change_request(svc, cr_id: int, choice: str, actor: str) -> dict:
         db.add(SupplierMessage(chat_id=svc.manager_chat_id, direction=MessageDirection.MANAGER_IN,
                                text=f"[Hub] {actor}: {CHOICE_LABEL.get(choice, choice)} ({po_number})",
                                agent_output={"source": "hub", "author": actor, "button": f"cr:{cr_id}:{choice}"}))
-        C.audit(db, actor, "choose", "change_request", cr_id, choice=choice, po_number=po_number)
+        C.audit(db, actor, "choose", "change_request", cr_id, choice=choice, po_number=po_number,
+                supplier_id=cr.supplier_id, kind=cr.kind, params=params or None,
+                summary=f"{CHOICE_LABEL.get(choice, choice)} untuk {cr_title(cr)}")
         db.commit()
     svc.mirror_to_manager(f"Diputuskan via Hub oleh {actor}: {CHOICE_LABEL.get(choice, choice)} untuk {po_number}.")
-    result = svc.manager_graph.invoke({"kind": "button", "data": f"cr:{cr_id}:{choice}", "actor": f"{actor} via Hub"})
+    result = svc.manager_graph.invoke({"kind": "button", "data": f"cr:{cr_id}:{choice}", "actor": f"{actor} via Hub",
+                                       "params": params or None})
     if result.get("error"):
         raise AppError(409, result["error"])
     return result
@@ -248,15 +280,16 @@ def approve_proposal(pid: int, body: dict) -> dict:
                 po = db.get(PurchaseOrder, r["meta"]["po_id"])
                 if po is None:
                     raise AppError(409, "PO sudah dihapus")
-                conf = A.confirmation(db, po.id)
-                conf.promised_delivery_date = date.fromisoformat(r["after"])
-                conf.note = f"Jadwal kirim diperbarui via Hub oleh {actor}"[:300]
-                applied.append({"key": r["key"], "po_number": po.po_number, "promised_delivery_date": r["after"]})
+                rev = A.revise_promised_date(db, po, r["after"], actor)       # tanggal baru + versi PO baru
+                applied.append({"key": r["key"], "po_number": po.po_number, "promised_delivery_date": r["after"],
+                                "revision": rev.version})
         else:   # STOCK_CHECK: hasil dicatat, tidak ada data master yang berubah
             applied = [{"key": r["key"]} for r in rows if r["key"] in selected]
         p.status, p.decided_by, p.decided_at = ProposalStatus.APPROVED, actor, A.now()
         p.result = {"applied": applied}
-        C.audit(db, actor, "approve", "proposal", p.id, type=p.type.value, applied=applied)
+        C.audit(db, actor, "approve", "proposal", p.id, type=p.type.value, applied=applied,
+                po_number=(p.payload.get("po_snapshot") or {}).get("po_number"), supplier_id=p.supplier_id,
+                summary=f"Menyetujui {p.title}")
         return proposal_view(db, p)
 
 
@@ -269,7 +302,8 @@ def decide_proposal(pid: int, mode: str, body: dict) -> dict:
         p = _proposal(db, pid)
         p.status = ProposalStatus.REJECTED if mode == "reject" else ProposalStatus.REVISION
         p.decided_by, p.decided_at, p.decision_note = actor, A.now(), reason[:300]
-        C.audit(db, actor, mode, "proposal", p.id, reason=reason)
+        C.audit(db, actor, mode, "proposal", p.id, reason=reason, supplier_id=p.supplier_id,
+                summary=f"{'Menolak' if mode == 'reject' else 'Minta revisi'} {p.title}: {reason}")
         return proposal_view(db, p)
 
 

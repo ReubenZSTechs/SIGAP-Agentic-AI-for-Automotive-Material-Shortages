@@ -2,25 +2,24 @@ import { useEffect, useMemo, useState } from 'react';
 import Button from '../../../components/common/Button';
 import FormField from '../../../components/common/FormField';
 import Icon from '../../../components/common/Icon';
-import Input, { Select, Textarea } from '../../../components/common/Input';
+import Input, { Select } from '../../../components/common/Input';
 import Modal from '../../../components/common/Modal';
 import Tabs from '../../../components/common/Tabs';
 import { Spinner } from '../../../components/common/EmptyState';
 import StateBadge from '../StateBadge';
-import { AgentTile } from '../thread/MessageBubble';
 import { AUTONOMY, SCENARIO, TELEGRAM, approverName } from '../meta';
 import useFetch from '../../../hooks/useFetch';
 import { hubService } from '../../../services/hubService';
-import { COMPANY, formatDeadline, greeting, templateParts } from '../../../utils/template';
+import { formatDeadline } from '../../../utils/template';
 import { formatQty, formatRupiah } from '../../../utils/formatters';
 import { t } from '../../../i18n';
 
-const STEPS = ['Sumber & skenario', 'Item & supplier', 'Tenggat & otonomi', 'Pratinjau'];
+const STEPS = ['Sumber & skenario', 'Item & supplier', 'Tenggat & otonomi'];
 const pad = (n) => String(n).padStart(2, '0');
 const localInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const defaultDeadline = () => { const d = new Date(Date.now() + 2 * 864e5); d.setHours(17, 0, 0, 0); return localInput(d); };
 const blank = (poId) => ({ source: poId ? 'PO' : 'MATERIAL', po_id: poId ? String(poId) : '', scenario: '', material_id: '', qty: '',
-  item_ids: [], topic: '', supplier_ids: [], deadline: defaultDeadline(), autonomy: '', message: '' });
+  item_ids: [], topic: '', supplier_ids: [], deadline: defaultDeadline(), autonomy: '' });
 
 function Choice({ active, disabled, onClick, children }) {
   return (
@@ -47,16 +46,16 @@ function SupplierRow({ s, checked, locked, note, onToggle }) {
   );
 }
 
-// Wizard empat langkah. Sumber misi: material (data master) atau PO yang sudah ada (PO hanya dibaca, tidak diubah).
+// Wizard tiga langkah. Sumber misi: material (data master) atau PO yang sudah ada. Pesan pembuka disusun server.
+// Misi PO (Konfirmasi / Pembatalan PO) dijalankan agent PO: agent membuka percakapan PO dan misi mengikuti progresnya.
 export default function MissionWizard({ open, poId, onClose, onCreated }) {
   const [step, setStep] = useState(0);
   const [f, setF] = useState(() => blank(poId));
-  const [preview, setPreview] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const base = useFetch(() => (open
-    ? Promise.all([hubService.missionOptions(), hubService.getTemplates(), hubService.getPolicies()])
-      .then(([options, templates, policies]) => ({ ...options, templates, policies }))
+    ? Promise.all([hubService.missionOptions(), hubService.getPolicies()])
+      .then(([options, policies]) => ({ ...options, policies }))
     : Promise.resolve(null)), [open]);
   const po = useFetch(() => (open && f.source === 'PO' && f.po_id ? hubService.poOptions(f.po_id) : Promise.resolve(null)), [open, f.source, f.po_id]);
 
@@ -75,7 +74,7 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
     if (fromPo) {
       if (!poData) return [];
       const rows = poData.suppliers.map((s) => ({ s, note: s.role === 'PO' ? t('supplier PO') : t('alternatif: {list}', { list: s.skus.join(', ') }), role: s.role }));
-      return sc?.poOnly || sc?.poSupplierOnly ? rows.filter((r) => r.role === 'PO') : rows;
+      return sc?.poOnly ? rows.filter((r) => r.role === 'PO') : rows;
     }
     const linked = new Map((mat?.suppliers ?? []).map((l) => [l.supplier_id, l]));
     return [...data.suppliers].filter((s) => s.is_active)
@@ -87,18 +86,16 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
   }, [data, fromPo, poData, sc, mat]);
 
   const chosen = f.supplier_ids.map((id) => suppliersById[id]).filter(Boolean);
-  const previewSupplier = chosen.find((s) => String(s.id) === preview) ?? chosen[0];
 
   const pickScenario = (key) => {
     const s = SCENARIO[key];
     let supplierIds = [];
     if (fromPo && poData) {
       const poSupplier = poData.suppliers.find((x) => x.role === 'PO');
-      supplierIds = s.poOnly || s.poSupplierOnly ? [poSupplier.id] : poData.suppliers.map((x) => x.id);
+      supplierIds = s.poOnly ? [poSupplier.id] : poData.suppliers.map((x) => x.id);
     }
     const outbound = data.policies.scenarios.find((x) => x.key === key)?.outbound ?? 'AUTO';
-    set({ scenario: key, supplier_ids: supplierIds, autonomy: outbound, item_ids: poData ? poData.items.map((i) => i.material_id) : [],
-      topic: key === 'DOC_REQUEST' && poData ? `invoice dan surat jalan ${poData.po.po_number}` : '' });
+    set({ scenario: key, supplier_ids: supplierIds, autonomy: s.agentPo ? 'AUTO' : outbound, item_ids: poData ? poData.items.map((i) => i.material_id) : [], topic: '' });
   };
   const pickMaterial = (id) => {
     const m = data.materials.find((x) => String(x.id) === id);
@@ -114,20 +111,18 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
   const valid = [
     !!f.scenario && (!fromPo || !!poData) && scenarioAllowed(f.scenario),
     f.supplier_ids.length > 0 && (fromPo
-      ? (!sc?.needsItem || f.item_ids.length > 0) && (f.scenario !== 'DOC_REQUEST' || f.topic.trim().length > 2)
+      ? (!sc?.needsItem || f.item_ids.length > 0)
       : (sc?.needsItem ? !!f.material_id && Number(f.qty) > 0 : f.topic.trim().length > 2)),
     !!f.deadline && new Date(f.deadline) > new Date(),
-    f.message.trim().length > 10,
   ];
   const ERR = ['Pilih sumber dan skenario yang berlaku', 'Lengkapi item/topik dan pilih minimal 1 supplier', 'Tenggat harus di masa depan'];
   const next = () => {
     if (!valid[step]) return setErr(ERR[step]);
     setErr('');
-    if (step === 2) set({ message: data.templates.find((item) => item.scenario === f.scenario)?.body ?? '' });
     return setStep(step + 1);
   };
   const submit = async () => {
-    if (!valid[3]) return setErr('Pesan terlalu pendek');
+    if (!valid[2]) return setErr(ERR[2]);
     setBusy(true); setErr('');
     try {
       const items = fromPo
@@ -136,26 +131,13 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
       const ms = await hubService.createMission({
         approver: approverName(), scenario: f.scenario, po_id: fromPo ? Number(f.po_id) : null, items,
         topic: f.topic.trim() || null, supplier_ids: f.supplier_ids, deadline: new Date(f.deadline).toISOString(),
-        autonomy: f.autonomy || null, message: f.message,
+        autonomy: f.autonomy || null,
       });
       onCreated(ms);
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
     return undefined;
   };
 
-  const itemText = () => {
-    if (!sc) return '';
-    if (!sc.needsItem) return f.topic || (poData ? poData.po.po_number : '');
-    if (fromPo) {
-      const its = poData?.items.filter((i) => f.item_ids.includes(i.material_id)) ?? [];
-      return its.length === 1 ? `${its[0].name} sebanyak ${formatQty(its[0].qty)} ${its[0].uom}` : 'item-item berikut';
-    }
-    return mat ? `${mat.name} sebanyak ${f.qty} ${mat.uom}` : '';
-  };
-  const vars = previewSupplier ? {
-    waktu: greeting(), kontak: previewSupplier.contact, supplier: previewSupplier.name, perusahaan: COMPANY, item: itemText(),
-    qty: fromPo ? '' : f.qty, satuan: mat?.uom ?? '', po: poData?.po.po_number ?? '', tenggat: f.deadline ? formatDeadline(new Date(f.deadline)) : '',
-  } : {};
 
   return (
     <Modal open={open} onClose={onClose} size="lg" title={t('Misi baru')}
@@ -163,7 +145,7 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
         <>
           {err && <p role="alert" className="mr-auto self-center text-xs font-medium text-red-600">{err}</p>}
           <Button variant="secondary" onClick={step === 0 ? onClose : () => { setErr(''); setStep(step - 1); }}>{step === 0 ? 'Batal' : 'Kembali'}</Button>
-          {step < 3 ? <Button onClick={next}>{t('Lanjut')}</Button> : <Button loading={busy} onClick={submit}><Icon name="send" /> {t('Mulai misi')}</Button>}
+          {step < 2 ? <Button onClick={next}>{t('Lanjut')}</Button> : <Button loading={busy} onClick={submit}><Icon name="send" /> {t('Mulai misi')}</Button>}
         </>
       )}>
       <ol className="mb-5 flex flex-wrap gap-x-4 gap-y-1 text-xs" aria-label={t('Langkah')}>
@@ -232,9 +214,6 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
                       </ul>
                     </fieldset>
                   )}
-                  {f.scenario === 'DOC_REQUEST' && (
-                    <FormField label={t('Dokumen yang diminta')}><Input value={f.topic} onChange={(e) => set({ topic: e.target.value })} /></FormField>
-                  )}
                 </>
               ) : sc.needsItem ? (
                 <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
@@ -249,8 +228,8 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
                   </FormField>
                 </div>
               ) : (
-                <FormField label={t('Topik / dokumen yang diminta')} hint="Dipakai sebagai {item} di template pesan">
-                  <Input value={f.topic} placeholder={t('mis. Faktur pajak Oktober')} onChange={(e) => set({ topic: e.target.value })} />
+                <FormField label={t('Topik yang ditanyakan')} hint={t('Disebutkan di pesan pembuka')}>
+                  <Input value={f.topic} onChange={(e) => set({ topic: e.target.value })} />
                 </FormField>
               )}
               <fieldset>
@@ -259,7 +238,7 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
                   <ul className="max-h-72 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
                     {supplierChoices.map(({ s, note }) => (
                       <SupplierRow key={s.id} s={s} note={note} checked={f.supplier_ids.includes(s.id)}
-                        locked={fromPo && (sc.poOnly || sc.poSupplierOnly)} onToggle={() => toggle('supplier_ids', s.id)} />
+                        locked={fromPo && sc.poOnly} onToggle={() => toggle('supplier_ids', s.id)} />
                     ))}
                   </ul>
                 )}
@@ -270,56 +249,38 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
 
           {step === 2 && (
             <div className="space-y-4">
-              <FormField label={t('Tenggat balasan')} hint={t('Lewat tenggat, misi ditutup otomatis dan balasan yang ada dirangkum')}>
+              <FormField label={t(sc.agentPo ? 'Target selesai' : 'Tenggat balasan')}
+                hint={t(sc.agentPo ? 'Acuan pemantauan; percakapan PO tetap berjalan sampai supplier mengonfirmasi atau manajer memutuskan'
+                  : 'Lewat tenggat, misi ditutup otomatis dan balasan yang ada dirangkum')}>
                 <Input type="datetime-local" value={f.deadline} min={localInput(new Date())} onChange={(e) => set({ deadline: e.target.value })} className="sm:w-64" />
               </FormField>
-              <fieldset>
-                <legend className="mb-1.5 text-sm font-medium text-slate-700">{t('Pesan keluar')}</legend>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {Object.entries(AUTONOMY).map(([k, a]) => (
-                    <Choice key={k} active={f.autonomy === k} onClick={() => set({ autonomy: k })}>
-                      <span><span className="block text-sm font-semibold text-slate-900">{t(a.label)}</span><span className="mt-0.5 block text-xs text-slate-500">{t(a.desc)}</span></span>
-                    </Choice>
-                  ))}
-                </div>
-              </fieldset>
-              <p className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-600">
-                <Icon name="shield" className="mt-0.5 h-4 w-4 text-primary-600" />
-                {t('Apa pun pilihannya, perubahan harga dan jadwal dari hasil misi tetap masuk Inbox Persetujuan. Misi tidak membuat atau mengubah PO.')}
-              </p>
-            </div>
-          )}
-
-          {step === 3 && (
-            <div className="space-y-4">
-              <FormField label={t('Template pesan')} hint="Variabel dalam {kurung kurawal} diisi per supplier oleh server">
-                <Textarea rows={4} value={f.message} onChange={(e) => set({ message: e.target.value })} />
-              </FormField>
-              <div>
-                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm font-medium text-slate-700">{t('Pratinjau untuk')}</span>
-                  <Select className="h-8 w-auto! min-w-0 text-xs" value={previewSupplier?.id ?? ''} onChange={(e) => setPreview(e.target.value)} aria-label={t('Supplier pratinjau')}>
-                    {chosen.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </Select>
-                </div>
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="ml-auto w-fit max-w-[90%]">
-                    <div className="mb-1 flex items-center justify-end gap-1.5 text-xs text-slate-500"><AgentTile /> <b className="font-semibold text-slate-700">{t('Agent')}</b> {t('· template')}</div>
-                    <p className={`whitespace-pre-line rounded-2xl rounded-tr-md px-3.5 py-2.5 text-sm text-slate-800 ${f.autonomy === 'REVIEW' ? 'border border-dashed border-primary-400 bg-primary-50/50' : 'bg-primary-50 ring-1 ring-inset ring-primary-100'}`}>
-                      {templateParts(f.message, vars).map((p, i) => (p.key
-                        ? <mark key={i} className={`rounded px-0.5 ${p.key.startsWith('!') ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-slate-900'}`}>{p.text}</mark>
-                        : <span key={i}>{p.text}</span>))}
-                    </p>
-                  </div>
-                </div>
-                <p className="mt-1.5 text-xs text-slate-500">
-                  Sorotan kuning = nilai variabel, merah = variabel tidak dikenal. Server menambahkan {fromPo && (sc.poOnly || sc.poSupplierOnly) ? t('ringkasan PO') : t('daftar item (tanpa harga)')} secara otomatis bila relevan.
+              {sc.agentPo ? (
+                <p className="flex items-start gap-2 rounded-lg bg-primary-50 px-3 py-2.5 text-xs text-primary-900">
+                  <Icon name="spark" className="mt-0.5 h-4 w-4 text-primary-600" />
+                  {t('Agent PO langsung menghubungi supplier PO dan memperbarui misi ini di setiap langkah. Perubahan tanggal kirim atau harga di dalam batas otomatis diterima agent; di luar batas diteruskan ke manajer.')}
                 </p>
-              </div>
+              ) : (
+                <>
+                  <fieldset>
+                    <legend className="mb-1.5 text-sm font-medium text-slate-700">{t('Pesan keluar')}</legend>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {Object.entries(AUTONOMY).map(([k, a]) => (
+                        <Choice key={k} active={f.autonomy === k} onClick={() => set({ autonomy: k })}>
+                          <span><span className="block text-sm font-semibold text-slate-900">{t(a.label)}</span><span className="mt-0.5 block text-xs text-slate-500">{t(a.desc)}</span></span>
+                        </Choice>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <p className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-600">
+                    <Icon name="shield" className="mt-0.5 h-4 w-4 text-primary-600" />
+                    {t('Apa pun pilihannya, perubahan harga dan jadwal dari hasil misi tetap masuk Inbox Persetujuan. Misi tidak membuat atau mengubah PO.')}
+                  </p>
+                </>
+              )}
               <dl className="grid grid-cols-3 gap-3 rounded-lg border border-slate-200 p-3 text-sm">
                 <div><dt className="text-xs text-slate-500">{t('Penerima')}</dt><dd className="font-medium">{chosen.length} supplier</dd></div>
-                <div><dt className="text-xs text-slate-500">{t('Tenggat')}</dt><dd className="font-medium">{formatDeadline(new Date(f.deadline))}</dd></div>
-                <div><dt className="text-xs text-slate-500">{t('Pesan keluar')}</dt><dd className="font-medium">{t(AUTONOMY[f.autonomy]?.label)}</dd></div>
+                <div><dt className="text-xs text-slate-500">{t('Tenggat')}</dt><dd className="font-medium">{f.deadline ? formatDeadline(new Date(f.deadline)) : '-'}</dd></div>
+                <div><dt className="text-xs text-slate-500">{t('Pesan keluar')}</dt><dd className="font-medium">{t(sc.agentPo ? 'Agent PO' : AUTONOMY[f.autonomy]?.label)}</dd></div>
               </dl>
             </div>
           )}

@@ -179,7 +179,7 @@ def test_confirmation_without_date_asks_for_it_then_sends_one_final_pdf(seeded):
         F.reply("confirmed", "Terima kasih atas konfirmasinya."),           # "Bisa" (tanpa tanggal)
         F.reply("unclear", "Baik.", promised=F.SOON)],                       # "Tanggal …" (agent ragu)
         "SupplierInboundTriageOutput": [F.triage(number, "acknowledgement", "Sama-sama, sudah kami catat."),
-                                        F.triage(number, "delivery_update", "Siap.", promised=F.SOON)]},
+                                        F.triage(number, "delivery_change", "Siap.", promised=F.SOON)]},
         transport=transport)
     chat = H.link(svc, seeded, "SUP-CPT")
     cid = H.start(svc, po_id)
@@ -202,12 +202,15 @@ def test_confirmation_without_date_asks_for_it_then_sends_one_final_pdf(seeded):
     assert H.messages("OUT", chat)[-1].text == f"Terima kasih, {number} sudah tercatat terkonfirmasi."
 
     later = (date.today() + timedelta(days=9)).isoformat()
-    fake.script["SupplierInboundTriageOutput"] = [F.triage(number, "delivery_update", "Siap.", promised=later)]
-    svc.handle_inbound(chat, "Ternyata baru bisa kirim tanggal itu")
-    assert H.messages("OUT", chat)[-1].text == f"Terima kasih. Tanggal kirim {number} kami catat: {later}."
+    fake.script["SupplierInboundTriageOutput"] = [F.triage(number, "delivery_change", "Siap.", promised=later)]
+    svc.handle_inbound(chat, "Ternyata baru bisa kirim tanggal itu")     # PO tanpa needed-by: dalam batas agent
+    assert H.messages("OUT", chat)[-1].text.startswith(f"Terima kasih. Tanggal kirim {number} kami perbarui menjadi {later}.")
     with SessionLocal() as db:
         assert A.confirmation(db, po_id).promised_delivery_date.isoformat() == later
-    assert H.revisions(po_id)[-1].snapshot["promised_delivery_date"] == later and len(transport.documents) == 1
+    rev = H.revisions(po_id)[-1]
+    assert rev.snapshot["promised_delivery_date"] == later and rev.status.value == "FINAL" and rev.version == 2
+    assert len(transport.documents) == 2                                   # PDF versi baru ikut terkirim
+    assert "dalam batas agent" in H.messages("MANAGER_OUT")[-1].text
 
 
 def test_required_fields_are_configurable(seeded):

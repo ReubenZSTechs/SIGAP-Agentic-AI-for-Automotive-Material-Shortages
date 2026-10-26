@@ -362,7 +362,7 @@ Environment variables (`backend/.env`, see `backend/.env.example`):
 | Variable | Purpose |
 |:--|:--|
 | `AICORE_AUTH_URL`, `AICORE_CLIENT_ID`, `AICORE_CLIENT_SECRET`, `AICORE_BASE_URL`, `AICORE_RESOURCE_GROUP` | SAP AI Core credentials (from the keybroker). `/oauth/token` and `/v2` are appended automatically. |
-| `CHAT_DATABASE_URL` | Optional read-only database role for the chatbot. Defaults to `DATABASE_URL` (still in read-only transactions). |
+| `DATABASE_URL` | The single application database, also used by the chatbot (read-only transactions). There is no separate chat database or `CHAT_DATABASE_URL` any more. Local: Postgres 17 in Docker; production: Supabase (`APP_ENV=production`, see `docs/DEPLOYMENT.md`). |
 
 ---
 
@@ -426,10 +426,10 @@ It prints PASS/FAIL per question plus the average of each metric and the gate pa
 
 ## 11. Security
 
-The chatbot is read-only by **three independent layers**:
+The chatbot shares the application database (one `DATABASE_URL`, also on Supabase / SAP BTP) and is read-only by **three independent layers**:
 
-1. **Database role.** In Docker, the chatbot connects as `mrp_chat_ro`, which only has `SELECT` rights.
-2. **Read-only transactions.** Every chatbot transaction starts with `SET TRANSACTION READ ONLY`, even with a normal database user.
+1. **Read-only transactions.** Every chatbot transaction (`app/chatbot/db.py`) starts with `SET TRANSACTION READ ONLY` and `SET LOCAL statement_timeout = 10000`. Both are transaction-scoped, so they also hold behind the Supabase transaction pooler. Writes are rejected by Postgres itself.
+2. **Relation allow-list.** The SQL agent may only read the tables and `chat_*_v` views in `app/chatbot/schema_catalog.py`.
 3. **SQL guard.** AI-written SQL must be a single `SELECT` on allow-listed views and tables. Writes, DDL, `SELECT INTO`, row locks, system catalogs, and functions such as `pg_sleep` or `dblink` are rejected before reaching the database.
 
 Also:

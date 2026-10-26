@@ -4,7 +4,11 @@
   "title": "SynthesizerOutput",
   "type": "object",
   "additionalProperties": false,
-  "required": ["blocks", "claims", "insufficient_data"],
+  "required": [
+    "blocks",
+    "claims",
+    "insufficient_data"
+  ],
   "properties": {
     "blocks": {
       "type": "array",
@@ -12,17 +16,110 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["type", "text", "evidence_id", "columns", "title"],
+        "required": [
+          "type",
+          "text",
+          "evidence_id",
+          "columns",
+          "title",
+          "filters"
+        ],
         "properties": {
-          "type": {"type": "string", "enum": ["text", "table"]},
-          "text": {"type": ["string", "null"], "description": "Markdown-free prose; required for text blocks."},
-          "evidence_id": {"type": ["string", "null"], "description": "Evidence id (e.g. E1) whose rows the table renders."},
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "table"
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Markdown-free prose; required for text blocks."
+          },
+          "evidence_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Evidence id (e.g. E1) whose rows the table renders."
+          },
           "columns": {
-            "type": ["array", "null"],
-            "items": {"type": "string"},
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
             "description": "Evidence column names to show, in order; required for table blocks."
           },
-          "title": {"type": ["string", "null"]}
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filters": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "description": "Table blocks only: conditions (all must hold) that select the rows the answer is about, e.g. [{column: status, op: ne, value: CRITICAL}]. null = all rows.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "column",
+                "op",
+                "value",
+                "values"
+              ],
+              "properties": {
+                "column": {
+                  "type": "string",
+                  "description": "Evidence column name."
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "eq",
+                    "ne",
+                    "in",
+                    "not_in",
+                    "gt",
+                    "gte",
+                    "lt",
+                    "lte",
+                    "contains"
+                  ]
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "number",
+                    "null"
+                  ],
+                  "description": "For eq, ne, gt, gte, lt, lte, contains."
+                },
+                "values": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "description": "For in / not_in."
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -32,13 +129,26 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["text", "evidence_ids"],
+        "required": [
+          "text",
+          "evidence_ids"
+        ],
         "properties": {
-          "text": {"type": "string"},
-          "evidence_ids": {"type": "array", "items": {"type": "string"}}
+          "text": {
+            "type": "string"
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       }
     },
-    "insufficient_data": {"type": "boolean", "description": "True when the evidence cannot answer the question."}
+    "insufficient_data": {
+      "type": "boolean",
+      "description": "True when the evidence cannot answer the question."
+    }
   }
 }

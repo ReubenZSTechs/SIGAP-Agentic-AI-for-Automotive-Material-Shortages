@@ -31,7 +31,7 @@ function Attachment({ a, onOpen }) {
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-500"><Icon name={a.kind === 'image' ? 'image' : 'file'} className="h-5 w-5" /></span>
       <span className="min-w-0">
         <span className="block truncate text-sm font-medium text-slate-800">{a.name}</span>
-        <span className="block text-xs text-slate-500">{a.outbound ? t('PO final (PDF) dikirim ke supplier') : `${a.kind === 'image' ? t('Gambar') : t('Dokumen')} · ${a.size}`}{a.archived ? ` · ${t('diarsipkan')}` : ''}</span>
+        <span className="block text-xs text-slate-500">{a.outbound ? t('PO final (PDF) dikirim ke supplier') : `${a.kind === 'image' ? t('Gambar') : t('Dokumen')} · ${a.size}`}</span>
       </span>
     </button>
   );

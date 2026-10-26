@@ -93,10 +93,15 @@ class POSupplierConfirmation(Base):
 
 
 class POChangeRequest(Base):
-    """Permintaan revisi dari supplier + opsi deterministik untuk manajer."""
+    """Keputusan manajer atas permintaan supplier + opsi deterministik (dihitung kode, bukan LLM).
+
+    kind: REVISION (qty/harga), PRICE_CHANGE (harga di atas batas), DATE_CHANGE (tanggal kirim di luar
+    batas hari), CANCELLATION (supplier membatalkan; pengganti terlambat/mahal/tidak ada).
+    """
     __tablename__ = "po_change_requests"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), default="REVISION", server_default="REVISION")
     po_id: Mapped[int | None] = mapped_column(ForeignKey("purchase_orders.id", ondelete="SET NULL"),
                                               index=True, default=None)
     po_number: Mapped[str] = mapped_column(String(24))

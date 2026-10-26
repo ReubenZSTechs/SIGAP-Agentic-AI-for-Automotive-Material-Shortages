@@ -51,11 +51,11 @@ PLAN_CRITICAL = {"calls": [{"tool": "get_critical_items", "purpose": "critical i
 
 
 def text_block(text: str) -> dict:
-    return {"type": "text", "text": text, "evidence_id": None, "columns": None, "title": None}
+    return {"type": "text", "text": text, "evidence_id": None, "columns": None, "title": None, "filters": None}
 
 
-def table_block(eid: str, columns: list[str]) -> dict:
-    return {"type": "table", "text": None, "evidence_id": eid, "columns": columns, "title": None}
+def table_block(eid: str, columns: list[str], filters=None) -> dict:
+    return {"type": "table", "text": None, "evidence_id": eid, "columns": columns, "title": None, "filters": filters}
 
 
 def judge(f=1.0, r=1.0, c=1.0, failure="none", critique="ok", supported=True) -> dict:
@@ -90,26 +90,28 @@ OUTREACH = {"message_text": "Halo, mohon konfirmasi PO berikut.", "language": "i
 SOON = (date.today() + timedelta(days=7)).isoformat()      # tanggal kirim valid untuk konfirmasi lengkap
 
 
-def reply(decision="confirmed", text="Terima kasih.", promised=None, ref=None, changes=None, summary=None) -> dict:
+def reply(decision="confirmed", text="Terima kasih.", promised=None, ref=None, changes=None, summary=None,
+          guard="none", reason="test") -> dict:
     """SupplierReplyOutput."""
     return {"decision": decision, "reply_text": text, "promised_delivery_date": promised, "supplier_reference": ref,
-            "proposed_changes": changes or [], "change_summary": summary, "reason": "test"}
+            "proposed_changes": changes or [], "change_summary": summary, "reason": reason, "guard_flag": guard}
 
 
 def change(material_ref: str, field: str, new_value: str) -> dict:
     return {"material_ref": material_ref, "field": field, "new_value": new_value, "reason": None}
 
 
-def triage(po_number=None, intent="other", text="Baik.", promised=None) -> dict:
-    return {"po_number": po_number, "intent": intent, "reply_text": text, "promised_delivery_date": promised}
+def triage(po_number=None, intent="other", text="Baik.", promised=None, reason=None) -> dict:
+    return {"po_number": po_number, "intent": intent, "reply_text": text, "promised_delivery_date": promised,
+            "reason": reason}
 
 
 ESCALATION = {"message_text": "Supplier perlu ditindaklanjuti.", "urgency": "normal",
               "recommended_option": "none", "rationale": "test"}
 
 
-def decision(choice="approve_change", cr_id=None, text="Siap.") -> dict:
-    return {"choice": choice, "change_request_id": cr_id, "reply_text": text}
+def decision(choice="approve_change", cr_id=None, text="Siap.", counter=None) -> dict:
+    return {"choice": choice, "change_request_id": cr_id, "reply_text": text, "counter_prices": counter or []}
 
 
 # ------------------------------ Master data (produk / material / supplier baru) ------------------------------

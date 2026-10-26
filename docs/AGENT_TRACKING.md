@@ -66,6 +66,15 @@ flowchart LR
 - **Safe by design:** like agent runs, recording uses its own session and never raises; the same
   `AGENT_TRACE_ENABLED` / retention settings apply.
 
+## Activity log (`hub_audit_log`, page *Riwayat Aktivitas*)
+
+`agent_runs` / `tool_runs` show *how* the agents worked; the activity log shows *what was decided and done*:
+
+- **Manager decisions**: choices on supplier requests (Telegram, Hub card or Chat Manajer), Hub proposals, dashboard-chat proposals (`approve_automation` / `reject_automation`), policy changes, takeovers, drafts, missions.
+- **Agent actions**: missions created / finished, dates and prices accepted within the limits, requests escalated to the manager, supplier cancellations and replacement POs, PO confirmations and declines, guardrail blocks and alerts.
+
+Each row has `actor_type` (`MANAGER` / `AGENT` / `SYSTEM`), a readable `summary`, `supplier_id`, `po_number`, `detail` and the `trace_id` of the flow, so the page's detail view lists the LLM calls and tools of that same flow. Written through `app/hub/audit_log.py` (`record`, `agent`). API: `GET /api/v1/activity` (filters `actor_type`, `decisions`, `action`, `ref_type`, `supplier_id`, `po_number`, `q`, `since`, `until`, cursor `before_id`), `GET /api/v1/activity/facets`, `GET /api/v1/activity/{id}`.
+
 ## Configuration (`backend/.env`)
 
 ```

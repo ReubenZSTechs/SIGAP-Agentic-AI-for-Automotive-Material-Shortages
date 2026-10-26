@@ -43,6 +43,7 @@ export default function MissionDetail({ id }) {
 
   const me = approverName();
   const active = m.status === 'ACTIVE';
+  const agentPo = m.agent_po;                        // misi PO: dijalankan agent PO, progres mengikuti percakapan PO
   const waiting = m.targets.filter((item) => WAITING.includes(item.state));
   const remindCopy = (r) => (r.drafted ? t('{n} draf pengingat menunggu review di Percakapan', { n: r.count }) : t('Pengingat dikirim ke {n} supplier', { n: r.count }));
   const notLinked = m.targets.filter((item) => item.state === 'QUEUED' && item.supplier.telegram !== 'CONNECTED');
@@ -62,11 +63,11 @@ export default function MissionDetail({ id }) {
     { key: 'result', header: 'Hasil', render: (item) => (item.result ? <b className="font-semibold tabular-nums text-slate-900">{item.result}</b> : <span className="text-slate-400">—</span>) },
     { key: 'actions', header: 'Aksi', align: 'right', render: (item) => (
       <span className="inline-flex gap-1">
-        {active && WAITING.includes(item.state) && (
+        {active && !agentPo && WAITING.includes(item.state) && (
           <Button size="sm" variant="ghost" loading={busy === `remind-${item.supplier_id}`}
             onClick={() => run(`remind-${item.supplier_id}`, () => hubService.remindMission(id, [item.supplier_id], me), remindCopy)}><Icon name="bell" /> {t('Ingatkan')}</Button>
         )}
-        {active && WAITING.includes(item.state) && (
+        {active && !agentPo && WAITING.includes(item.state) && (
           <Button size="sm" variant="ghost" className="text-red-700" loading={busy === `esc-${item.supplier_id}`}
             onClick={() => run(`esc-${item.supplier_id}`, () => hubService.escalateTarget(id, item.supplier_id, me), 'Draf eskalasi dibuat dan manajer diberi tahu. Tinjau di Percakapan.')}><Icon name="flag" /> {t('Eskalasi')}</Button>
         )}
@@ -97,7 +98,7 @@ export default function MissionDetail({ id }) {
         </div>
         <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-slate-200 pt-4 sm:grid-cols-4">
           <Meta label={t('Item / topik')}>{m.item}</Meta>
-          <Meta label={t('Pesan keluar')}>{t(AUTONOMY[m.autonomy].label)}</Meta>
+          <Meta label={t('Pesan keluar')}>{agentPo ? t('Agent PO') : t(AUTONOMY[m.autonomy].label)}</Meta>
           <Meta label={t('Dibuat oleh')}>{m.created_by}</Meta>
           <Meta label={m.po_id ? t('Sumber PO') : t('Dimulai')}>
             {m.po_id ? <Link className="font-mono text-primary-700 hover:underline" to={`/purchase-orders/${m.po_id}`}>{m.po_number}</Link>
@@ -132,9 +133,29 @@ export default function MissionDetail({ id }) {
         </div>
       )}
 
+      {agentPo && m.conversation && (
+        <Card className="mt-4" title={t('Percakapan agent PO')}>
+          <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <Meta label={t('Tujuan')}>{m.conversation.purpose ?? '—'}</Meta>
+            <Meta label={t('Status percakapan')}>{m.conversation.status ?? '—'}</Meta>
+            <Meta label={t('Versi PO')}>{m.conversation.revisions.length
+              ? m.conversation.revisions.map((r) => `v${r.version}${r.status === 'FINAL' ? ' (final)' : ''}`).join(', ') : '—'}</Meta>
+            <Meta label={t('Usulan dari chat')}>{m.automation_action_id ? t('Ya (Dashboard)') : t('Tidak')}</Meta>
+          </dl>
+          {m.conversation.approvals.length > 0 && (
+            <ul className="mt-3 flex flex-wrap gap-3 text-sm">
+              {m.conversation.approvals.map((a) => (
+                <li key={a.id}><Link to={`/supplier-hub?item=${a.id}`} className="inline-flex items-center gap-2 font-medium text-primary-700 hover:underline">
+                  {t(a.title)} <StateBadge meta={DECISION[a.status] ?? DECISION.PENDING} /></Link></li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
+
       <Card className="mt-4" padded={false} title={t('Supplier ({a}/{b} membalas)', { a: m.replied, b: m.total })}>
         <DataTable columns={columns} rows={m.targets} rowKey="supplier_id" />
-        {active && (
+        {active && !agentPo && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3">
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary" disabled={waiting.length === 0} loading={busy === 'remind'}
@@ -147,7 +168,9 @@ export default function MissionDetail({ id }) {
           </div>
         )}
       </Card>
-      <p className="mt-2 text-xs text-slate-500">{t('Pengingat dikirim langsung atau ditahan sebagai draf sesuai aturan otonomi. Eskalasi selalu berupa draf yang perlu Anda review. Misi tidak pernah mengubah PO.')}</p>
+      <p className="mt-2 text-xs text-slate-500">{agentPo
+        ? t('Misi ini mengikuti percakapan agent PO: konfirmasi, pengingat, dan eskalasi berjalan otomatis. Perubahan tanggal kirim atau harga di luar batas agent masuk Inbox Persetujuan.')
+        : t('Pengingat dikirim langsung atau ditahan sebagai draf sesuai aturan otonomi. Eskalasi selalu berupa draf yang perlu Anda review. Misi tidak pernah mengubah PO.')}</p>
 
       <ConfirmDialog open={dialog === 'close'} variant="primary" title={t('Tutup misi lebih awal')} confirmLabel={t('Tutup & rangkum')} loading={busy === 'close'}
         message={`${waiting.length + m.targets.filter((item) => ['QUEUED', 'PAUSED'].includes(item.state)).length} supplier yang belum membalas akan ditandai "Tanpa balasan". Agent merangkum ${m.replied} balasan yang sudah masuk lalu mengajukannya ke Inbox Persetujuan.`}

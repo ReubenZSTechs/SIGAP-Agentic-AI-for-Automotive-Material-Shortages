@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import CommonIcon from '../components/common/Icon';
 import PageHeader from '../components/layout/PageHeader';
 import ChatForm from '../features/chat/ChatForm';
+import useAutoGrow from '../hooks/useAutoGrow';
 import useFetch from '../hooks/useFetch';
 import { chatService } from '../services/chatService';
 import { inventoryService } from '../services/inventoryService';
@@ -299,6 +300,7 @@ function Progress({ steps }) {
 
 function Composer({ onSend, busy }) {
   const [text, setText] = useState('');
+  const box = useAutoGrow(text, 192);          // memanjang mengikuti pesan, maksimal ±8 baris lalu bergulir
 
   const submit = () => {
     if (busy || !text.trim()) return;
@@ -324,6 +326,7 @@ function Composer({ onSend, busy }) {
 
       <div className="flex items-end gap-2 rounded-xl border border-slate-300 bg-white p-2 shadow-sm focus-within:border-primary-500 focus-within:ring-3 focus-within:ring-primary-500/20">
         <textarea
+          ref={box}
           rows={1}
           value={text}
           maxLength={2000}
@@ -332,7 +335,7 @@ function Composer({ onSend, busy }) {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
           }}
           placeholder={t('Tanyakan data MRP, minta ubah PO, atau tambah produk/material/supplier baru')}
-          className="max-h-32 min-h-[2.25rem] flex-1 resize-none bg-transparent px-1 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
+          className="max-h-48 min-h-[2.25rem] flex-1 resize-none bg-transparent px-1 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
         />
         <button
           type="button"

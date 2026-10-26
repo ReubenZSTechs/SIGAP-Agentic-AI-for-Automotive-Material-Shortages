@@ -16,8 +16,8 @@ import HubApprovals from '../pages/supplierHub/HubApprovals';
 import HubConversations from '../pages/supplierHub/HubConversations';
 import HubManagerChat from '../pages/supplierHub/HubManagerChat';
 import HubMissions from '../pages/supplierHub/HubMissions';
-import HubDocuments from '../pages/supplierHub/HubDocuments';
 import HubSettings from '../pages/supplierHub/HubSettings';
+import ActivityLogPage from '../pages/ActivityLogPage';
 import NotFoundPage from '../pages/NotFoundPage';
 
 export default function AppRoutes() {
@@ -43,10 +43,9 @@ export default function AppRoutes() {
           <Route path="manager" element={<HubManagerChat />} />
           <Route path="missions" element={<HubMissions />} />
           <Route path="missions/:id" element={<HubMissions />} />
-          <Route path="documents" element={<HubDocuments />} />
-          <Route path="documents/:id" element={<HubDocuments />} />
           <Route path="settings" element={<HubSettings />} />
         </Route>
+        <Route path="activity" element={<ActivityLogPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

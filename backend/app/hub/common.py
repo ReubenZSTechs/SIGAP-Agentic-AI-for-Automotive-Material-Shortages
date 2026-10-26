@@ -1,4 +1,4 @@
-"""Bagian bersama Hub: kebijakan, audit, template, status Telegram per supplier, dan akses ke layanan chat."""
+"""Bagian bersama Hub: kebijakan & batas otonomi agent, audit, status Telegram per supplier, akses layanan chat."""
 import copy
 import logging
 import threading
@@ -13,8 +13,7 @@ from app.chatbot.config_loader import load_registry
 from app.chatbot.service import ChatUnavailable
 from app.config import settings
 from app.core.exceptions import AppError
-from app.models import (HubAuditLog, HubMessageTemplate, HubSettings, HubSupplierControl, Supplier,
-                        SupplierTelegramLink)
+from app.models import HubSettings, HubSupplierControl, Supplier, SupplierTelegramLink
 from app.models.hub import ThreadMode
 from app.supplier_chat.service import (SupplierChatService, get_supplier_chat_service, manager_chat_id)
 from app.supplier_chat.transport import build_transport, sandbox_chat_id
@@ -27,39 +26,23 @@ COMPANY = "SIGAP"
 DEFAULT_POLICIES = {
     "scenarios": [
         {"key": "PO_AGENT", "label": "Konfirmasi & revisi PO (agent PO)", "outbound": "AUTO", "data": "PO", "expiry_hours": None,
-         "locked": True, "note": "Diatur di configs/models.yaml (supplier_chat)"},
+         "locked": True, "note": "Tanggal kirim & harga mengikuti Batas keputusan otomatis agent; di luar batas -> manajer"},
         {"key": "PRICE_QUOTE", "label": "Penawaran harga", "outbound": "AUTO", "data": "Harga material-supplier", "expiry_hours": 24},
         {"key": "STOCK_CHECK", "label": "Cek ketersediaan stok", "outbound": "AUTO", "data": "Hasil cek stok", "expiry_hours": 12},
         {"key": "DELIVERY_CONFIRM", "label": "Konfirmasi jadwal kirim", "outbound": "AUTO", "data": "Tanggal janji kirim PO", "expiry_hours": 8},
-        {"key": "DOC_REQUEST", "label": "Minta / minta ulang dokumen", "outbound": "AUTO", "data": "Arsip dokumen", "expiry_hours": None},
         {"key": "REMINDER", "label": "Pengingat misi", "outbound": "AUTO", "data": None, "expiry_hours": None},
         {"key": "FREE_TEXT", "label": "Pesan bebas admin", "outbound": "AUTO", "data": None, "expiry_hours": None, "locked": True,
          "note": "Dikirim langsung setelah Anda mengambil alih thread"},
         {"key": "ESCALATION", "label": "Eskalasi", "outbound": "REVIEW", "data": None, "expiry_hours": None, "locked": True},
     ],
-    "thresholds": {"price_change_pct_high": 10, "delay_days_high": 3, "invoice_tolerance_rp": 0,
+    # Batas keputusan otomatis agent (di luar batas -> manajer memutuskan):
+    #   delivery_early_days / delivery_late_days: tanggal kirim baru dari supplier boleh sekian hari lebih awal /
+    #     lebih lambat dari tenggat (needed-by paling awal di PO) tanpa persetujuan manajer.
+    #   price_increase_pct: kenaikan harga satuan (revisi supplier atau supplier pengganti) maksimal sekian persen.
+    "thresholds": {"delivery_early_days": 7, "delivery_late_days": 0, "price_increase_pct": 5,
                    "reminder_after_hours": 4, "escalate_after_hours": 24},
     "working_hours": {"days": [1, 2, 3, 4, 5], "start": "08:00", "end": "17:00", "queue_outside": False},
 }
-
-DEFAULT_TEMPLATES = [
-    ("Minta penawaran harga", "PRICE_QUOTE",
-     "Selamat {waktu} {kontak}, kami dari {perusahaan} membutuhkan penawaran {item}. Mohon info harga per satuan "
-     "dan lead time sebelum {tenggat}. Terima kasih."),
-    ("Cek ketersediaan stok", "STOCK_CHECK",
-     "Selamat {waktu} {kontak}, apakah tersedia {item}? Mohon konfirmasi qty yang sanggup dan tanggal siapnya "
-     "sebelum {tenggat}."),
-    ("Konfirmasi jadwal kirim", "DELIVERY_CONFIRM",
-     "Selamat {waktu} {kontak}, mohon konfirmasi jadwal pengiriman {po}. Apakah masih sesuai rencana? "
-     "Kami tunggu kabarnya sebelum {tenggat}."),
-    ("Minta dokumen", "DOC_REQUEST",
-     "Selamat {waktu} {kontak}, mohon kirimkan {item} melalui chat ini sebelum {tenggat}. Foto yang jelas atau PDF "
-     "sudah cukup. Terima kasih."),
-    ("Pengingat belum membalas", "REMINDER",
-     "Selamat {waktu} {kontak}, mengingatkan permintaan kami terkait {item}. Kami tunggu kabarnya sebelum {tenggat}. "
-     "Terima kasih."),
-]
-
 
 def iso(v: datetime | None) -> str | None:
     """Waktu DB (UTC naif) -> ISO dengan akhiran Z agar peramban tidak menganggapnya waktu lokal."""
@@ -122,8 +105,22 @@ def hub_settings(db: Session) -> HubSettings:
     return row
 
 
+def _with_defaults(p: dict) -> dict:
+    """Kebijakan tersimpan + kunci baru dari DEFAULT_POLICIES (baris lama di database tidak perlu dimigrasi)."""
+    out = copy.deepcopy(DEFAULT_POLICIES)
+    stored = {s["key"]: s for s in p.get("scenarios", [])}
+    for s in out["scenarios"]:
+        if s["key"] in stored and not s.get("locked"):
+            s["outbound"] = stored[s["key"]].get("outbound", s["outbound"])
+        if s["key"] in stored and s["expiry_hours"] is not None:
+            s["expiry_hours"] = stored[s["key"]].get("expiry_hours") or s["expiry_hours"]
+    out["thresholds"].update({k: v for k, v in (p.get("thresholds") or {}).items() if k in out["thresholds"]})
+    out["working_hours"].update(p.get("working_hours") or {})
+    return out
+
+
 def policies(db: Session) -> dict:
-    return hub_settings(db).policies
+    return _with_defaults(hub_settings(db).policies or {})
 
 
 def outbound(db: Session, key: str) -> str:
@@ -172,8 +169,12 @@ def validate_policies(p: dict) -> dict:
     th = p.get("thresholds", {})
     for k in out["thresholds"]:
         v = th.get(k)
-        if not isinstance(v, (int, float)) or v < 0:
+        if not isinstance(v, (int, float)) or isinstance(v, bool) or v < 0:
             raise AppError(422, f"Ambang {k} wajib angka ≥ 0")
+        if k in ("delivery_early_days", "delivery_late_days") and (v > 365 or v != int(v)):
+            raise AppError(422, f"Batas hari {k} harus bilangan bulat 0–365")
+        if k == "price_increase_pct" and v > 100:
+            raise AppError(422, "Batas kenaikan harga maksimal 100%")
         out["thresholds"][k] = v
     if out["thresholds"]["escalate_after_hours"] <= out["thresholds"]["reminder_after_hours"]:
         raise AppError(422, "Eskalasi harus lebih lama dari pengingat")
@@ -188,26 +189,7 @@ def validate_policies(p: dict) -> dict:
     return out
 
 
-def ensure_templates(db: Session) -> list[HubMessageTemplate]:
-    rows = list(db.scalars(select(HubMessageTemplate).order_by(HubMessageTemplate.id)))
-    if not rows:
-        hub_settings(db)
-        db.scalar(select(HubSettings).where(HubSettings.id == 1).with_for_update())   # serialisasi seed pertama
-        rows = list(db.scalars(select(HubMessageTemplate).order_by(HubMessageTemplate.id)))
-        if not rows:
-            rows = [HubMessageTemplate(name=n, scenario=s, body=b) for n, s, b in DEFAULT_TEMPLATES]
-            db.add_all(rows)
-            db.flush()
-    return rows
-
-
-def template_for(db: Session, scenario: str) -> str:
-    return next((t.body for t in ensure_templates(db) if t.scenario == scenario), DEFAULT_TEMPLATES[0][2])
-
-
-# ------------------------------------------- audit -------------------------------------------
-def audit(db: Session, actor: str, action: str, ref_type: str, ref_id, **detail) -> None:
-    db.add(HubAuditLog(actor=actor, action=action, ref_type=ref_type, ref_id=str(ref_id), detail=detail or None))
+from app.hub.audit_log import AGENT_ACTOR, actor_type_of, record as audit  # noqa: E402,F401  (C.audit tetap dipakai)
 
 
 # --------------------------------------- supplier state ---------------------------------------

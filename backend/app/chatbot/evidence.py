@@ -132,13 +132,61 @@ def names_instead_of_codes(cols: list[str], available: list[str]) -> list[str]:
     return out
 
 
+def _num(v):
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        return float(str(v).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def _norm(v) -> str:
+    return str(v).strip().casefold() if v is not None else ""
+
+
+def _matches(row: dict, f: dict) -> bool:
+    cell, op = row.get(f["column"]), f["op"]
+    if op in ("in", "not_in"):
+        hit = _norm(cell) in {_norm(x) for x in (f.get("values") or [])}
+        return hit if op == "in" else not hit
+    target = f.get("value")
+    if op in ("eq", "ne"):
+        a, b = _num(cell), _num(target)
+        same = (a == b) if a is not None and b is not None else _norm(cell) == _norm(target)
+        return same if op == "eq" else not same
+    if op == "contains":
+        return _norm(target) in _norm(cell)
+    a, b = _num(cell), _num(target)
+    if a is None or b is None:
+        return False
+    return {"gt": a > b, "gte": a >= b, "lt": a < b, "lte": a <= b}[op]
+
+
+def filter_rows(ev: Evidence, filters: list[dict] | None) -> list[dict]:
+    """Rows of `ev` matching ALL filters (deterministic; filters on unknown columns are ignored)."""
+    valid = [f for f in (filters or []) if f.get("column") in ev["columns"] and f.get("op")]
+    return [r for r in ev["rows"] if all(_matches(r, f) for f in valid)]
+
+
+def filtered_evidence(ev: Evidence, filters: list[dict] | None) -> Evidence:
+    """Copy of `ev` restricted to the rows a table block shows (used for grounding checks)."""
+    rows = filter_rows(ev, filters)
+    return {**ev, "id": f"{ev['id']}*", "rows": rows, "row_count": len(rows), "truncated": False}
+
+
 def render_table(ev: Evidence, columns: list[str] | None, language: str,
-                 title: str | None = None) -> dict:
-    """Frontend table block built from real evidence rows (never from model text)."""
+                 title: str | None = None, filters: list[dict] | None = None) -> dict:
+    """Frontend table block built from real evidence rows (never from model text).
+
+    `filters` (from the synthesizer) select WHICH rows are shown, e.g. only non-critical items; the
+    rows themselves always come from the evidence."""
     cols = [c for c in (columns or ev["columns"]) if c in ev["columns"]] or ev["columns"]
     cols = names_instead_of_codes(cols, ev["columns"])
     block = {"type": "table", "columns": [_label(c, language) for c in cols],
-             "rows": [[_cell(r.get(c), language) for c in cols] for r in ev["rows"]],
+             "rows": [[_cell(r.get(c), language) for c in cols] for r in filter_rows(ev, filters)],
              "evidence_id": ev["id"]}
     if title:
         block["title"] = title

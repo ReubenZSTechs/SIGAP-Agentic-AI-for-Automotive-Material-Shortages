@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import Badge from '../../components/common/Badge';
 import Button from '../../components/common/Button';
 import Icon from '../../components/common/Icon';
+import Input from '../../components/common/Input';
 import DiffTable from './DiffTable';
 import { CONFIDENCE, DECISION, RISK, delta, isUrgent, timeLeft, typeMeta } from './meta';
 import { formatDateTime, formatRupiah } from '../../utils/formatters';
@@ -37,8 +38,58 @@ function ChatLinks({ item }) {
   );
 }
 
-// Opsi revisi PO dihitung backend (abort / approve_change / resource), sama dengan tombol Telegram manajer.
+const DANGER = ['abort', 'cancel_project', 'reject_date'];
+const PRIMARY = ['approve_change', 'accept_date', 'continue_project'];
+
+// Harga tandingan per baris PO (opsi "Ajukan harga nego").
+function CounterPrices({ lines, value, onChange, readOnly }) {
+  return (
+    <ul className="mt-2 space-y-1.5">
+      {lines.map((l) => (
+        <li key={l.po_item_id} className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <span className="min-w-0 flex-1"><b className="text-slate-800">{l.sku}</b> {l.name} · {t('lama')} {formatRupiah(l.old)} · {t('diminta')} {formatRupiah(l.asked)}</span>
+          <span className="inline-flex items-center gap-1">Rp
+            <Input type="number" min="0" aria-label={t('Harga nego {sku}', { sku: l.sku })} className="h-8 w-28 text-right" disabled={readOnly}
+              value={value[l.po_item_id] ?? ''} onChange={(e) => onChange({ ...value, [l.po_item_id]: e.target.value === '' ? '' : Number(e.target.value) })} />
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Jadwal produksi terdampak (opsi lanjutkan / batalkan proyek); pada "Batalkan proyek" bisa dipilih sebagian.
+function Schedules({ rows, picked, onToggle, selectable }) {
+  return (
+    <ul className="mt-2 space-y-1 text-xs text-slate-600">
+      {rows.map((s) => (
+        <li key={s.id}>
+          <label className={`flex items-center gap-2 ${selectable ? 'cursor-pointer' : ''}`}>
+            {selectable && <input type="checkbox" checked={picked.has(s.id)} onChange={() => onToggle(s.id)} className="h-3.5 w-3.5 rounded border-slate-300 accent-primary-600" />}
+            <span className="font-mono text-slate-800">{s.batch_code}</span> {s.product} · {s.qty} · {s.production_date}
+          </label>
+        </li>
+      ))}
+      <li><Link to="/mps" className="font-medium text-primary-700 hover:underline">{t('Periksa di MPS & Planning')}</Link></li>
+    </ul>
+  );
+}
+
+// Opsi dihitung backend (revisi, harga, tanggal kirim, pembatalan), sama dengan tombol Telegram manajer.
 function Options({ item, disabled, onChoose }) {
+  const pending = item.status === 'PENDING';
+  const nego = item.options.find((o) => o.key === 'negotiate');
+  const [counter, setCounter] = useState(() => Object.fromEntries((nego?.lines ?? []).map((l) => [l.po_item_id, l.old])));
+  const cancelOpt = item.options.find((o) => o.key === 'cancel_project');
+  const [picked, setPicked] = useState(() => new Set((cancelOpt?.schedules ?? []).map((s) => s.id)));
+  const togglePick = (id) => setPicked((cur) => { const n = new Set(cur); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const counterOk = !nego || nego.lines.every((l) => Number(counter[l.po_item_id]) > 0);
+
+  const choose = (o) => {
+    if (o.key === 'negotiate') return onChoose({ ...o, counter_prices: Object.fromEntries(Object.entries(counter).map(([k, v]) => [k, Number(v)])) });
+    if (o.key === 'cancel_project') return onChoose({ ...o, schedule_ids: [...picked] });
+    return onChoose(o);
+  };
   return (
     <ul className="space-y-2">
       {item.options.map((o) => (
@@ -50,12 +101,18 @@ function Options({ item, disabled, onChoose }) {
               <p className="mt-1 text-xs text-slate-500">{t('Total')} <span className="line-through">{formatRupiah(o.total_before)}</span> <b className="text-slate-800">{formatRupiah(o.total_after)}</b></p>
             )}
             {o.purchase_orders.length > 0 && (
-              <p className="mt-1 text-xs text-slate-500">PO baru: {o.purchase_orders.map((g) => `${g.supplier_name} ${formatRupiah(g.total_amount)}`).join('; ')}</p>
+              <p className="mt-1 text-xs text-slate-500">PO baru: {o.purchase_orders.map((g) => `${g.supplier_name} ${formatRupiah(g.total_amount)}${g.lead_time_days ? ` · ${g.lead_time_days} hari` : ''}`).join('; ')}</p>
             )}
+            {o.warnings?.length > 0 && (
+              <ul className="mt-1 space-y-0.5 text-xs text-amber-800">{o.warnings.map((w) => <li key={w} className="flex gap-1"><Icon name="alert" className="mt-0.5 h-3 w-3" />{w}</li>)}</ul>
+            )}
+            {o.key === 'negotiate' && o.lines && <CounterPrices lines={o.lines} value={counter} onChange={setCounter} readOnly={!pending} />}
+            {o.schedules?.length > 0 && <Schedules rows={o.schedules} picked={picked} onToggle={togglePick} selectable={pending && o.key === 'cancel_project'} />}
           </div>
-          {item.status === 'PENDING' && (
-            <Button size="sm" variant={o.key === 'abort' ? 'danger' : o.key === 'approve_change' ? 'primary' : 'secondary'}
-              disabled={disabled} onClick={() => onChoose(o)}>{t('Pilih')}</Button>
+          {pending && (
+            <Button size="sm" variant={DANGER.includes(o.key) ? 'danger' : PRIMARY.includes(o.key) ? 'primary' : 'secondary'}
+              disabled={disabled || (o.key === 'negotiate' && !counterOk) || (o.key === 'cancel_project' && picked.size === 0)}
+              onClick={() => choose(o)}>{t('Pilih')}</Button>
           )}
         </li>
       ))}
@@ -101,7 +158,7 @@ export default function ApprovalCard({ item, onDecide }) {
         <div role="alert" className="mt-4 flex items-start gap-2.5 rounded-lg border border-amber-200 border-l-4 border-l-amber-500 bg-amber-50 px-3.5 py-3 text-sm text-amber-900">
           <Icon name="alert" className="mt-0.5 h-4 w-4 text-amber-600" />
           <span>{meta.options
-            ? t('PO berubah sejak permintaan revisi dibuat (mis. sudah ada penerimaan barang), jadi opsi dinonaktifkan. Hubungi supplier secara langsung.')
+            ? t('PO berubah sejak permintaan dibuat (mis. sudah ada penerimaan barang), jadi opsi dinonaktifkan. Hubungi supplier secara langsung.')
             : t('Data master berubah sejak diajukan, jadi persetujuan dinonaktifkan. Tolak kartu ini lalu buat misi baru untuk data terbaru.')}</span>
         </div>
       )}
@@ -158,7 +215,8 @@ export default function ApprovalCard({ item, onDecide }) {
               {t('Saya sudah memeriksa dampaknya.')}
             </label>
           )}
-          <Options item={item} disabled={item.stale || (needAck && !ack)} onChoose={(o) => onDecide('choose', { choice: o.key, label: o.label })} />
+          <Options item={item} disabled={item.stale || (needAck && !ack)}
+            onChoose={(o) => onDecide('choose', { choice: o.key, label: o.label, counter_prices: o.counter_prices, schedule_ids: o.schedule_ids })} />
         </Section>
       )}
 

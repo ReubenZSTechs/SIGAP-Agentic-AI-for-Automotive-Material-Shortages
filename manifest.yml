@@ -1,18 +1,57 @@
----
+# SAP BTP Cloud Foundry. Kredensial TIDAK di file ini: cf push --vars-file deploy/vars.yml
+# (salin deploy/vars.example.yml). Lihat docs/DEPLOYMENT.md.
 applications:
-  # 1. Container Backend Python
+  # 1. Backend Python (API). Tabel dibuat + dimigrasi otomatis saat startup (app/db_migrate.py).
   - name: mrp-backend-suppliers
     path: ./backend
     memory: 512M
     instances: 1
-    random-route: true
+    routes:                          # route tetap: dipakai VITE_API_URL frontend
+      - route: ((backend_host)).cfapps.ap10.hana.ondemand.com
     buildpack: python_buildpack
     command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    env:
+      APP_ENV: production
+      DATABASE_URL: ((database_url))
+      CORS_ORIGINS: ((cors_origins))
+      AICORE_AUTH_URL: ((aicore_auth_url))
+      AICORE_CLIENT_ID: ((aicore_client_id))
+      AICORE_CLIENT_SECRET: ((aicore_client_secret))
+      AICORE_BASE_URL: ((aicore_base_url))
+      AICORE_RESOURCE_GROUP: ((aicore_resource_group))
+      TELEGRAM_MODE: ((telegram_mode))
+      TELEGRAM_BOT_TOKEN: ((telegram_bot_token))
+      TELEGRAM_BOT_USERNAME: ((telegram_bot_username))
+      TELEGRAM_MANAGER_CHAT_ID: ((telegram_manager_chat_id))
 
-  # 2. Container Frontend React
+  # 2. Worker agent supplier: dispatch percakapan, long polling Telegram, misi Hub, pengingat/eskalasi.
+  - name: mrp-supplier-worker
+    path: ./backend
+    memory: 512M
+    instances: 1                     # wajib tepat 1: long polling Telegram tidak boleh ganda
+    no-route: true
+    health-check-type: process
+    buildpack: python_buildpack
+    command: python -m app.supplier_chat.worker
+    env:
+      APP_ENV: production
+      DATABASE_URL: ((database_url))
+      CORS_ORIGINS: ((cors_origins))
+      AICORE_AUTH_URL: ((aicore_auth_url))
+      AICORE_CLIENT_ID: ((aicore_client_id))
+      AICORE_CLIENT_SECRET: ((aicore_client_secret))
+      AICORE_BASE_URL: ((aicore_base_url))
+      AICORE_RESOURCE_GROUP: ((aicore_resource_group))
+      TELEGRAM_MODE: ((telegram_mode))
+      TELEGRAM_BOT_TOKEN: ((telegram_bot_token))
+      TELEGRAM_BOT_USERNAME: ((telegram_bot_username))
+      TELEGRAM_MANAGER_CHAT_ID: ((telegram_manager_chat_id))
+
+  # 3. Frontend React
   - name: mrp-frontend-suppliers
     path: ./frontend
     memory: 256M
     instances: 1
-    random-route: true
+    routes:                          # route tetap: harus sama dengan cors_origins backend
+      - route: ((frontend_host)).cfapps.ap10.hana.ondemand.com
     buildpack: staticfile_buildpack

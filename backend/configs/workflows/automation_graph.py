@@ -19,13 +19,17 @@ from app.chatbot import tracing
 from app.chatbot.progress import emit
 from app.core.i18n import translate, translate_card, translate_table
 from app.core.exceptions import AppError
+from sqlalchemy import select
+
 from app.database import SessionLocal
-from app.models import AutomationAction
+from app.hub.audit_log import record as record_audit
+from app.models import AutomationAction, HubMission
 from app.models.enums import AutomationOperation, AutomationStatus, ConversationPurpose
 from configs.tools import po_actions as A
 
 log = logging.getLogger(__name__)
 AS = AutomationStatus
+DECIDER = "Pengguna Dashboard"          # keputusan kartu usulan di chat Dashboard (MVP tanpa login)
 
 TEXT = {
     "id": {
@@ -34,6 +38,8 @@ TEXT = {
                    "permintaan dengan lengkap (material, jumlah, dan supplier bila ada) atau gunakan halaman Manual PO.",
         "cancelled": "Baik, permintaan PO dibatalkan. Tidak ada data yang diubah.",
         "rejected": "Baik, usulan tidak dijalankan. Tidak ada data yang diubah.",
+        "missions": "Agent membuat {missions} di Hub Supplier → Misi lebih dulu, lalu menghubungi supplier; pantau "
+                    "progres konfirmasinya di sana.",
         "expired": "Usulan ini sudah kedaluwarsa. Silakan kirim ulang permintaannya.",
         "failed": "Perubahan gagal dijalankan: {reason}",
         "update": "{po} diperbarui. Total {before} → {after}.",
@@ -71,6 +77,8 @@ TEXT = {
                    "all details (material, quantity, and supplier if any) or use the Manual PO page.",
         "cancelled": "OK, the PO request was cancelled. Nothing was changed.",
         "rejected": "OK, the proposal was not executed. Nothing was changed.",
+        "missions": "The agent first created {missions} in Supplier Hub → Missions and then contacts the suppliers; "
+                    "track the confirmation progress there.",
         "expired": "This proposal has expired. Please send the request again.",
         "failed": "The change failed: {reason}",
         "update": "{po} was updated. Total {before} → {after}.",
@@ -427,6 +435,10 @@ class PoAutomationWorkflow:
             else:
                 action.status = {"reject": AS.REJECTED, "superseded": AS.SUPERSEDED}.get(kind, AS.EXPIRED)
                 action.decided_at = A.now()
+                if kind == "reject":
+                    record_audit(db, DECIDER, "reject_automation", "automation", action.id, actor_type="MANAGER",
+                                 summary=f"Usulan chat ditolak: {(action.proposal or {}).get('operation', '-')} PO",
+                                 po_number=action.po_number)
                 db.commit()
                 status = action.status
         reset = {"pending_action": None, "automation_draft": None, "automation_decision": None}
@@ -449,7 +461,14 @@ class PoAutomationWorkflow:
             row.result = {**(row.result or {}), **result}
             row.po_id = row.po_id or result.get("po_id")
             row.po_number = row.po_number or result.get("po_number")
+            record_audit(db, DECIDER, "approve_automation", "automation", action_id, actor_type="MANAGER",
+                         summary=f"Usulan chat disetujui: {action.proposal.get('operation', '-')} PO "
+                                 + ", ".join(c["po_number"] for c in result.get("created", [])) + f" ({status.value})",
+                         po_number=row.po_number)
+            missions = [m.id for m in db.scalars(select(HubMission).where(HubMission.automation_action_id == action_id))]
             db.commit()
+        if missions and texts and isinstance(texts[0], str):      # paragraf ringkasan + catatan misi
+            texts = [f"{texts[0]} {_t(lang, 'missions', missions=', '.join(f'Misi #{n}' for n in missions))}", *texts[1:]]
         if queued and self.on_supplier_work is not None:
             emit("supplier_contact", lang)
             self.on_supplier_work()

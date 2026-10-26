@@ -17,7 +17,10 @@ const GROUPS = [
     { to: '/mps', label: 'MPS & Planning', icon: 'calendar' },
   ] },
   { label: 'Pembelian', links: [{ to: '/purchase-orders', label: 'Purchase Order', icon: 'file' }] },
-  { label: 'Agent', links: [{ to: '/supplier-hub', label: 'Hub Supplier', icon: 'inbox', badge: true }] },
+  { label: 'Agent', links: [
+    { to: '/supplier-hub', label: 'Hub Supplier', icon: 'inbox', badge: true },
+    { to: '/activity', label: 'Riwayat Aktivitas', icon: 'clock' },
+  ] },
 ];
 
 export default function Sidebar({ onNavigate, onCollapse }) {

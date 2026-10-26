@@ -4,7 +4,7 @@ Alur bisnis end-to-end: **Master Material & Supplier → BOM → Jadwal & Stock 
 
 | Sisi | Stack | Folder |
 |:--|:--|:--|
-| Backend | Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2, PostgreSQL (Supabase) | `backend/` |
+| Backend | Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2, PostgreSQL 17 (lokal: Docker · produksi: Supabase) | `backend/` |
 | Chatbot | LangGraph, SAP AI Core (gpt-5.4 + claude-4.6-sonnet), sqlglot | `backend/app/chatbot/` (service), `backend/configs/` (agent, schema, tools, workflows) |
 | Frontend | React 18, Vite, React Router v6, Zustand, Axios, Tailwind CSS v4 | `frontend/` |
 
@@ -12,11 +12,26 @@ Alur bisnis end-to-end: **Master Material & Supplier → BOM → Jadwal & Stock 
 .
 ├── backend/            API FastAPI (+ seed data & tes) + chatbot LangGraph
 ├── frontend/           SPA React (Vite)
-├── docker/             skrip init Postgres lokal (role read-only chatbot, DB test)
-├── docker-compose.yaml stack lokal: Postgres + backend + frontend
-├── docs/               rancangan delta (kalender, sinkron stok, Manual PO)
+├── deploy/             vars SAP BTP Cloud Foundry (vars.yml di-gitignore; contoh: vars.example.yml)
+├── docker/             skrip init Postgres lokal (membuat DB test)
+├── docker-compose.yaml stack lokal: Postgres 17 + backend + worker + frontend
+├── docs/               dokumentasi fitur & deployment
+├── manifest.yml        deploy SAP BTP (backend, worker agent supplier, frontend) ke Supabase
 └── README.md
 ```
+
+## Database: lokal vs produksi
+
+| Lingkungan | `APP_ENV` | Database | Dipakai oleh |
+|:--|:--|:--|:--|
+| Development | `development` (default) | Postgres 17 lokal (`docker compose`, port 5433) | `docker compose up`, `uvicorn` di host |
+| Test | `development` | DB `mrp_test` di Postgres lokal | `pytest` (DROP & CREATE semua tabel) |
+| Produksi | `production` | Supabase (transaction pooler, port 6543) | SAP BTP Cloud Foundry (`manifest.yml`) |
+
+- **Kode lokal tidak pernah menyentuh Supabase**: dengan `APP_ENV=development` aplikasi menolak start bila `DATABASE_URL` menunjuk ke `*.supabase.com`, dan `pytest` selalu menolak URL Supabase.
+- Versi mayor Postgres lokal = Supabase (17) dan skema dibuat dari model yang sama (`create_all` + migrasi kolom idempoten `app/db_migrate.py` saat startup), jadi perilaku lokal = produksi.
+- **Satu database** untuk aplikasi dan chatbot: chatbot membaca `DATABASE_URL` yang sama dalam transaksi `READ ONLY` + `statement_timeout` (tidak ada lagi `CHAT_DATABASE_URL` / role `mrp_chat_ro`).
+- Deploy ke SAP BTP + Supabase: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## Menjalankan dengan Docker (paling cepat untuk user testing)
 
@@ -31,18 +46,22 @@ docker compose up --build
 |:--|:--|:--|
 | Frontend | <http://localhost:8080> | nginx; `/api` di-proxy ke backend (SSE tanpa buffering) |
 | Backend | <http://localhost:8000/docs> | otomatis di-seed (`--demo-schedules`) saat start pertama |
-| Postgres | `localhost:5433` (user/pass `mrp`) | DB `mrp` (aplikasi) & `mrp_test` (pytest); role `mrp_chat_ro` hanya SELECT |
-| Supplier worker | — | agent Telegram supplier (`python -m app.supplier_chat.worker`): dispatch percakapan, long polling, pengingat |
+| Postgres 17 | `localhost:5433` (user/pass `mrp`) | DB `mrp` (aplikasi + chatbot) & `mrp_test` (pytest) |
+| Supplier worker | — | agent Telegram supplier (`python -m app.supplier_chat.worker`): dispatch percakapan, misi Hub, long polling, pengingat |
 
-- `DATABASE_URL` di `backend/.env` **ditimpa** ke Postgres lokal; hanya kredensial `AICORE_*` yang dipakai dari file itu. Tanpa `AICORE_*`, aplikasi tetap jalan dan chatbot mengembalikan 503.
+- `DATABASE_URL` di `backend/.env` **ditimpa** ke Postgres lokal; hanya kredensial `AICORE_*` / `TELEGRAM_*` yang dipakai dari file itu. Tanpa `AICORE_*`, aplikasi tetap jalan dan chatbot mengembalikan 503.
 - Tes backend di dalam container: `docker compose exec backend pytest -q`.
-- Reset data: `docker compose down -v` (menghapus volume DB) lalu `up` lagi.
+- Reset data: `docker compose down -v` (menghapus volume DB) lalu `up` lagi. Volume bernama `db-data-pg17`; volume lama Postgres 16 (`db-data`) tidak dipakai lagi dan boleh dihapus (`docker volume rm sigap-mrp_db-data`).
 
 ## Otomasi PO & Agent Telegram Supplier
 
 - **Otomasi PO** ([`docs/AUTOMATION.md`](docs/AUTOMATION.md)): dari chat Dashboard, mis. *"Buat PO 50 Ban Luar Karet"* atau *"Hapus PO 12"*. Agent mengklarifikasi sampai permintaan cocok dengan database, menampilkan **kartu konfirmasi**, lalu menjalankan CRUD PO lewat tool (`configs/tools/po_actions.py`) dan menghubungi supplier.
 - **Master data dari chat** ([`docs/MASTER_DATA_CHAT.md`](docs/MASTER_DATA_CHAT.md)): mis. *"Saya ingin membuat produk baru"*. Agent menampilkan **formulir di chat** (produk + BOM, material + supplier, atau supplier + material; item baru bisa ditambahkan langsung), memvalidasi isian, menampilkan kartu konfirmasi, lalu menyimpan semuanya dalam satu transaksi.
-- **Agent Telegram supplier** ([`docs/SUPPLIER_TELEGRAM.md`](docs/SUPPLIER_TELEGRAM.md)): loop latar belakang yang meminta konfirmasi/pembatalan PO ke supplier sampai jelas, lalu memperbarui database. Rincian PO dikirim **sekali**; tiap revisi yang disetujui hanya mengirim daftar perubahannya, dan setelah supplier mengonfirmasi tanpa perubahan lagi, versi itu disimpan sebagai **FINAL** (`po_revisions`) dan PDF PO final dikirim ke supplier. Bila supplier minta **revisi**, manajer memilih opsi (batalkan PO, setujui perubahan, atau pesan ke supplier lain) di Telegram **atau** di Hub Supplier (*Persetujuan* / *Chat Manajer*); keduanya tersinkron. Semua pesan bot ↔ supplier dan bot ↔ manajer tampil di **Hub Supplier**; uji tanpa bot sungguhan dengan `TELEGRAM_MODE=sandbox` langsung dari Hub.
+- **Agent Telegram supplier** ([`docs/SUPPLIER_TELEGRAM.md`](docs/SUPPLIER_TELEGRAM.md)): loop latar belakang yang meminta konfirmasi/pembatalan PO ke supplier sampai jelas, lalu memperbarui database. Setiap percakapan PO lebih dulu tercatat sebagai **misi** di *Hub Supplier → Misi* (progres mengikuti percakapan). Rincian PO dikirim **sekali**; tiap revisi yang disetujui hanya mengirim daftar perubahannya, dan setelah supplier mengonfirmasi tanpa perubahan lagi, versi itu disimpan sebagai **FINAL** (`po_revisions`) dan PDF PO final dikirim ke supplier. Bila supplier minta **revisi**, manajer memilih opsi (batalkan PO, setujui perubahan, atau pesan ke supplier lain) di Telegram **atau** di Hub Supplier (*Persetujuan* / *Chat Manajer*); keduanya tersinkron. Semua pesan bot ↔ supplier dan bot ↔ manajer tampil di **Hub Supplier**; uji tanpa bot sungguhan dengan `TELEGRAM_MODE=sandbox` langsung dari Hub.
+  - **Batas keputusan otomatis** (*Hub Supplier → Pengaturan → Aturan otonomi*): perubahan **tanggal kirim** di dalam jendela hari lebih awal/terlambat dari tenggat dan **kenaikan harga** sampai X% diterima agent sendiri (PO direvisi, manajer diberi tahu); di luar batas manajer memilih opsi (terima, tolak, nego harga, supplier lain, batalkan PO).
+  - **Pembatalan dari supplier**: PO dibatalkan otomatis, lalu agent mencari supplier pengganti (harga & waktu kirim). Di dalam batas → PO baru + misi konfirmasi; terlambat/mahal → manajer memutuskan; tidak ada pengganti → manajer memilih *lanjutkan proyek* atau *batalkan proyek* (jadwal MPS terdampak).
+  - **Guardrail**: pesan supplier yang mencoba "query database" (stok kita, harga supplier lain, daftar data, SQL), prompt injection, permintaan rahasia sistem, atau mengaku manajer ditolak dengan balasan tetap **sebelum** sampai ke LLM.
+- **Riwayat Aktivitas** (menu *Agent → Riwayat Aktivitas*): semua keputusan manajer dan tindakan agent (otomatis, eskalasi, guardrail) dengan filter dan tautan ke panggilan LLM pada alur yang sama.
 
 - **Permintaan produksi multi-PO** ([`docs/AUTOMATION.md`](docs/AUTOMATION.md) §5): *"Saya membutuhkan 100 sepeda gunung, besok harus ada materialnya"* → agent mengecek BOM vs stok (PO masuk hanya dihitung bila tiba tepat waktu), menghitung kekurangan sampai batas aman, memilih supplier sesedikit mungkin (satu PO per supplier), lalu setelah dikonfirmasi membuat jadwal MPS baru dan menerbitkan semua PO sekaligus.
 - **Agent Hub (pelacakan LLM)** ([`docs/AGENT_TRACKING.md`](docs/AGENT_TRACKING.md)): setiap panggilan agent LLM (prompt, input, output, percobaan ulang, latensi, token) dicatat di `agent_runs` dan bisa ditelusuri per trace di Streamlit: `docker compose --profile tools up --build agent-hub` → <http://localhost:8501>.
@@ -82,7 +101,7 @@ rewrite → route ─┬─ smalltalk / di luar topik / ubah data non-PO → res
 
 ## Menjalankan tanpa Docker (butuh 2 terminal)
 
-Prasyarat: **Python 3.11+** dan **Node.js 18+** (diuji dengan Node 22).
+Prasyarat: **Python 3.11+**, **Node.js 18+** (diuji dengan Node 22), dan Postgres lokal (`docker compose up -d db`).
 
 ### Terminal 1 — Backend (http://localhost:8000)
 
@@ -144,12 +163,12 @@ Menu **MPS & Planning** membuka **Kalender** (Harian/Mingguan/Bulanan); tombol *
 
 > **Upgrade dari versi sebelumnya?** Jalankan berurutan `cd backend && python -m scripts.migrate_item_categories` (bila perlu) lalu `python -m scripts.migrate_mps_manual_po` agar database lama dikonversi tanpa kehilangan data. Detail: `backend/README.md`.
 
-Reset data demo: `cd backend && python -m scripts.seed --reset --demo-schedules` (hentikan server dulu bila memakai SQLite).
+Reset data demo (Postgres lokal): `cd backend && python -m scripts.seed --reset --demo-schedules`.
 
 ## Tes
 
 ```bash
-cd backend && pytest -q          # BOM, planning, sourcing, PO, goods receipt, kontrak frontend, chatbot (butuh TEST_DATABASE_URL)
+cd backend && pytest -q          # butuh Postgres lokal (TEST_DATABASE_URL=…localhost:5433/mrp_test); URL Supabase ditolak
 cd frontend && npm run build     # build produksi
 ```
 
@@ -159,5 +178,5 @@ Alur UI di atas juga diuji otomatis (vitest + jsdom + Testing Library) terhadap 
 
 - **Roda Set = 1 per sepeda** pada data seed (Ban Luar 2 per set) agar kebutuhan Ban Luar = 100 seperti dokumen alur; BOM di dokumen (Roda Set = 2) akan menghasilkan 200.
 - `RM-SBR-01` ditambahkan ke Master; supplier/harga untuk material BUY lain adalah data dummy.
-- Tidak ada autentikasi (di luar scope MVP). Pindah ke PostgreSQL: ubah `DATABASE_URL` di `backend/.env` dan `pip install psycopg2-binary`.
+- Tidak ada autentikasi (di luar scope MVP).
 - Detail endpoint & aturan bisnis: `backend/README.md`.

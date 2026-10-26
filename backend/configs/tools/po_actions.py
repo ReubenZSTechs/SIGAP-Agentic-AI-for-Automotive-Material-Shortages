@@ -32,8 +32,16 @@ from configs.tools.po_common import (  # noqa: F401
 )
 from configs.tools.po_execute import cancel_po, confirmation, create_and_issue_po, delete_po, update_draft_po  # noqa: F401
 from configs.tools.po_resolve import material_ids, produce_signature, resolve_po_request  # noqa: F401
-from configs.tools.po_sourcing import active_links, assign_suppliers, pick_supplier  # noqa: F401
-from configs.tools.supplier_change_request import apply_change_request, open_change_request, parse_rupiah  # noqa: F401
+from configs.tools.po_sourcing import active_links, assign_suppliers, pick_replacement, pick_supplier  # noqa: F401
+from configs.tools.supplier_change_request import (  # noqa: F401
+    OPTION_LABEL,
+    apply_change_request,
+    apply_delivery_date,
+    handle_supplier_cancellation,
+    open_change_request,
+    open_date_change,
+    parse_rupiah,
+)
 from configs.tools.supplier_conversation import (  # noqa: F401
     CONFIRMATION_FIELDS,
     close_conversation,
@@ -47,6 +55,7 @@ from configs.tools.supplier_conversation import (  # noqa: F401
     record_supplier_confirmation,
     record_supplier_decline,
     request_po_cancellation,
+    revise_promised_date,
     revisions,
     split_promised_dates,
     start_supplier_conversation,
@@ -67,4 +76,6 @@ WRITE_TOOLS = {
     "record_supplier_decline": record_supplier_decline,
     "open_change_request": open_change_request,
     "apply_change_request": apply_change_request,
+    "apply_delivery_date": apply_delivery_date,
+    "handle_supplier_cancellation": handle_supplier_cancellation,
 }

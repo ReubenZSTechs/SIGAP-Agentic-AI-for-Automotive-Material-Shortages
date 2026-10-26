@@ -1,8 +1,9 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine.url import make_url
 
 # Selalu baca backend/.env, apa pun folder tempat perintah dijalankan.
 ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
@@ -20,10 +21,28 @@ def normalize_db_url(url: str) -> str:
     return url
 
 
+SUPABASE_HOSTS = ("supabase.com", "supabase.co")
+
+
+def is_supabase(url: str | None) -> bool:
+    """True bila host URL adalah Supabase (dipakai untuk memagari development & test)."""
+    if not url:
+        return False
+    try:
+        host = (make_url(normalize_db_url(url.strip())).host or "").lower()
+    except Exception:  # noqa: BLE001  (URL rusak ditolak validator lain)
+        return False
+    return any(host == h or host.endswith("." + h) for h in SUPABASE_HOSTS)
+
+
 class Settings(BaseSettings):
-    # WAJIB diisi di backend/.env dengan URL Supabase (tombol Connect -> Session pooler):
-    #   DATABASE_URL=postgresql://postgres.<ref>:<PASSWORD>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
-    # Tidak ada default: bila kosong, aplikasi berhenti dengan pesan error (tidak diam-diam pindah DB).
+    # development (default): Postgres lokal (docker compose). URL Supabase DITOLAK agar kode lokal tidak
+    # pernah menyentuh database produksi. production: SAP BTP Cloud Foundry + Supabase (lihat docs/DEPLOYMENT.md).
+    APP_ENV: Literal["development", "production"] = "development"
+
+    # WAJIB. Development: postgresql://mrp:mrp@localhost:5433/mrp (docker compose).
+    # Production: URL pooler Supabase, di-set lewat manifest.yml + deploy/vars.yml.
+    # Satu database untuk aplikasi DAN chatbot (chatbot memakai transaksi READ ONLY di URL yang sama).
     DATABASE_URL: str
 
     @field_validator("DATABASE_URL")
@@ -65,14 +84,6 @@ class Settings(BaseSettings):
     AICORE_CLIENT_SECRET: str | None = None
     AICORE_BASE_URL: str | None = None
     AICORE_RESOURCE_GROUP: str = "default"
-    # URL role database read-only khusus chatbot; bila kosong memakai DATABASE_URL (tetap READ ONLY).
-    CHAT_DATABASE_URL: str | None = None
-
-    @field_validator("CHAT_DATABASE_URL")
-    @classmethod
-    def _chat_db(cls, v: str | None) -> str | None:
-        return normalize_db_url(v.strip()) if v and v.strip() else None
-
     # Supplier Telegram: "sandbox" (pesan hanya disimpan di DB, supplier/manajer diperankan dari
     # Hub Supplier di frontend) atau "telegram" (Bot API sungguhan, long polling oleh worker).
     TELEGRAM_MODE: Literal["sandbox", "telegram"] = "sandbox"
@@ -83,6 +94,17 @@ class Settings(BaseSettings):
     # Pencatatan setiap panggilan agent LLM (tabel agent_runs, dibaca Agent Hub Streamlit).
     AGENT_TRACE_ENABLED: bool = True
     AGENT_TRACE_RETENTION_DAYS: int = 30
+
+    @model_validator(mode="after")
+    def _no_supabase_in_development(self) -> "Settings":
+        if self.APP_ENV != "production" and is_supabase(self.DATABASE_URL):
+            raise ValueError("DATABASE_URL menunjuk ke Supabase tetapi APP_ENV=development. Development & test "
+                             "wajib memakai Postgres lokal (docker compose); Supabase hanya untuk APP_ENV=production.")
+        return self
+
+    @property
+    def is_production(self) -> bool:
+        return self.APP_ENV == "production"
 
     @property
     def telegram_live(self) -> bool:

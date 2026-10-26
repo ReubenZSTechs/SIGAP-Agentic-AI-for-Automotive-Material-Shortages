@@ -31,6 +31,12 @@ def new_trace(workflow: str, **ref) -> dict:
     return {"trace_id": outer["trace_id"] if outer else uuid.uuid4().hex, "workflow": workflow, "ref": refs}
 
 
+def current_trace_id() -> str | None:
+    """Id of the active trace (links audit rows to the agent_runs / tool_runs of the same flow)."""
+    cur = _current.get()
+    return cur["trace_id"] if cur else None
+
+
 @contextmanager
 def activate(trace: dict):
     """Makes `trace` current for the block (use around each step of a generator, never across a yield)."""

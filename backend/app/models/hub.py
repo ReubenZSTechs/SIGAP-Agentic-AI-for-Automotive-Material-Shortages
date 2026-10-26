@@ -1,6 +1,6 @@
-"""Agent Hub (Hub Supplier di frontend): pengaturan, misi multi-supplier, proposal, draf, dokumen, audit.
+"""Agent Hub (Hub Supplier di frontend): pengaturan, misi, proposal, draf, lampiran, audit.
 
-Semua tabel baru berprefiks `hub_` (tanpa mengubah tabel lama) agar `create_all` cukup tanpa migrasi.
+Semua tabel berprefiks `hub_`. Kolom baru pada tabel yang sudah ada didaftarkan di `app/db_migrate.py`.
 Enum Hub sengaja didefinisikan di sini, bukan di `enums.py`, supaya modul lama tidak tersentuh.
 """
 import enum
@@ -31,7 +31,11 @@ class MissionScenario(str, enum.Enum):
     PRICE_QUOTE = "PRICE_QUOTE"
     STOCK_CHECK = "STOCK_CHECK"
     DELIVERY_CONFIRM = "DELIVERY_CONFIRM"
-    DOC_REQUEST = "DOC_REQUEST"
+    PO_CONFIRM = "PO_CONFIRM"          # agent PO: kirim PO ke supplier & kumpulkan konfirmasi (percakapan PO)
+    PO_CANCEL = "PO_CANCEL"            # agent PO: minta supplier menyetujui pembatalan PO
+
+
+PO_SCENARIOS = (MissionScenario.PO_CONFIRM, MissionScenario.PO_CANCEL)
 
 
 class MissionSource(str, enum.Enum):
@@ -53,6 +57,7 @@ class TargetState(str, enum.Enum):
     REPLIED = "REPLIED"
     NO_REPLY = "NO_REPLY"
     ESCALATED = "ESCALATED"
+    WAITING_MANAGER = "WAITING_MANAGER"   # misi PO: supplier minta perubahan, menunggu keputusan manajer
 
 
 class ProposalType(str, enum.Enum):
@@ -70,7 +75,7 @@ class ProposalStatus(str, enum.Enum):
     FAILED = "FAILED"
 
 
-class DocumentStatus(str, enum.Enum):
+class DocumentStatus(str, enum.Enum):   # kolom lama hub_documents.status (tidak ada lagi alur review)
     NEEDS_REVIEW = "NEEDS_REVIEW"
     ARCHIVED = "ARCHIVED"
     REREQUESTED = "REREQUESTED"
@@ -83,16 +88,6 @@ class HubSettings(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     paused: Mapped[bool] = mapped_column(Boolean, default=False)
     policies: Mapped[dict] = mapped_column(JSON)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
-
-
-class HubMessageTemplate(Base):
-    __tablename__ = "hub_message_templates"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(80))
-    scenario: Mapped[str] = mapped_column(String(24))
-    body: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
@@ -121,11 +116,12 @@ class HubMission(Base):
     po_snapshot: Mapped[dict | None] = mapped_column(JSON, default=None)
     items: Mapped[list] = mapped_column(JSON, default=list)        # [{material_id, sku, name, qty, uom, needed_by}]
     topic: Mapped[str | None] = mapped_column(String(160), default=None)
-    message_template: Mapped[str] = mapped_column(Text)
+    message_template: Mapped[str] = mapped_column(Text)            # teks pembuka (default dari MISSION_MESSAGES)
     deadline: Mapped[datetime] = mapped_column(DateTime)
     autonomy: Mapped[str] = mapped_column(String(8), default="AUTO")  # AUTO | REVIEW
     status: Mapped[MissionStatus] = mapped_column(_enum(MissionStatus), default=MissionStatus.ACTIVE, index=True)
     summary: Mapped[str | None] = mapped_column(String(500), default=None)
+    automation_action_id: Mapped[str | None] = mapped_column(String(36), default=None)   # kartu chat Dashboard asal
     created_by: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
@@ -146,6 +142,7 @@ class HubMissionTarget(Base):
     reminded_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
     result: Mapped[dict | None] = mapped_column(JSON, default=None)
     last_message_id: Mapped[int | None] = mapped_column(default=None)
+    conversation_id: Mapped[int | None] = mapped_column(default=None, index=True)   # misi PO: percakapan PO terkait
 
     mission: Mapped["HubMission"] = relationship(back_populates="targets")
     supplier: Mapped["Supplier"] = relationship()
@@ -191,7 +188,7 @@ class HubProposal(Base):
 
 
 class HubDocument(Base):
-    """Foto/PDF dari supplier. Divalidasi manual (tanpa OCR) terhadap data PO."""
+    """Lampiran foto/PDF dari supplier, ditampilkan di thread percakapan (kolom review lama tidak dipakai lagi)."""
     __tablename__ = "hub_documents"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -216,13 +213,18 @@ class HubDocument(Base):
 
 
 class HubAuditLog(Base):
-    """Jejak semua tindakan admin/agent di Hub (tidak pernah diubah)."""
+    """Jejak semua keputusan manajer dan tindakan agent (tidak pernah diubah). Sumber halaman Riwayat Aktivitas."""
     __tablename__ = "hub_audit_log"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     actor: Mapped[str] = mapped_column(String(80))
+    actor_type: Mapped[str | None] = mapped_column(String(8), default=None, index=True)   # MANAGER | AGENT | SYSTEM
     action: Mapped[str] = mapped_column(String(40))
     ref_type: Mapped[str] = mapped_column(String(24))
     ref_id: Mapped[str] = mapped_column(String(40))
+    summary: Mapped[str | None] = mapped_column(String(300), default=None)
+    supplier_id: Mapped[int | None] = mapped_column(default=None, index=True)
+    po_number: Mapped[str | None] = mapped_column(String(24), default=None, index=True)
+    trace_id: Mapped[str | None] = mapped_column(String(36), default=None)             # -> agent_runs / tool_runs
     detail: Mapped[dict | None] = mapped_column(JSON, default=None)

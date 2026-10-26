@@ -29,7 +29,10 @@ class DecideIn(ActorIn):
 
 
 class ChooseIn(ActorIn):
-    choice: Literal["abort", "approve_change", "resource"]
+    choice: Literal["abort", "approve_change", "resource", "negotiate", "accept_date", "reject_date",
+                    "continue_project", "cancel_project"]
+    counter_prices: dict[int, int] | None = None      # negotiate: {po_item_id: harga satuan}
+    schedule_ids: list[int] | None = None             # cancel_project: subset jadwal yang dibatalkan
 
 
 class MissionItemIn(BaseModel):
@@ -39,7 +42,7 @@ class MissionItemIn(BaseModel):
 
 
 class MissionIn(ActorIn):
-    scenario: Literal["PRICE_QUOTE", "STOCK_CHECK", "DELIVERY_CONFIRM", "DOC_REQUEST"]
+    scenario: Literal["PRICE_QUOTE", "STOCK_CHECK", "DELIVERY_CONFIRM", "PO_CONFIRM", "PO_CANCEL"]
     title: str | None = Field(default=None, max_length=160)
     po_id: int | None = None
     items: list[MissionItemIn] = []
@@ -58,20 +61,6 @@ class EscalateIn(ActorIn):
     supplier_id: int
 
 
-class DocumentPatchIn(ActorIn):
-    doc_type: Literal["INVOICE", "DELIVERY_NOTE", "TAX_INVOICE", "OTHER"] | None = None
-    number: str | None = Field(default=None, max_length=60)
-    po_id: int | None = None
-    po_number: str | None = Field(default=None, max_length=40)
-    doc_date: str | None = None
-    total: float | None = Field(default=None, ge=0)
-    qty: dict[str, float] | None = None
-
-
-class ArchiveIn(ActorIn):
-    confirm_mismatch: bool = False
-
-
 class SandboxAttachmentIn(BaseModel):
     supplier_id: int
     file_name: str = Field(min_length=1, max_length=160)
@@ -82,12 +71,6 @@ class SandboxAttachmentIn(BaseModel):
 
 class SandboxReplyIn(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
-
-
-class TemplateIn(BaseModel):
-    name: str = Field(min_length=3, max_length=80)
-    scenario: str = Field(min_length=3, max_length=24)
-    body: str = Field(min_length=10, max_length=2000)
 
 
 class ManagerButtonIn(ActorIn):

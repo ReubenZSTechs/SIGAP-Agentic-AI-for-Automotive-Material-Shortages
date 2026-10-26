@@ -159,11 +159,14 @@ Each agent has `configs/agent/<name>.yaml` (prompt, generation settings) and `co
 | `update_draft_po` | edit DRAFT/REJECTED manual PO |
 | `delete_po` | hard delete with stock/planning revert |
 | `request_po_cancellation` | start supplier cancellation for an ISSUED PO |
-| `queue_conversation` | queue a supplier Telegram conversation |
+| `queue_conversation` | create the Hub PO mission, then queue the supplier Telegram conversation (the dispatcher contacts the supplier afterwards) |
 
 The read tool `get_po_supplier_status` (in `curated.py`) lets the normal chatbot answer *"sudah dikonfirmasi supplier belum?"*.
 
 ## 8. Audit trail
+
+**Missions first.** When a confirmed proposal issues POs, each PO gets a `PO_CONFIRM` mission in *Hub Supplier → Misi* (linked by `hub_missions.automation_action_id`) **before** the supplier is contacted; the chat reply names the missions so the manager can follow the confirmation there. The approve / reject decision on the card is also written to the activity log (`approve_automation` / `reject_automation`, *Riwayat Aktivitas*).
+
 
 Table `automation_actions`: `id`, `thread_id`, `operation`, `status` (`PROPOSED`, `REJECTED`, `SUPERSEDED`, `EXPIRED`, `EXECUTED`, `AWAITING_SUPPLIER`, `FAILED`), `proposal` (exact JSON the user approved), `result` (created POs, errors, later supplier outcome), `po_id`/`po_number`, timestamps. Supplier outcomes (confirmed, cancellation agreed, refused, re-sourced) are written back to `result.supplier_outcome`.
 

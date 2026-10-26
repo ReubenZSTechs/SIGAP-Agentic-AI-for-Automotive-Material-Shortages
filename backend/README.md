@@ -1,25 +1,27 @@
 # MRP & Vendor Sourcing Management — Backend MVP
 
-FastAPI · SQLAlchemy 2.0 (sync) · SQLite · Pydantic v2.
+FastAPI · SQLAlchemy 2.0 (sync) · PostgreSQL 17 (lokal: Docker, produksi: Supabase) · Pydantic v2.
 Mengimplementasikan Phase 0 → 5: Master Material & Supplier (many-to-many) → BOM → MPS & Stock Planning
 → Smart Sourcing → Purchase Order multi-vendor → Goods Receipt (loop penutup).
 
 ## Menjalankan
 
-Prasyarat: Python 3.11+.
+Prasyarat: Python 3.11+ dan Postgres lokal (`docker compose up -d db` dari root repo, port 5433).
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-cp .env.example .env                 # opsional; default sudah sqlite:///./mrp.db
+cp .env.example .env                 # APP_ENV=development, DATABASE_URL=…localhost:5433/mrp
 python -m scripts.seed --demo-schedules   # isi data contoh dari spesifikasi
 uvicorn app.main:app --reload
 ```
 
 - Swagger UI: <http://127.0.0.1:8000/docs> · Health check: `GET /health`
-- Tabel dibuat otomatis saat startup (`create_all`, tanpa Alembic).
+- Tabel dibuat otomatis saat startup (`create_all`, tanpa Alembic); kolom baru pada tabel lama ditambahkan oleh `app/db_migrate.py` (`ADD COLUMN IF NOT EXISTS`, aman diulang — juga untuk Supabase produksi).
+- `APP_ENV=development` (default) menolak `DATABASE_URL` Supabase; Supabase hanya untuk `APP_ENV=production` (lihat `docs/DEPLOYMENT.md`).
+- Chatbot memakai `DATABASE_URL` yang sama (transaksi `READ ONLY` + `statement_timeout` 10 detik); tidak ada database/role chat terpisah.
 - `--demo-schedules` menambah jadwal Senin 30 + Selasa 20 unit pada Senin terdekat dari hari ini. Tanpa flag ini, buat jadwal sendiri via `POST /api/v1/schedules` atau lewat UI.
 - **CORS**: origin yang diizinkan diatur lewat `CORS_ORIGINS` di `.env` (default `http://localhost:5173,http://127.0.0.1:5173` = Vite dev server). Frontend juga bisa memakai proxy Vite sehingga CORS tidak terpakai saat development.
 - `python -m scripts.seed --reset` menghapus & mengisi ulang database.
@@ -45,12 +47,13 @@ Untuk meniru Phase 4 spesifikasi persis (qty PO ≠ defisit), pilih supplier per
 ## Tes
 
 ```bash
-pytest -q
+pytest -q        # atau dari root: docker compose exec backend pytest -q
 ```
 
-60 tes: unit (eksplosi 3 level, siklus BOM, MAKE tanpa BOM, strategi sourcing, MOQ, over-receipt, on_order)
-dan E2E golden test yang mereproduksi angka spesifikasi (defisit 60/15/25/10; total PO Rp 3.400.000 /
-3.500.000 / 2.400.000; stok akhir 180/100/200/170).
+`TEST_DATABASE_URL` wajib Postgres lokal (`postgresql://mrp:mrp@localhost:5433/mrp_test`); URL Supabase dan URL yang sama
+dengan `DATABASE_URL` ditolak karena tes menghapus semua tabel. Cakupan: unit (eksplosi BOM, sourcing, MOQ, goods receipt),
+E2E golden test angka spesifikasi, chatbot & otomasi PO, agent Telegram supplier, Hub, serta `tests/test_agent_autonomy.py`
+(batas tanggal kirim & harga, pembatalan supplier + PO pengganti, misi PO, guardrail, Riwayat Aktivitas).
 
 ## Endpoint (`/api/v1`)
 

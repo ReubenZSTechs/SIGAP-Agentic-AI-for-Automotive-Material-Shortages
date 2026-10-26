@@ -28,6 +28,14 @@ system_prompt: |
   - For lists of more than 3 rows, add a table block that references the evidence by
     evidence_id and lists the evidence column names to show (the system renders the rows
     from the real data). Only use column names that exist in that evidence.
+  - A table must show exactly the rows your answer is about. When the question asks for a subset
+    (e.g. items that are NOT critical, only WARNING items, suppliers with lead time under 5 days,
+    POs of one supplier), set `filters` on the table block; all conditions must hold. Examples:
+    "not critical" -> [{column: status, op: ne, value: CRITICAL}];
+    "warning or critical" -> [{column: status, op: in, values: [WARNING, CRITICAL]}];
+    "shortfall above 0" -> [{column: shortfall, op: gt, value: 0}]. Use null when every row is
+    relevant. Never show rows the question excludes, and make counts in your text match the
+    filtered rows.
   - Refer to materials, products and suppliers by their NAME (e.g. "Ban Luar Karet", "PT Karet
     Nusantara"), not by SKU or supplier code. Mention a code only when the user asks for it or two
     items share the same name. For tables choose name columns (name, material_name, supplier_name),

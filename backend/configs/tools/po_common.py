@@ -87,7 +87,8 @@ def po_summary_text(snap: dict) -> str:
     return "\n".join(lines)
 
 
-FIELD_LABEL = {"qty_ordered": "qty", "unit_price": "harga satuan", "needed_by_date": "tanggal kebutuhan"}
+FIELD_LABEL = {"qty_ordered": "qty", "unit_price": "harga satuan", "needed_by_date": "tanggal kebutuhan",
+               "promised_delivery_date": "tanggal kirim", "status": "status"}
 
 
 def change_value(field: str, v) -> str:
@@ -100,7 +101,8 @@ def change_value(field: str, v) -> str:
 
 def describe_change(c: dict) -> str:
     """`{sku, name, field, old, new}` -> "RM-RUB-01 Ban Luar Karet: qty 50 → 40" (exact, never LLM-written)."""
-    return (f"{c['sku']} {c['name']}: {FIELD_LABEL.get(c['field'], c['field'])} {change_value(c['field'], c['old'])} → "
+    who = f"{c['sku']} {c['name']}".strip()
+    return (f"{who}: {FIELD_LABEL.get(c['field'], c['field'])} {change_value(c['field'], c['old'] or '-')} → "
             f"{change_value(c['field'], c['new'])}")
 
 

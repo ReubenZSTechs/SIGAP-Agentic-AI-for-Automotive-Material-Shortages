@@ -4,33 +4,109 @@
   "title": "MissionReplyOutput",
   "type": "object",
   "additionalProperties": false,
-  "required": ["decision", "reply_text", "items", "promised_date", "documents_promised", "confidence", "notes"],
+  "required": [
+    "decision",
+    "reply_text",
+    "items",
+    "promised_date",
+    "confidence",
+    "notes",
+    "guard_flag"
+  ],
   "properties": {
     "decision": {
       "type": "string",
-      "enum": ["answered", "declined", "question", "unclear"],
+      "enum": [
+        "answered",
+        "declined",
+        "question",
+        "unclear"
+      ],
       "description": "What the supplier's latest message means for this mission."
     },
-    "reply_text": {"type": "string", "description": "Short reply to send back to the supplier."},
+    "reply_text": {
+      "type": "string",
+      "description": "Short reply to send back to the supplier."
+    },
     "items": {
       "type": "array",
       "description": "Extracted figures per requested item (empty when nothing was stated).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["material_ref", "price_per_unit", "lead_time_days", "qty_available", "ready_date"],
+        "required": [
+          "material_ref",
+          "price_per_unit",
+          "lead_time_days",
+          "qty_available",
+          "ready_date"
+        ],
         "properties": {
-          "material_ref": {"type": ["string", "null"], "description": "SKU of the requested item."},
-          "price_per_unit": {"type": ["integer", "null"], "description": "Integer Rupiah per unit."},
-          "lead_time_days": {"type": ["integer", "null"]},
-          "qty_available": {"type": ["number", "null"]},
-          "ready_date": {"type": ["string", "null"], "description": "YYYY-MM-DD"}
+          "material_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "SKU of the requested item."
+          },
+          "price_per_unit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Integer Rupiah per unit."
+          },
+          "lead_time_days": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "qty_available": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ready_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "YYYY-MM-DD"
+          }
         }
       }
     },
-    "promised_date": {"type": ["string", "null"], "description": "Promised delivery date YYYY-MM-DD (DELIVERY_CONFIRM)."},
-    "documents_promised": {"type": "boolean"},
-    "confidence": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
-    "notes": {"type": ["string", "null"], "description": "Short reason / remarks (e.g. why they declined)."}
+    "promised_date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Promised delivery date YYYY-MM-DD (DELIVERY_CONFIRM)."
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "HIGH",
+        "MEDIUM",
+        "LOW"
+      ]
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Short reason / remarks (e.g. why they declined)."
+    },
+    "guard_flag": {
+      "type": "string",
+      "enum": [
+        "none",
+        "data_request",
+        "prompt_injection"
+      ]
+    }
   }
 }

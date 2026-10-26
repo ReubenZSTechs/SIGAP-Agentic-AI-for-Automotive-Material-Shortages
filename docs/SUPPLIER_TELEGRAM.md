@@ -21,6 +21,9 @@ Everything the bot sends to suppliers and to the manager is mirrored in the fron
 4. [Conversation lifecycle](#4-conversation-lifecycle)
 5. [Revision flow](#5-revision-flow)
 6. [Decision mapping](#6-decision-mapping)
+6a. [Agent decision limits: dates, prices, cancellations](#6a-agent-decision-limits-dates-prices-cancellations)
+6b. [PO missions](#6b-po-missions)
+6c. [Guardrail](#6c-guardrail)
 7. [Agents](#agents)
 8. [Data model](#8-data-model)
 9. [Frontend (Hub Supplier) and sync](#9-frontend-hub-supplier-and-sync)
@@ -182,8 +185,10 @@ The PO row always holds the latest values; `po_revisions` keeps the history and 
 
 | Purpose | `confirmed` | `declined` | `change_requested` | `question` / `unclear` |
 |:--|:--|:--|:--|:--|
-| CONFIRM_ORDER / REVISION_CONFIRM | required fields complete → `record_supplier_confirmation` → CONFIRMED, `finalize_po_revision` → FINAL, final PDF sent; otherwise ask for the missing fields (no PDF) | `record_supplier_decline` → DECLINED + manager notice | `open_change_request` → manager options (if nothing concrete: ask for specifics) | reply, keep waiting; escalate after `max_turns` |
+| CONFIRM_ORDER / REVISION_CONFIRM | required fields complete → promised date checked against the agent's day window (§6a): inside → `record_supplier_confirmation` → CONFIRMED, `finalize_po_revision` → FINAL, final PDF sent; outside → DATE_CHANGE request for the manager. Fields missing → ask for them (no PDF) | `record_supplier_decline` → DECLINED + manager notice | `open_change_request` → price within limit: agent approves; otherwise manager options (if nothing concrete: ask for specifics) | reply, keep waiting; escalate after `max_turns` |
 | CANCEL_ORDER | re-check PO (ISSUED, no receipts) → `cancel_po` (CANCELLED, kept) → CANCEL_CONFIRMED | restore previous confirmation → DECLINED + manager asked to call the supplier | treated as refusal | reply, keep waiting; escalate after `max_turns` |
+
+`cancel_requested` (CONFIRM_ORDER / REVISION_CONFIRM) → `handle_supplier_cancellation` (§6a). A `guard_flag` other than `none` → fixed guardrail refusal, nothing changes (§6c).
 
 If the PO is gone or no longer ISSUED/PARTIALLY_RECEIVED when a reply arrives, the conversation closes and the manager is notified (`po_changed`).
 
@@ -193,16 +198,61 @@ If the PO is gone or no longer ISSUED/PARTIALLY_RECEIVED when a reply arrives, t
 
 - **Partial confirmation.** A confirmation without them (e.g. *"Bisa"*) is remembered: the conversation gets `outcome.confirmed_pending` and `outcome.collected`. The supplier gets a fixed question for exactly what is missing, the confirmation stays `PENDING`, and no PDF is sent.
 - **Completing it.** The agent is told `already_confirmed` / `still_needed`. A later message with the missing data (*"Tanggal 24 Oktober"*) completes the confirmation. As a backstop that doesn't rely on the LLM, an unclear reply that still carries the data counts as complete. Then CONFIRMED, FINAL, and one PDF showing *Janji kirim* / *Ref. supplier*.
-- **A delivery date is not a revision.** A delivery date for a line that has no needed-by date is the supplier's promise. `split_promised_dates` takes it out of `proposed_changes`. Given together with a real revision, it is carried into the REVISION_CONFIRM conversation.
+- **A delivery date is never a revision.** Our needed-by date stays the deadline; any delivery date the supplier gives is their promise. `split_promised_dates` takes every date out of `proposed_changes`, and the date is checked against the agent's window (§6a). Given together with a real revision, it is carried into the REVISION_CONFIRM conversation.
 
 ### Messages after the PO is final (triage)
 
 | Triage intent on a CONFIRMED PO | What happens |
 |:--|:--|
 | `acknowledgement` / `confirmation` (*"Sudah sesuai"*) | fixed thank-you; **no** new conversation, **no** second PDF |
-| `delivery_update` with a date | stored on the confirmation and the FINAL version; fixed reply *"Tanggal kirim … kami catat: …"*; manager notified if it is later than a needed-by date |
+| `delivery_change` with a date | `apply_delivery_date`: inside the window → new FINAL version + PDF, supplier and manager told; outside → DATE_CHANGE request with buttons (§6a) |
+| `delivery_change` without a clear date | fixed question asking for the exact date |
+| `cancellation_request` | `handle_supplier_cancellation` (§6a) |
+| `data_request` | guardrail refusal (§6c) |
+| `revision_request` | a CONFIRM_ORDER conversation is reopened and the reply agent extracts the changes |
 
-The triage agent may not claim to have recorded anything. Every "kami catat" comes from code, after the write.
+The triage agent may not claim to have recorded anything. Every confirmation text comes from code, after the write.
+
+## 6a. Agent decision limits: dates, prices, cancellations
+
+The manager sets three limits in *Hub Supplier → Pengaturan → Aturan otonomi → Batas keputusan otomatis agent* (`hub_settings.policies.thresholds`, read by `configs/tools/agent_limits.py`):
+
+| Limit | Default | Meaning |
+|:--|--:|:--|
+| `delivery_early_days` | 7 | a new delivery date may be up to N days **before** the deadline |
+| `delivery_late_days` | 0 | … and up to N days **after** the deadline |
+| `price_increase_pct` | 5 | a unit price may rise by up to N % (decreases are always fine) |
+
+The **deadline** of a PO is the earliest needed-by date of its open lines (no needed-by date → any date is accepted).
+
+| Supplier request | Inside the limits (agent decides) | Outside (POChangeRequest for the manager) |
+|:--|:--|:--|
+| New delivery date (`DATE_CHANGE`) | promised date updated + new FINAL PO version (`revise_promised_date`) + PDF; manager informed | `accept_date` · `reject_date` · `resource` (other supplier that arrives in time) · `abort` |
+| Price increase (`PRICE_CHANGE`) | revision approved by the agent (`cr.result.auto`), REVISION_CONFIRM sent; manager informed | `approve_change` (accept new price) · `negotiate` (manager's counter price per line → sent as a revision) · `resource` (cheaper supplier) · `abort` |
+| qty change (`REVISION`) | — always the manager | `abort` · `approve_change` · `resource` |
+| Cancellation (`CANCELLATION`) | PO cancelled automatically; replacement via `pick_replacement` (on time = today + lead time ≤ deadline + late days, cheapest first). On time **and** price within the limit → new PO issued + PO mission, manager informed | PO already cancelled; `resource` (replacement anyway, with the lateness / price warnings) · `continue_project` (keep the MPS schedules, planning marked stale) · `cancel_project` (cancel the PLANNED schedules that use the material, selectable in the Hub card) |
+
+A cancellation of a PO that already has goods receipts is not executed automatically: the supplier is told the team will follow up and the manager gets an escalation (`supplier_cancel_partial`).
+
+Negotiation from Telegram: press *Ajukan harga nego* (the bot asks for the price) and reply *"nego 12000"* (or per SKU); `manager_decision_agent` reads `counter_prices`, and a confirm button executes it.
+
+## 6b. PO missions
+
+Every PO conversation is tracked as a mission in *Hub Supplier → Misi* (`app/hub/po_missions.py`):
+
+- **Agent → mission.** `queue_conversation` calls `ensure_po_mission` in the same transaction, so every path that contacts a supplier about a PO (dashboard-chat automation, PO approval, replacement POs, the PO page) first creates a `PO_CONFIRM` / `PO_CANCEL` mission; the dispatcher sends the opening afterwards. A REVISION_CONFIRM continues the same mission.
+- **Manager → agent.** A manager-created `PO_CONFIRM` / `PO_CANCEL` mission (wizard, *Dari PO*) makes the agent open the PO conversation right away; the conversation attaches to that mission.
+- **Progress** is derived from the conversation (`sync`, run by the worker tick and on every mission read): QUEUED → *Antre*, AWAITING_SUPPLIER → *Menunggu balasan*, REVISION_REQUESTED / open request → *Menunggu keputusan manajer*, CONFIRMED / CANCEL_CONFIRMED → mission DONE with a summary, DECLINED / ESCALATED → escalated, PO cancelled or re-sourced → mission closed with the reason. Every transition is written to the activity log.
+
+## 6c. Guardrail
+
+`app/supplier_chat/guardrail.py` protects the agents and the company data:
+
+1. **Rules before any LLM** (`check_inbound`, Indonesian + English) on every supplier message: `data_query` (our stock, other suppliers or their prices, customers, production plans, BOMs, costs, bulk exports, "database"/"query"), `sql_injection`, `prompt_injection` (ignore-instructions, role play, fake `<system>` blocks), `secret_exfiltration` (system prompt, API keys, passwords, chat ids), `authority_claim` ("saya manajer", "manager already approved"), `encoded_payload` (base64/hex/script), `foreign_po` (a PO number that is not this supplier's). The supplier's *own* stock ("stok kami tinggal 20") is allowed.
+2. **LLM second layer**: triage intent `data_request` and `guard_flag` on the reply and mission agents go through the same refusal.
+3. **Output check** (`check_outbound`): an LLM reply that names another supplier, a PO of another supplier, or a stock figure is replaced with a neutral reply.
+
+Refusals are fixed texts per category (Indonesian or English, by the supplier's language). Every block is logged (`supplier_messages.agent_output.guardrail`, activity `guardrail_block`); attack-like categories also alert the manager, at most once per supplier per hour.
 
 ## Agents
 
@@ -211,16 +261,17 @@ All agents have `configs/agent/<name>.yaml` + `configs/schema/<name>.schema.json
 | Agent | Output | Notes |
 |:--|:--|:--|
 | `supplier_outreach_writer` | `message_text`, `language` | opening / revision / withdrawal text **without figures** |
-| `supplier_reply_agent` | `decision`, `reply_text`, `promised_delivery_date`, `supplier_reference`, `proposed_changes[{material_ref, field, new_value, reason}]`, `change_summary`, `reason` | supplier text is passed as untrusted data |
-| `supplier_inbound_triage` | `po_number` (from the supplier's open POs only), `intent`, `reply_text` | new chats with no active conversation |
+| `supplier_reply_agent` | `decision` (+ `cancel_requested`), `reply_text`, `promised_delivery_date`, `supplier_reference`, `proposed_changes[{material_ref, field, new_value, reason}]`, `change_summary`, `reason`, `guard_flag` | supplier text is passed as untrusted data |
+| `supplier_inbound_triage` | `po_number` (from the supplier's open POs only), `intent` (`delivery_change`, `cancellation_request`, `data_request`, …), `reply_text`, `promised_delivery_date`, `reason` | new chats with no active conversation |
+| `mission_reply_agent` | `decision`, `items`, `promised_date`, `confidence`, `notes`, `guard_flag` | replies to Hub missions |
 | `manager_escalation_writer` | `message_text`, `urgency`, `recommended_option`, `rationale` | the exact details and buttons are appended by code |
-| `manager_decision_agent` | `choice`, `change_request_id`, `reply_text` | free-text manager replies, always followed by a confirm button |
+| `manager_decision_agent` | `choice`, `change_request_id`, `reply_text`, `counter_prices` | free-text manager replies, always followed by a confirm button |
 
 If `supplier_outreach_writer` or `manager_escalation_writer` fails, a fixed template is used so the message still goes out.
 
 ## 8. Data model
 
-All new tables. `create_all` creates them, and no existing table is altered.
+`create_all` creates missing tables; new columns on existing tables are added at startup by `app/db_migrate.py` (`ADD COLUMN IF NOT EXISTS`).
 
 | Table | Purpose |
 |:--|:--|
@@ -228,7 +279,7 @@ All new tables. `create_all` creates them, and no existing table is altered.
 | `supplier_conversations` | one row per PO conversation: purpose, status, `po_snapshot`, `po_id` (SET NULL on delete), turn count, outcome, linked `automation_action_id` |
 | `supplier_messages` | every message in/out (supplier & manager), buttons, agent JSON output, delivery errors. In sandbox mode this is the inbox. |
 | `po_supplier_confirmations` | per PO: `PENDING`, `CONFIRMED`, `DECLINED`, `CANCEL_PENDING`, `REVISION_PENDING` + promised date, reference, `revision_round` |
-| `po_change_requests` | validated changes, invalid changes, options, manager choice, result |
+| `po_change_requests` | `kind` (REVISION / PRICE_CHANGE / DATE_CHANGE / CANCELLATION), validated changes, invalid changes, options, manager choice, result |
 | `po_revisions` | PO versions discussed with the supplier (v1 sent, v2+ approved revisions, FINAL confirmed) with the final PDF |
 
 ## 9. Frontend (Hub Supplier) and sync
@@ -241,7 +292,10 @@ The Streamlit Telegram Lab was removed; everything runs from the React frontend.
 | Send an ISSUED PO / ask for a cancellation | automatic on ISSUED; PO detail → *Kirim ke supplier* / *Minta pembatalan* |
 | Bot ↔ supplier messages (incl. the final PDF), take over, sandbox supplier replies | Hub → *Percakapan* → supplier thread |
 | Bot ↔ manager messages, option buttons, free-text replies | Hub → *Chat Manajer* |
-| Revision options with diff, evidence and impact | Hub → *Persetujuan* |
+| Revision / price / date / cancellation options with diff, evidence and impact | Hub → *Persetujuan* |
+| Agent limits (date window, price increase) | Hub → *Pengaturan* → *Aturan otonomi* |
+| PO conversations as missions | Hub → *Misi* |
+| Every manager decision and agent action | *Riwayat Aktivitas* (sidebar) |
 | PO versions and the final PDF | PO detail → *Riwayat versi PO* |
 
 **Two-way sync of manager decisions.** Option buttons always run the same `manager_graph` path, whether pressed in Telegram, on a Hub approval card, or in *Chat Manajer*:
@@ -332,6 +386,7 @@ supplier_chat:
 
 ## 13. Security
 
+- **Guardrail** (§6c): rule-based checks block data queries, SQL, prompt injection, secret requests and authority claims before any LLM sees the message; LLM `guard_flag` and an output check are further layers.
 - **Prompt injection.** Supplier text is passed to the agents as quoted data with explicit instructions to ignore commands inside it. More importantly, the agents cannot pick a PO, a quantity, a price or an action outside their enum: tools take ids from the conversation record and validate every value.
 - **Manager-only buttons.** Callback buttons from any chat other than the manager's are ignored. Free-text manager decisions need a confirm button.
 - **Link tokens** are random (`secrets.token_urlsafe`). Unknown chats are ignored.
@@ -365,8 +420,17 @@ Scripted fake LLMs, real test Postgres, sandbox transport:
   - Hub ↔ Telegram button sync (`edit_buttons`)
   - `parse_rupiah` price formats
 
+- `tests/test_agent_autonomy.py`:
+  - date change inside the window → new FINAL version, PDF, no request; outside → DATE_CHANGE, reject then accept
+  - late date in the first confirmation waits for the manager
+  - price increase within the limit approved by the agent; above → PRICE_CHANGE with negotiation (counter price sent)
+  - supplier cancellation: automatic replacement + PO mission; expensive replacement → manager; no supplier → cancel project
+  - PO missions follow the conversation; manager-created PO mission starts the conversation
+  - guardrail rules (attacks blocked, normal messages pass), no LLM call on a block, one manager alert per hour, output check
+  - activity log filters (agent actions vs manager decisions)
+
 ```bash
-docker compose exec backend pytest -q tests/test_supplier_chat.py tests/test_supplier_revision.py
+docker compose exec backend pytest -q tests/test_supplier_chat.py tests/test_supplier_revision.py tests/test_agent_autonomy.py
 ```
 
 ## 15. Troubleshooting

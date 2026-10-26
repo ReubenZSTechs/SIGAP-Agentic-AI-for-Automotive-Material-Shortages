@@ -8,7 +8,8 @@
     "po_number",
     "intent",
     "reply_text",
-    "promised_delivery_date"
+    "promised_delivery_date",
+    "reason"
   ],
   "properties": {
     "po_number": {
@@ -23,9 +24,11 @@
       "enum": [
         "revision_request",
         "confirmation",
-        "delivery_update",
+        "delivery_change",
+        "cancellation_request",
         "acknowledgement",
         "question",
+        "data_request",
         "other"
       ]
     },
@@ -39,6 +42,13 @@
         "null"
       ],
       "description": "Delivery date the supplier states (YYYY-MM-DD, resolved against today); null if none."
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "For cancellation_request / revision_request: the supplier's stated reason, one short sentence; else null."
     }
   }
 }

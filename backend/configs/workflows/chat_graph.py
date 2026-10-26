@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from app.chatbot.evidence import Evidence, evidence_prompt, make_evidence, render_table
+from app.chatbot.evidence import Evidence, evidence_prompt, filter_rows, filtered_evidence, make_evidence, render_table
 from app.chatbot.llm import Agent
 from app.chatbot.progress import current_writer, emit, forward_to
 from app.chatbot.scoring import apply_gate, numeric_grounding
@@ -240,15 +240,18 @@ class ChatWorkflow:
                   if (b["type"] == "text" and b.get("text")) or (b["type"] == "table" and b.get("evidence_id") in known)]
         if not blocks:
             blocks = [{"type": "text", "text": ERROR_TEXT[state["language"]], "evidence_id": None, "columns": None,
-                       "title": None}]
+                       "title": None, "filters": None}]
         return {"draft": {**out, "blocks": blocks}}
 
     def _judge(self, state: ChatState) -> tuple[dict, dict]:
         """LLM judge + deterministic numeric check -> (judge output, evaluation with the weighted gate)."""
         draft, evidence = state["draft"], state["evidence"]
         text = _answer_text(draft["blocks"])
-        tables = [{"evidence_id": b["evidence_id"], "columns": b.get("columns")}
-                  for b in draft["blocks"] if b["type"] == "table"]
+        ev_by_id = {e["id"]: e for e in evidence}
+        tables = [{"evidence_id": b["evidence_id"], "columns": b.get("columns"), "filters": b.get("filters"),
+                   "rows_shown": len(filter_rows(ev_by_id[b["evidence_id"]], b.get("filters")))}
+                  for b in draft["blocks"] if b["type"] == "table" and b.get("evidence_id") in ev_by_id]
+        shown = [filtered_evidence(ev_by_id[t["evidence_id"]], t["filters"]) for t in tables if t["filters"]]
         payload = {"question": state["rewritten"], "original_message": state["question"],
                    "evidence": evidence_prompt(evidence, self.evidence_cfg["max_rows_in_prompt"]),
                    "answer": {"text": text, "tables_rendered_from_evidence": tables,
@@ -256,7 +259,7 @@ class ChatWorkflow:
         judge = self.agents["evaluator"].run(json.dumps(payload, ensure_ascii=False))
         verdicts = judge["claim_verdicts"]
         faithfulness = (sum(v["supported"] for v in verdicts) / len(verdicts)) if verdicts else judge["faithfulness"]
-        numeric, ungrounded = numeric_grounding(text, evidence, state["question"])
+        numeric, ungrounded = numeric_grounding(text, evidence + shown, state["question"])
         metrics = {"faithfulness": faithfulness, "answer_relevance": judge["answer_relevance"],
                    "numeric_grounding": numeric, "completeness": judge["completeness"]}
         gate = apply_gate(metrics, self.gate_cfg["weights"], self.gate_cfg["threshold"],
@@ -306,7 +309,8 @@ class ChatWorkflow:
         blocks = []
         for b in chosen["draft"]["blocks"]:
             if b["type"] == "table":
-                blocks.append(render_table(evidence[b["evidence_id"]], b.get("columns"), language, b.get("title")))
+                blocks.append(render_table(evidence[b["evidence_id"]], b.get("columns"), language, b.get("title"),
+                                           b.get("filters")))
             elif b["type"] == "text":
                 blocks.append({"type": "text", "text": b["text"]})
             else:                                               # options (klarifikasi otomasi PO), dll.

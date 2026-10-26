@@ -29,9 +29,9 @@ def route_mission_reply(svc, supplier_id: int, chat_id: int, text: str, message_
 
 
 def store_attachments(svc, chat_id: int, text: str, attachments: list[dict], message_id: int | None) -> dict | None:
-    """Foto/dokumen dari supplier -> hub_documents. None = chat tidak dikenal / gagal (alur lama berlanjut)."""
+    """Foto/dokumen dari supplier -> lampiran thread. None = chat tidak dikenal / gagal (alur lama berlanjut)."""
     try:
-        from app.hub.documents import store_from_telegram
+        from app.hub.attachments import store_from_telegram
         return store_from_telegram(svc, chat_id, text, attachments, message_id)
     except Exception:  # noqa: BLE001
         log.exception("hub hook store_attachments failed")

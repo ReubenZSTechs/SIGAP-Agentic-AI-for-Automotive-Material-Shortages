@@ -158,8 +158,8 @@ def test_resource_issues_new_po_to_alternative_supplier(seeded):
 def test_no_resource_option_without_alternative_supplier(seeded):
     reply = F.reply("change_requested", changes=[F.change("RM-TUB-01", "unit_price", "17000")])
     _revision(seeded, sku="RM-TUB-01", reply=reply)
-    [cr] = H.change_requests()
-    assert [o["key"] for o in cr.options] == ["abort", "approve_change"]
+    [cr] = H.change_requests()                                  # naik > batas 5% -> keputusan manajer
+    assert cr.kind == "PRICE_CHANGE" and [o["key"] for o in cr.options] == ["abort", "approve_change", "negotiate"]
 
 
 def test_new_chat_after_confirmation_is_triaged_into_a_revision(seeded):

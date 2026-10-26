@@ -1,17 +1,17 @@
 name: sigap-mrp
 
 services:
+  # Postgres lokal untuk development & test. Versi mayor = Supabase produksi (17), skema dari model yang sama.
+  # Kode lokal TIDAK PERNAH menyentuh Supabase (APP_ENV=development menolak URL *.supabase.com).
   db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: mrp
       POSTGRES_PASSWORD: mrp
       POSTGRES_DB: mrp
       TEST_DB: mrp_test
-      CHAT_RO_USER: mrp_chat_ro
-      CHAT_RO_PASSWORD: mrp_chat_ro
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - db-data-pg17:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     ports:
       - "5433:5432"
@@ -30,8 +30,8 @@ services:
       - path: ./backend/.env
         required: false
     environment:
+      APP_ENV: development
       DATABASE_URL: postgresql://mrp:mrp@db:5432/mrp
-      CHAT_DATABASE_URL: postgresql://mrp_chat_ro:mrp_chat_ro@db:5432/mrp
       TEST_DATABASE_URL: postgresql://mrp:mrp@db:5432/mrp_test
       CORS_ORIGINS: http://localhost:8080,http://localhost:5173
       SEED_DEMO: "true"
@@ -53,8 +53,8 @@ services:
       - path: ./backend/.env
         required: false
     environment:
+      APP_ENV: development
       DATABASE_URL: postgresql://mrp:mrp@db:5432/mrp
-      CHAT_DATABASE_URL: postgresql://mrp_chat_ro:mrp_chat_ro@db:5432/mrp
       CORS_ORIGINS: http://localhost:8080
     command: ["python", "-m", "app.supplier_chat.worker"]
     restart: unless-stopped
@@ -67,6 +67,7 @@ services:
       backend:
         condition: service_healthy
     environment:
+      APP_ENV: development
       DATABASE_URL: postgresql://mrp:mrp@db:5432/mrp
       CORS_ORIGINS: http://localhost:8080
       SIGAP_API_URL: http://backend:8000/api/v1
@@ -83,4 +84,4 @@ services:
       - "8080:80"
 
 volumes:
-  db-data:
+  db-data-pg17:

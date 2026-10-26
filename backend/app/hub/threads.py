@@ -138,7 +138,7 @@ def thread_messages(db: Session, sup: Supplier) -> list[dict]:
     docs = {}
     for d in db.scalars(select(HubDocument).where(HubDocument.supplier_id == sup.id, HubDocument.message_id.isnot(None))):
         docs.setdefault(d.message_id, []).append({"id": f"doc-{d.id}", "doc_id": d.id, "kind": d.kind, "name": d.file_name,
-                                                  "size": _size(d.size), "archived": d.status.value == "ARCHIVED"})
+                                                  "size": _size(d.size)})
     items, last_in = [], None
     for m in _messages(db, sup.id):
         out = m.agent_output or {}
@@ -241,10 +241,8 @@ def _context(db: Session, sup: Supplier) -> dict:
     props = [approvals.proposal_brief(p) for p in db.scalars(select(HubProposal).where(
         or_(HubProposal.supplier_id == sup.id, HubProposal.mission_id.in_(mission_ids or [-1])))
         .order_by(HubProposal.id.desc()).limit(6))]
-    docs = [{"id": d.id, "number": d.number or d.file_name, "type": d.doc_type, "status": d.status.value}
-            for d in db.scalars(select(HubDocument).where(HubDocument.supplier_id == sup.id).order_by(HubDocument.id.desc()).limit(6))]
     free = "Kirim langsung (setelah ambil alih)"
-    return {"pos": pos, "missions": ms, "approvals": crs + props, "documents": docs,
+    return {"pos": pos, "missions": ms, "approvals": crs + props,
             "rules": [{"label": "Agent PO", "value": "Otomatis (konfirmasi & revisi)"},
                       {"label": "Pesan misi", "value": "Sesuai otonomi misi"},
                       {"label": "Pesan bebas", "value": free},

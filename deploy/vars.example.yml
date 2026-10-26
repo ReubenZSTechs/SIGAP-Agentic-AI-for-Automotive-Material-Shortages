@@ -1,0 +1,16 @@
+# Salin ke deploy/vars.yml (di-gitignore) lalu: cf push --vars-file deploy/vars.yml
+# # Route tetap SAP BTP (ganti bila hostname sudah dipakai tim lain; samakan cors_origins)
+backend_host: "mrp-backend-suppliers"
+frontend_host: "mrp-frontend-suppliers"
+database_url: Supabase -> Connect -> Transaction pooler (port 6543). Tabel dibuat/dimigrasi otomatis saat startup.
+database_url: "postgresql://postgres.<project-ref>:<PASSWORD>@aws-0-<region>.pooler.supabase.com:6543/postgres"
+cors_origins: "https://mrp-frontend-suppliers.cfapps.ap10.hana.ondemand.com"   # = https://<frontend_host>.cfapps.ap10.hana.ondemand.com
+aicore_auth_url: "https://<subdomain>.authentication.<region>.hana.ondemand.com/oauth/token"
+aicore_client_id: "<clientid>"
+aicore_client_secret: "<clientsecret>"
+aicore_base_url: "https://api.ai.<region>.ml.hana.ondemand.com"
+aicore_resource_group: "default"
+telegram_mode: "telegram"
+telegram_bot_token: "<token dari @BotFather>"
+telegram_bot_username: "<username bot tanpa @>"
+telegram_manager_chat_id: "<chat id manajer>"

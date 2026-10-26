@@ -15,7 +15,9 @@ export const hubService = {
   listApprovals: () => api.get('/hub/approvals'),
   getApproval: (id) => api.get(`/hub/approvals/${id}`),
   decide: (id, mode, body) => (mode === 'choose'
-    ? api.post(`/hub/approvals/${id}/choose`, { approver: body.approver, choice: body.choice })
+    ? api.post(`/hub/approvals/${id}/choose`, {
+      approver: body.approver, choice: body.choice, counter_prices: body.counter_prices ?? null, schedule_ids: body.schedule_ids ?? null,
+    }, { timeout: 120000 })
     : api.post(`/hub/approvals/${id}/${ENDPOINT[mode]}`, body)),
 
   // chat manajer (cermin chat Telegram manajer; tombol & balasan tersinkron dua arah)
@@ -47,22 +49,13 @@ export const hubService = {
   poContext: (poId) => api.get(`/hub/po/${poId}/context`),
   startSupplierConversation: (poId, purpose, approver) => api.post(`/hub/po/${poId}/supplier-conversation`, { purpose, approver }, { timeout: 120000 }),
 
-  // dokumen
-  listDocuments: () => api.get('/hub/documents'),
-  getDocument: (id) => api.get(`/hub/documents/${id}`),
-  documentFileUrl: (id) => `${BASE}/hub/documents/${id}/file`,
-  updateDocument: (id, body) => api.patch(`/hub/documents/${id}`, body),
-  archiveDocument: (id, approver, confirmMismatch) => api.post(`/hub/documents/${id}/archive`, { approver, confirm_mismatch: confirmMismatch }),
-  requestDocumentAgain: (id, approver, reason) => api.post(`/hub/documents/${id}/request-again`, { approver, reason }),
+  // lampiran supplier (ditampilkan di thread)
+  attachmentFileUrl: (id) => `${BASE}/hub/attachments/${id}/file`,
   sandboxAttachment: (body) => api.post('/hub/sandbox/attachment', body),
 
   // pengaturan
   getPolicies: () => api.get('/hub/policies'),
   savePolicies: (body, approver) => api.put('/hub/policies', { ...body, approver }),
-  getTemplates: () => api.get('/hub/templates'),
-  saveTemplate: ({ id, name, scenario, body }) => (id
-    ? api.put(`/hub/templates/${id}`, { name, scenario, body })
-    : api.post('/hub/templates', { name, scenario, body })),
   listSuppliers: () => api.get('/hub/suppliers'),
   getSupplier: (id) => api.get(`/hub/suppliers/${id}`),
   inviteSupplier: (id, approver) => api.post(`/hub/suppliers/${id}/invite`, who(approver)),

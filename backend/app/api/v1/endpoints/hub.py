@@ -1,4 +1,4 @@
-"""Agent Hub API (frontend "Hub Supplier"): persetujuan, percakapan, misi, dokumen, pengaturan.
+"""Agent Hub API (frontend "Hub Supplier"): persetujuan, percakapan, misi, lampiran, pengaturan.
 
 Dibangun di atas agent Telegram supplier (`/supplier-chat`) tanpa mengubah endpoint lamanya.
 """
@@ -13,14 +13,13 @@ from app.api.deps import get_db
 from app.config import settings
 from app.core.exceptions import AppError
 from app.database import SessionLocal
-from app.hub import approvals, common as C, documents, manager, missions, threads
-from app.models import (HubAuditLog, HubDocument, HubMessageTemplate, HubMission, POChangeRequest, PurchaseOrder, Supplier,
-                        SupplierConversation, SupplierMessage, SupplierTelegramLink)
+from app.hub import approvals, attachments, common as C, manager, missions, threads
+from app.models import (HubAuditLog, HubMission, POChangeRequest, PurchaseOrder, Supplier, SupplierConversation,
+                        SupplierMessage, SupplierTelegramLink)
 from app.models.enums import MessageDirection
-from app.models.hub import DocumentStatus, MissionStatus
-from app.schemas.hub import (ActorIn, ApproveIn, ArchiveIn, ChooseIn, DecideIn, DocumentPatchIn, EscalateIn,
-                             ManagerButtonIn, MessageIn, MissionIn, OutboxSendIn, RemindIn, SandboxAttachmentIn,
-                             SandboxReplyIn, SupplierConversationIn, TemplateIn)
+from app.models.hub import MissionStatus
+from app.schemas.hub import (ActorIn, ApproveIn, ChooseIn, DecideIn, EscalateIn, ManagerButtonIn, MessageIn, MissionIn,
+                             OutboxSendIn, RemindIn, SandboxAttachmentIn, SandboxReplyIn, SupplierConversationIn)
 from app.supplier_chat.service import SupplierChatService, deep_link, ensure_link
 from app.supplier_chat.transport import sandbox_chat_id
 from configs.tools import po_actions as A
@@ -57,7 +56,6 @@ def status(db: Session = Depends(get_db)):
         "counts": {
             "threads": sum(1 for t in thread_rows if t["unread"] or t["drafts"] or t["failed"]),
             "missions": db.query(HubMission).filter(HubMission.status == MissionStatus.ACTIVE).count(),
-            "documents": db.query(HubDocument).filter(HubDocument.status == DocumentStatus.NEEDS_REVIEW).count(),
             "manager": db.query(POChangeRequest).filter(POChangeRequest.status.in_(approvals.CR_PENDING)).count(),
         },
     }
@@ -127,7 +125,8 @@ def choose(approval_id: str, body: ChooseIn, service: SupplierChatService = Depe
     kind, num = approvals.parse_id(approval_id)
     if kind != "cr":
         raise AppError(422, "Pilihan opsi hanya untuk revisi PO")
-    result = approvals.choose_change_request(service, num, body.choice, body.approver)
+    params = {k: v for k, v in (("counter_prices", body.counter_prices), ("schedule_ids", body.schedule_ids)) if v}
+    result = approvals.choose_change_request(service, num, body.choice, body.approver, params)
     return jsonable_encoder({k: v for k, v in result.items() if k != "sends"})
 
 
@@ -287,44 +286,17 @@ def start_supplier_conversation(po_id: int, body: SupplierConversationIn, servic
         return {"id": conv.id, "status": conv.status.value, "purpose": conv.purpose.value}
 
 
-# --------------------------------------------- documents ---------------------------------------------
-@router.get("/documents")
-def list_documents(db: Session = Depends(get_db)):
-    return jsonable_encoder(documents.list_documents(db))
-
-
-@router.get("/documents/{doc_id}")
-def get_document(doc_id: int, db: Session = Depends(get_db)):
-    return jsonable_encoder(documents.get_document(db, doc_id))
-
-
-@router.get("/documents/{doc_id}/file")
-def document_file(doc_id: int, db: Session = Depends(get_db)):
-    content, mime, name = documents.file_content(db, doc_id)
-    safe = "".join(ch for ch in name if ch.isalnum() or ch in "._- ")[:120] or "dokumen"
+# -------------------------------------------- attachments --------------------------------------------
+@router.get("/attachments/{doc_id}/file")
+def attachment_file(doc_id: int, db: Session = Depends(get_db)):
+    content, mime, name = attachments.file_content(db, doc_id)
+    safe = "".join(ch for ch in name if ch.isalnum() or ch in "._- ")[:120] or "lampiran"
     return Response(content, media_type=mime, headers={"Content-Disposition": f'inline; filename="{safe}"'})
-
-
-@router.patch("/documents/{doc_id}")
-def patch_document(doc_id: int, body: DocumentPatchIn, db: Session = Depends(get_db)):
-    data = body.model_dump(exclude_unset=True)
-    actor = data.pop("approver")
-    return jsonable_encoder(documents.update_fields(db, doc_id, data, actor))
-
-
-@router.post("/documents/{doc_id}/archive")
-def archive_document(doc_id: int, body: ArchiveIn, db: Session = Depends(get_db)):
-    return jsonable_encoder(documents.archive(db, doc_id, body.approver, body.confirm_mismatch))
-
-
-@router.post("/documents/{doc_id}/request-again")
-def request_again(doc_id: int, body: DecideIn, service: SupplierChatService = Depends(svc)):
-    return jsonable_encoder(documents.request_again(service, doc_id, body.approver, body.reason))
 
 
 @router.post("/sandbox/attachment", status_code=201)
 def sandbox_attachment(body: SandboxAttachmentIn, service: SupplierChatService = Depends(svc)):
-    return documents.sandbox_upload(service, body.model_dump())
+    return attachments.sandbox_upload(service, body.model_dump())
 
 
 # --------------------------------------------- settings ---------------------------------------------
@@ -345,37 +317,6 @@ def put_policies(body: dict, db: Session = Depends(get_db)):
     C.audit(db, actor, "update_policies", "hub", 1)
     db.commit()
     return row.policies
-
-
-def _tpl(t: HubMessageTemplate) -> dict:
-    return {"id": t.id, "name": t.name, "scenario": t.scenario, "body": t.body, "updated_at": C.iso(t.updated_at)}
-
-
-@router.get("/templates")
-def list_templates(db: Session = Depends(get_db)):
-    rows = C.ensure_templates(db)
-    db.commit()
-    return [_tpl(t) for t in rows]
-
-
-@router.post("/templates", status_code=201)
-def create_template(body: TemplateIn, db: Session = Depends(get_db)):
-    t = HubMessageTemplate(**body.model_dump())
-    db.add(t)
-    db.commit()
-    return _tpl(t)
-
-
-@router.put("/templates/{template_id}")
-def update_template(template_id: int, body: TemplateIn, db: Session = Depends(get_db)):
-    t = db.get(HubMessageTemplate, template_id)
-    if t is None:
-        raise AppError(404, "Template tidak ditemukan")
-    for k, v in body.model_dump().items():
-        setattr(t, k, v)
-    db.commit()
-    db.refresh(t)
-    return _tpl(t)
 
 
 def _supplier_row(db: Session, sup: Supplier) -> dict:

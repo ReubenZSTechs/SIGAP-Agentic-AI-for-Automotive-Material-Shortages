@@ -19,6 +19,7 @@ from app.models import (POChangeRequest, PORevision, PurchaseOrder, Supplier, Su
                         SupplierTelegramLink)
 from app.models.enums import (ChangeRequestStatus, ConversationPurpose, ConversationStatus, MessageDirection,
                               PORevisionStatus, POStatus)
+from app.supplier_chat import guardrail
 from app.supplier_chat.po_pdf import pdf_file_name, render_po_pdf
 from app.supplier_chat.transport import SANDBOX_MANAGER_CHAT_ID, Transport, build_transport, sandbox_chat_id
 from configs.tools import po_actions as A
@@ -36,6 +37,12 @@ FALLBACK_OPENING = {
     "WITHDRAWAL": "Halo {supplier}, {po} kami tarik kembali dan tidak perlu diproses. Terima kasih atas kerja samanya.",
 }
 REVISION_ASK = "Masih ada perubahan lain? Bila tidak, mohon balas konfirmasi; PO final (PDF) akan kami kirim setelahnya."
+NEGOTIATION_OPENING = ("Halo {supplier}, terima kasih atas informasi harganya. Untuk {po} kami mengajukan harga berikut; "
+                       "mohon konfirmasi apakah dapat diterima.")
+GUARD_LABEL = {"data_query": "permintaan data internal", "sql_injection": "kueri/perintah database",
+               "prompt_injection": "prompt injection", "secret_exfiltration": "permintaan rahasia sistem",
+               "authority_claim": "mengaku berwenang", "encoded_payload": "kode/payload tersandi",
+               "foreign_po": "PO milik supplier lain"}
 
 
 class SupplierChatService:
@@ -237,8 +244,13 @@ class SupplierChatService:
         purpose = conv.purpose.value
         if conv.purpose == ConversationPurpose.REVISION_CONFIRM:
             cr = db.get(POChangeRequest, conv.change_request_id) if conv.change_request_id else None
-            diff = A.revision_diff_text(cr.proposed_changes, cr.po_snapshot["total_amount"],
+            changes = ((cr.result or {}).get("applied_changes") or cr.proposed_changes) if cr else []
+            diff = A.revision_diff_text(changes, cr.po_snapshot["total_amount"],
                                         conv.po_snapshot["total_amount"]) if cr else None
+            if cr is not None and cr.manager_choice == "negotiate":     # harga tandingan: tanpa LLM
+                diff = diff.replace("Perubahan yang disetujui:", "Penawaran harga kami:")
+                body = NEGOTIATION_OPENING.format(supplier=conv.po_snapshot["supplier_name"], po=conv.po_number)
+                return "\n\n".join((body, diff, REVISION_ASK)), {"source": "negotiation", "change_request_id": cr.id}
             return self.compose_supplier_message(purpose, conv.po_snapshot,
                                                  detail="\n\n".join(t for t in (diff, REVISION_ASK) if t))
         if conv.purpose == ConversationPurpose.CANCEL_ORDER:
@@ -428,6 +440,10 @@ class SupplierChatService:
         from app.hub import hooks as hub_hooks
         if hub_hooks.is_human_mode(supplier_id):                # admin mengambil alih di Agent Hub: tidak dibalas agent
             return {"handled": True, "human_mode": True, "conversation_id": conv_id}
+        with SessionLocal() as db:                               # guardrail: sebelum pesan sampai ke LLM mana pun
+            verdict = guardrail.check_inbound(text, guardrail.own_po_numbers(db, supplier_id))
+        if verdict is not None:
+            return self.guard_block(verdict, supplier_id, chat_id, text, msg_id, conv_id)
         if conv_id is None:
             routed = hub_hooks.route_mission_reply(self, supplier_id, chat_id, text, msg_id)   # misi Hub yang menunggu
             if routed is not None:
@@ -440,8 +456,46 @@ class SupplierChatService:
             return {"handled": True, "conversation_id": conv_id, "waiting_for": "manager"}
         return self.reply_graph.invoke({"conversation_id": conv_id, "text": text}) or {}
 
+    # ------------------------------------------ guardrail ------------------------------------------
+    def guard_block(self, verdict, supplier_id: int, chat_id: int, text: str, msg_id: int | None,
+                    conv_id: int | None = None) -> dict:
+        """Fixed refusal (written by code) + audit; the manager is alerted on attack attempts (max 1/hour/supplier)."""
+        from app.hub.audit_log import agent as audit_agent
+        from app.models import HubAuditLog
+        reply = verdict.reply(text)
+        alert = None
+        with SessionLocal() as db:
+            sup = db.get(Supplier, supplier_id)
+            if msg_id:
+                msg = db.get(SupplierMessage, msg_id)
+                msg.agent_output = {**(msg.agent_output or {}), "guardrail": verdict.as_dict()}
+            if verdict.alert:
+                recent = db.scalar(select(HubAuditLog.id).where(
+                    HubAuditLog.action == "guardrail_alert", HubAuditLog.supplier_id == supplier_id,
+                    HubAuditLog.at >= A.now() - timedelta(hours=1)).limit(1))
+                if recent is None:
+                    alert = (f"⚠️ Guardrail: pesan dari {sup.name} diblokir ({GUARD_LABEL.get(verdict.category, verdict.category)}). "
+                             f'Agent menolak dengan balasan standar; tidak ada data yang dibagikan.\nPesan: "{text[:300]}"')
+                    audit_agent(db, "guardrail_alert", "supplier", supplier_id, f"Manajer diberi tahu: {verdict.category}",
+                                supplier_id=supplier_id)
+            audit_agent(db, "guardrail_block", "supplier", supplier_id,
+                        f"Pesan {sup.name} ditolak guardrail ({GUARD_LABEL.get(verdict.category, verdict.category)})",
+                        supplier_id=supplier_id, **verdict.as_dict(), message=text[:300])
+            db.commit()
+        sends = [{"chat_id": chat_id, "text": reply, "direction": MD.OUT, "supplier_id": supplier_id,
+                  "conversation_id": conv_id, "agent_output": {"source": "guardrail", **verdict.as_dict()}}]
+        if alert:
+            sends.append(self.manager_send(alert, agent_output={"source": "guardrail", **verdict.as_dict()}))
+        self.deliver(sends)
+        return {"handled": True, "guardrail": verdict.as_dict(), "conversation_id": conv_id}
+
+    def safe_text(self, supplier_id: int, text: str, supplier_text: str = "") -> tuple[str, str | None]:
+        """LLM-written reply checked for leaks before it reaches the supplier (see guardrail.check_outbound)."""
+        with SessionLocal() as db:
+            return guardrail.safe_reply(db, supplier_id, text, supplier_text)
+
     def _triage(self, supplier_id: int, chat_id: int, text: str, msg_id: int) -> dict:
-        """A linked supplier writes while no conversation is open (e.g. a revision after confirming)."""
+        """A linked supplier writes while no conversation is open (e.g. a date change or cancellation after confirming)."""
         with SessionLocal() as db:
             pos = list(db.scalars(select(PurchaseOrder).where(
                 PurchaseOrder.supplier_id == supplier_id,
@@ -449,7 +503,8 @@ class SupplierChatService:
             open_pos = []
             for po in pos:
                 conf = A.confirmation(db, po.id)
-                open_pos.append({**A.po_snapshot(po), "confirmation_status": conf.status.value})
+                open_pos.append({**A.po_snapshot(po), "confirmation_status": conf.status.value,
+                                 "promised_delivery_date": A._iso(conf.promised_delivery_date)})
             db.commit()
             recent = [{"direction": m.direction.value, "text": m.text} for m in db.scalars(
                 select(SupplierMessage).where(SupplierMessage.supplier_id == supplier_id)
@@ -458,14 +513,23 @@ class SupplierChatService:
                                                          "recent_messages": recent})
         po = next((p for p in open_pos if p["po_number"] == out.get("po_number")), None)
         intent, promised = out["intent"], A.valid_future_date(out.get("promised_delivery_date"))
+        if intent == "data_request":                              # lapisan kedua guardrail (klasifikasi LLM)
+            return self.guard_block(guardrail.from_llm("data_request", "llm_triage"), supplier_id, chat_id, text, msg_id)
+        if intent == "cancellation_request" and po is not None:
+            return self._supplier_cancellation(supplier_id, chat_id, po, out.get("reason") or text[:200], text, out)
         confirmed = po is not None and po["confirmation_status"] == "CONFIRMED"
-        if confirmed and promised and intent in ("delivery_update", "confirmation", "acknowledgement"):
-            return self._record_delivery_update(supplier_id, chat_id, po, promised, out)
+        if confirmed and promised and intent in ("delivery_change", "confirmation", "acknowledgement"):
+            return self._record_delivery_update(supplier_id, chat_id, po, promised, out, text)
+        if confirmed and intent == "delivery_change":            # tanggal tidak jelas: tanya tanggal pasti
+            self.deliver([{"chat_id": chat_id, "supplier_id": supplier_id, "direction": MD.OUT, "agent_output": out,
+                           "text": f"Terima kasih atas informasinya. Mohon sebutkan tanggal kirim pasti untuk "
+                                   f"{po['po_number']} (contoh: 28 Oktober) agar dapat kami proses."}])
+            return {"handled": True, "triage": out, "asked_for_date": po["po_number"]}
         if confirmed and intent in ("confirmation", "acknowledgement"):   # sudah final: tanpa percakapan / PDF baru
             self.deliver([{"chat_id": chat_id, "supplier_id": supplier_id, "direction": MD.OUT, "agent_output": out,
                            "text": f"Terima kasih, {po['po_number']} sudah tercatat terkonfirmasi."}])
             return {"handled": True, "triage": out, "acknowledged": po["po_number"]}
-        if po is not None and intent in ("revision_request", "confirmation", "delivery_update", "acknowledgement"):
+        if po is not None and intent in ("revision_request", "confirmation", "delivery_change", "acknowledgement"):
             with A.write_session() as db:
                 conv = A.queue_conversation(db, db.get(PurchaseOrder, po["id"]), ConversationPurpose.CONFIRM_ORDER)
                 conv.status, conv.started_at, conv.last_activity_at = CS.AWAITING_SUPPLIER, A.now(), A.now()
@@ -475,27 +539,106 @@ class SupplierChatService:
                 db.flush()
                 cid = conv.id
             return self.reply_graph.invoke({"conversation_id": cid, "text": text}) or {}
-        reply = out["reply_text"]
-        if po is None and open_pos and out["intent"] == "revision_request":
+        reply, blocked = self.safe_text(supplier_id, out["reply_text"], text)
+        if po is None and open_pos and out["intent"] in ("revision_request", "cancellation_request", "delivery_change"):
             reply += "\nPO terbuka Anda: " + ", ".join(p["po_number"] for p in open_pos)
         self.deliver([{"chat_id": chat_id, "text": reply, "direction": MD.OUT, "supplier_id": supplier_id,
-                       "agent_output": out}])
+                       "agent_output": {**out, **({"guardrail_output": blocked} if blocked else {})}}])
         return {"handled": True, "triage": out}
 
-    def _record_delivery_update(self, supplier_id: int, chat_id: int, po: dict, promised: str, out: dict) -> dict:
-        """New delivery date for an already confirmed PO: recorded, confirmed to the supplier by code."""
+    def _record_delivery_update(self, supplier_id: int, chat_id: int, po: dict, promised: str, out: dict,
+                                text: str = "") -> dict:
+        """New delivery date for an already confirmed PO.
+
+        Within the agent's early/late window (Hub policy): the PO gets a new FINAL version with the date and
+        the supplier and manager are told. Outside: a DATE_CHANGE request with options for the manager.
+        """
+        from app.hub.audit_log import agent as audit_agent
         with A.write_session() as db:
             row = db.get(PurchaseOrder, po["id"])
-            late = A.update_promised_date(db, row, promised)
+            res = A.apply_delivery_date(db, row, promised, text or out.get("reply_text", ""))
+            check = res["check"]
+            if res["auto"]:
+                audit_agent(db, "auto_accept_date", "po", row.id,
+                            f"Tanggal kirim {row.po_number} diterima agent: {check.describe()} (versi {res['version']})",
+                            supplier_id=supplier_id, po_number=row.po_number, new_date=promised)
+            else:
+                audit_agent(db, "escalate_date", "change_request", res["change_request_id"],
+                            f"Tanggal kirim {row.po_number} di luar batas agent: {check.describe()}; menunggu manajer",
+                            supplier_id=supplier_id, po_number=row.po_number, new_date=promised)
             name = row.supplier_name
+        if res["auto"]:
+            self.deliver([
+                {"chat_id": chat_id, "supplier_id": supplier_id, "direction": MD.OUT, "agent_output": out,
+                 "text": f"Terima kasih. Tanggal kirim {po['po_number']} kami perbarui menjadi {promised}. "
+                         f"Terlampir PO versi {res['version']} sebagai acuan.",
+                 "document": {"revision_id": res["revision_id"]}},
+                self.manager_send(f"ℹ️ {name} mengubah tanggal kirim {po['po_number']} menjadi {promised}. "
+                                  f"Masih dalam batas agent ({check.describe()}), jadi agent menerimanya dan PO direvisi "
+                                  f"ke versi {res['version']}.")])
+            return {"handled": True, "triage": out, "promised_delivery_date": promised, "auto_accepted": True}
+        self.deliver([{"chat_id": chat_id, "supplier_id": supplier_id, "direction": MD.OUT, "agent_output": out,
+                       "text": f"Terima kasih. Perubahan tanggal kirim {po['po_number']} menjadi {promised} sedang kami "
+                               "konfirmasi ke manajer; kami akan segera mengabari."}])
+        presented = self.manager_graph.invoke({"kind": "present", "change_request_id": res["change_request_id"]})
+        self.deliver(presented.get("sends", []))
+        return {"handled": True, "triage": out, "promised_delivery_date": promised,
+                "change_request_id": res["change_request_id"]}
+
+    def _supplier_cancellation(self, supplier_id: int, chat_id: int, po: dict, reason: str, text: str,
+                               out: dict | None = None, conversation_id: int | None = None) -> dict:
+        """The supplier cancels an issued PO: cancelled automatically, the manager is told, and a replacement is
+        ordered within the agent's limits (late / expensive / none -> the manager decides)."""
+        from app.hub.audit_log import agent as audit_agent
+        with A.write_session() as db:
+            row = db.get(PurchaseOrder, po["id"])
+            res = A.handle_supplier_cancellation(db, row, reason, text)
+            if res["status"] == "partial":
+                audit_agent(db, "supplier_cancel_partial", "po", row.id,
+                            f"{row.supplier_name} membatalkan {row.po_number} yang sudah sebagian diterima; diteruskan ke manajer",
+                            supplier_id=supplier_id, po_number=row.po_number, reason=reason)
+            else:
+                audit_agent(db, "supplier_cancelled", "po", row.id,
+                            f"{row.po_number} dibatalkan otomatis atas permintaan supplier: {reason}",
+                            supplier_id=supplier_id, po_number=row.po_number, reason=reason)
+                for np in res["new_pos"]:
+                    audit_agent(db, "replacement_po", "po", np["id"],
+                                f"Agent menerbitkan {np['po_number']} ke {np['supplier_name']} sebagai pengganti "
+                                f"{row.po_number} ({A.rupiah(np['total_amount'])}, lead time {np['lead_time_days']} hari)",
+                                supplier_id=None, po_number=np["po_number"], replaces=row.po_number)
+                if res["change_request_id"]:
+                    audit_agent(db, "escalate_cancellation", "change_request", res["change_request_id"],
+                                f"Pengganti {row.po_number} perlu keputusan manajer: "
+                                + ("; ".join(res["warnings"]) or "tidak ada supplier lain"),
+                                supplier_id=supplier_id, po_number=row.po_number)
+            snap, name = A.po_snapshot(row), row.supplier_name
+        if res["status"] == "partial":
+            self.deliver([{"chat_id": chat_id, "supplier_id": supplier_id, "direction": MD.OUT, "agent_output": out,
+                           "conversation_id": conversation_id,
+                           "text": f"Terima kasih atas informasinya. Karena sebagian barang {po['po_number']} sudah kami "
+                                   "terima, tim pembelian kami akan menghubungi Anda untuk sisa pesanan."},
+                          self.escalation_send("supplier_cancel_partial", snap, supplier_id,
+                                               [{"direction": MD.IN.value, "text": text}], conversation_id,
+                                               f"Alasan supplier: {reason}")])
+            return {"handled": True, "cancellation": "partial", "po_number": po["po_number"]}
         sends = [{"chat_id": chat_id, "supplier_id": supplier_id, "direction": MD.OUT, "agent_output": out,
-                  "text": f"Terima kasih. Tanggal kirim {po['po_number']} kami catat: {promised}."}]
-        if late:
+                  "conversation_id": conversation_id,
+                  "text": f"Baik, pembatalan {po['po_number']} kami terima dan PO tersebut sudah kami batalkan. "
+                          "Terima kasih atas informasinya."}]
+        if res["status"] == "replaced":
             sends.append(self.manager_send(
-                f"{name} memperbarui tanggal kirim {po['po_number']} menjadi {promised}, lebih lambat dari tanggal "
-                "kebutuhan: " + "; ".join(f"{l['sku']} {l['name']} (dibutuhkan {l['needed_by_date']})" for l in late)))
+                f"ℹ️ {name} membatalkan {po['po_number']} ({reason}). PO dibatalkan otomatis. Agent menerbitkan "
+                + "; ".join(f"{p['po_number']} ke {p['supplier_name']} ({A.rupiah(p['total_amount'])}, lead time "
+                            f"{p['lead_time_days']} hari)" for p in res["new_pos"])
+                + " dan sedang menghubungi supplier baru (pantau di Hub Supplier → Misi). Harga & waktu kirim masih "
+                  "dalam batas agent."))
+            self.deliver(sends)
+            self.dispatch_queued()
+            return {"handled": True, "cancellation": "replaced", "new_pos": res["new_pos"]}
         self.deliver(sends)
-        return {"handled": True, "triage": out, "promised_delivery_date": promised, "late_lines": late}
+        presented = self.manager_graph.invoke({"kind": "present", "change_request_id": res["change_request_id"]})
+        self.deliver(presented.get("sends", []))
+        return {"handled": True, "cancellation": "needs_manager", "change_request_id": res["change_request_id"]}
 
     # ------------------------------------------- timeouts -------------------------------------------
     def tick_timeouts(self) -> dict:

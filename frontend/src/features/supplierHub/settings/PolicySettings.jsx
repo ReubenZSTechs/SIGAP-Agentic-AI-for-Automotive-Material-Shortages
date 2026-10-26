@@ -14,16 +14,24 @@ import { t } from '../../../i18n';
 
 const DAYS = [[1, 'Sen'], [2, 'Sel'], [3, 'Rab'], [4, 'Kam'], [5, 'Jum'], [6, 'Sab'], [0, 'Min']];
 const THRESHOLDS = [
-  { key: 'price_change_pct_high', label: 'Perubahan harga dianggap risiko Tinggi di atas', unit: '%' },
-  { key: 'delay_days_high', label: 'Keterlambatan dianggap risiko Tinggi di atas', unit: 'hari' },
-  { key: 'invoice_tolerance_rp', label: 'Toleransi selisih total invoice', unit: 'Rp' },
   { key: 'reminder_after_hours', label: 'Pengingat misi bila belum dibalas setelah', unit: 'jam' },
   { key: 'escalate_after_hours', label: 'Tandai tanpa balasan setelah', unit: 'jam' },
+];
+// Batas keputusan otomatis agent PO: di dalam batas agent menerima sendiri, di luar batas manajer memutuskan.
+const LIMITS = [
+  { key: 'delivery_early_days', label: 'Tanggal kirim boleh lebih awal dari tenggat hingga', unit: 'hari', max: 365, int: true,
+    hint: 'Supplier mengirim lebih cepat dari tanggal kebutuhan (needed-by) paling awal di PO.' },
+  { key: 'delivery_late_days', label: 'Tanggal kirim boleh terlambat dari tenggat hingga', unit: 'hari', max: 365, int: true,
+    hint: '0 = setiap keterlambatan melewati tenggat dikonfirmasi ke manajer.' },
+  { key: 'price_increase_pct', label: 'Kenaikan harga satuan yang boleh diterima agent hingga', unit: '%', max: 100,
+    hint: 'Berlaku untuk revisi harga supplier dan supplier pengganti saat PO dibatalkan. Penurunan harga selalu diterima.' },
 ];
 
 function validate(p) {
   if (p.scenarios.some((s) => s.expiry_hours != null && !(s.expiry_hours >= 1 && s.expiry_hours <= 168))) return 'Batas keputusan harus 1–168 jam';
-  if (THRESHOLDS.some((item) => !(p.thresholds[item.key] >= 0) || p.thresholds[item.key] === '')) return 'Semua ambang wajib diisi dengan angka';
+  if ([...THRESHOLDS, ...LIMITS].some((item) => !(p.thresholds[item.key] >= 0) || p.thresholds[item.key] === '')) return 'Semua ambang wajib diisi dengan angka';
+  if (LIMITS.some((l) => p.thresholds[l.key] > l.max)) return 'Batas hari maksimal 365, kenaikan harga maksimal 100%';
+  if (LIMITS.some((l) => l.int && !Number.isInteger(p.thresholds[l.key]))) return 'Batas hari harus bilangan bulat';
   if (p.thresholds.escalate_after_hours <= p.thresholds.reminder_after_hours) return 'Eskalasi harus lebih lama dari pengingat';
   if (p.working_hours.days.length === 0) return 'Pilih minimal satu hari kerja';
   if (p.working_hours.start >= p.working_hours.end) return 'Jam selesai harus setelah jam mulai';
@@ -57,20 +65,42 @@ export default function PolicySettings() {
         <AutonomyMatrix rows={draft.scenarios} onChange={(scenarios) => setDraft((d) => ({ ...d, scenarios }))} />
         <p className="flex items-start gap-2 border-t border-slate-200 px-4 py-3 text-xs text-slate-500">
           <Icon name="info" className="mt-0.5 h-3.5 w-3.5" />
-          Otomatis: pesan template langsung dikirim dan tercatat di riwayat. Draf dulu: pesan muncul di thread berlabel belum dikirim. Kartu yang melewati batas keputusan menjadi Kedaluwarsa.
+          Otomatis: pesan pembuka langsung dikirim dan tercatat di riwayat. Draf dulu: pesan muncul di thread berlabel belum dikirim. Kartu yang melewati batas keputusan menjadi Kedaluwarsa.
+        </p>
+      </Card>
+
+      <Card title={t('Batas keputusan otomatis agent')}>
+        <p className="mb-4 text-sm text-slate-600">
+          {t('Saat supplier mengubah tanggal kirim, menaikkan harga, atau membatalkan PO, agent bertindak sendiri selama masih di dalam batas ini dan memberi tahu manajer. Di luar batas, agent meminta keputusan manajer (Persetujuan & Chat Manajer).')}
+        </p>
+        <div className="grid gap-4 md:grid-cols-3">
+          {LIMITS.map((item) => (
+            <div key={item.key} className="rounded-lg border border-slate-200 p-3">
+              <label htmlFor={item.key} className="block text-sm font-medium text-slate-800">{t(item.label)}</label>
+              <span className="mt-2 inline-flex items-center gap-1.5">
+                <Input id={item.key} type="number" min="0" max={item.max} step={item.int ? 1 : 0.5} className="h-9 w-24 text-right"
+                  value={draft.thresholds[item.key]} onChange={(e) => setTh(item.key, e.target.value)} />
+                <span className="text-sm text-slate-500">{t(item.unit)}</span>
+              </span>
+              <p className="mt-2 text-xs text-slate-500">{t(item.hint)}</p>
+            </div>
+          ))}
+        </div>
+        <p className="mt-4 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-600">
+          <Icon name="info" className="mt-0.5 h-4 w-4 text-primary-600" />
+          {t('Contoh: tenggat 20 Okt, lebih awal 7 & terlambat 0 hari → tanggal 13–20 Okt diterima agent; 21 Okt dikonfirmasi ke manajer (terima, tolak, supplier lain, atau batalkan PO).')}
         </p>
       </Card>
 
       <div className="grid items-start gap-4 lg:grid-cols-2">
-        <Card title={t('Ambang risiko & eskalasi')}>
+        <Card title={t('Ambang pengingat & eskalasi misi')}>
           <div className="space-y-3">
             {THRESHOLDS.map((item) => (
               <div key={item.key} className="flex items-center justify-between gap-3">
                 <label htmlFor={item.key} className="text-sm text-slate-700">{t(item.label)}</label>
                 <span className="inline-flex shrink-0 items-center gap-1.5">
-                  {item.unit === 'Rp' && <span className="text-xs text-slate-500">Rp</span>}
-                  <Input id={item.key} type="number" min="0" className={`h-8 text-right ${item.unit === 'Rp' ? 'w-28' : 'w-20'}`} value={draft.thresholds[item.key]} onChange={(e) => setTh(item.key, e.target.value)} />
-                  {item.unit !== 'Rp' && <span className="w-7 text-xs text-slate-500">{t(item.unit)}</span>}
+                  <Input id={item.key} type="number" min="0" className="h-8 w-20 text-right" value={draft.thresholds[item.key]} onChange={(e) => setTh(item.key, e.target.value)} />
+                  <span className="w-7 text-xs text-slate-500">{t(item.unit)}</span>
                 </span>
               </div>
             ))}
@@ -107,7 +137,7 @@ export default function PolicySettings() {
       </div>
 
       <Card title={t('Agent PO (konfirmasi & revisi PO)')}>
-        <p className="text-sm text-slate-600">{t('Agent PO yang sudah ada tetap memakai pengaturan di')} <code className="font-mono text-xs">{t('backend/configs/models.yaml')}</code>; nilainya ditampilkan di sini sebagai referensi.</p>
+        <p className="text-sm text-slate-600">{t('Batas keputusan otomatis di atas berlaku untuk agent PO. Pengingat dan putaran revisi memakai pengaturan di')} <code className="font-mono text-xs">{t('backend/configs/models.yaml')}</code>; nilainya ditampilkan di sini sebagai referensi.</p>
         <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
           {[['reminder_after_hours', 'Pengingat', 'jam'], ['escalate_after_hours', 'Eskalasi', 'jam'], ['change_request_ttl_hours', 'Batas opsi revisi', 'jam'],
             ['max_turns', 'Balasan tak jelas maks.', 'kali'], ['max_revision_rounds', 'Putaran revisi maks.', 'kali']].map(([k, label, unit]) => (

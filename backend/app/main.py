@@ -11,11 +11,13 @@ from app.config import settings
 from app.core.exceptions import AppError
 from app.core.i18n import translate
 from app.database import Base, engine
+from app import db_migrate
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(engine)         # MVP: tanpa Alembic
+    db_migrate.apply(engine)                 # kolom baru pada tabel lama (mis. Supabase produksi)
     yield
 
 
@@ -28,7 +30,7 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # untuk MVP, semua origin diizinkan
+    allow_origins=settings.cors_origin_list,   # CORS_ORIGINS di .env / manifest (deploy/vars.yml)
     allow_credentials=False,        # tanpa cookie/auth di MVP
     allow_methods=["*"],
     allow_headers=["*"],

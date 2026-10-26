@@ -1,11 +1,11 @@
-"""Fixture test — berjalan di PostgreSQL (BUKAN SQLite).
+"""Fixture test — berjalan di PostgreSQL lokal (BUKAN SQLite, BUKAN Supabase).
 
-WAJIB set TEST_DATABASE_URL ke database KHUSUS TEST (mis. project Supabase terpisah atau
-Postgres lokal). Skema di-drop & dibuat ulang saat test dimulai, dan semua tabel
-dikosongkan sebelum tiap test, jadi JANGAN arahkan ke database yang berisi data asli.
+WAJIB set TEST_DATABASE_URL ke database KHUSUS TEST di Postgres lokal docker compose (versi sama dengan
+Supabase, skema dibuat dari model yang sama). Skema di-drop & dibuat ulang saat test dimulai, dan semua
+tabel dikosongkan sebelum tiap test. URL Supabase selalu ditolak.
 
     # backend/.env (atau export di terminal)
-    TEST_DATABASE_URL=postgresql://postgres.<ref-test>:<PASSWORD>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
+    TEST_DATABASE_URL=postgresql://mrp:mrp@localhost:5433/mrp_test
 """
 import os
 from pathlib import Path
@@ -33,6 +33,12 @@ def _same_db(a: str, b: str) -> bool:
            make_url(_norm(b)).render_as_string(hide_password=True)
 
 
+def is_supabase(url: str) -> bool:
+    # Sengaja tidak mengimpor app.config: impor itu membuat Settings() dari .env SEBELUM DATABASE_URL test di-set.
+    host = (make_url(_norm(url)).host or "").lower()
+    return any(host == h or host.endswith("." + h) for h in ("supabase.com", "supabase.co"))
+
+
 def _resolve_test_url() -> str:
     env_file = dotenv_values(_BACKEND / ".env")
     test_url = os.environ.get("TEST_DATABASE_URL") or env_file.get("TEST_DATABASE_URL")
@@ -41,6 +47,9 @@ def _resolve_test_url() -> str:
                     "(lihat docstring tests/conftest.py).", returncode=2)
     if not _norm(test_url).startswith("postgresql"):
         pytest.exit("TEST_DATABASE_URL harus URL PostgreSQL.", returncode=2)
+    if is_supabase(test_url):
+        pytest.exit("TEST_DATABASE_URL menunjuk ke Supabase. Test menghapus semua tabel dan hanya boleh "
+                    "berjalan di Postgres lokal (docker compose, database mrp_test).", returncode=2)
     # Pengaman: tolak bila sama dengan database aplikasi (.env / env var), karena test melakukan drop_all.
     for real in (env_file.get("DATABASE_URL"), os.environ.get("DATABASE_URL")):
         if _same_db(test_url, real):
@@ -52,7 +61,7 @@ def _resolve_test_url() -> str:
 TEST_URL = _resolve_test_url()
 # Paksa aplikasi memakai DB test (env var menimpa .env). Harus sebelum import app.*
 os.environ["DATABASE_URL"] = TEST_URL
-os.environ["CHAT_DATABASE_URL"] = TEST_URL   # engine read-only chatbot juga ke DB test
+os.environ["APP_ENV"] = "development"         # pagar Supabase selalu aktif saat test
 os.environ["TELEGRAM_MODE"] = "sandbox"      # tes tidak pernah memakai bot Telegram sungguhan
 os.environ.pop("TELEGRAM_MANAGER_CHAT_ID", None)
 

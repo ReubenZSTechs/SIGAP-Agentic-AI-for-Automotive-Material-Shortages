@@ -26,7 +26,7 @@ def mission_reply(decision="answered", items=None, promised=None, text="Terima k
                   confidence="HIGH", notes=None) -> dict:
     """MissionReplyOutput."""
     return {"decision": decision, "reply_text": text, "items": items or [], "promised_date": promised,
-            "documents_promised": False, "confidence": confidence, "notes": notes}
+            "guard_flag": "none", "confidence": confidence, "notes": notes}
 
 
 def quote(sku, price=None, lead=None, qty=None, ready=None) -> dict:
@@ -69,21 +69,27 @@ def price(seeded, sku, code) -> int:
 
 
 # ------------------------------------------- status & settings -------------------------------------------
-def test_status_policies_and_templates(client, seeded):
+def test_status_and_policies_with_agent_limits(client, seeded):
     st = client.get(f"{API}/status").json()
     assert st["paused"] is False and st["pending"] == 0 and st["telegram"]["mode"] == "sandbox"
+    assert "documents" not in st["counts"]
     pol = client.get(f"{API}/policies").json()
     assert {s["key"] for s in pol["scenarios"]} >= {"PRICE_QUOTE", "DELIVERY_CONFIRM", "ESCALATION"}
+    assert "DOC_REQUEST" not in {s["key"] for s in pol["scenarios"]}
+    assert pol["thresholds"]["delivery_early_days"] == 7 and pol["thresholds"]["delivery_late_days"] == 0
+    assert pol["thresholds"]["price_increase_pct"] == 5 and "invoice_tolerance_rp" not in pol["thresholds"]
     assert pol["po_agent"]["max_revision_rounds"] == 2
     pol["scenarios"][1]["outbound"] = "REVIEW"
-    assert client.put(f"{API}/policies", json={**pol, **WHO}).json()["scenarios"][1]["outbound"] == "REVIEW"
+    pol["thresholds"].update(delivery_early_days=3, delivery_late_days=2, price_increase_pct=7.5)
+    saved = client.put(f"{API}/policies", json={**pol, **WHO}).json()
+    assert saved["scenarios"][1]["outbound"] == "REVIEW" and saved["thresholds"]["delivery_late_days"] == 2
     bad = {**pol, **WHO, "thresholds": {**pol["thresholds"], "escalate_after_hours": 1}}
     assert client.put(f"{API}/policies", json=bad).status_code == 422
-    tpls = client.get(f"{API}/templates").json()
-    assert len(tpls) == 5
-    r = client.put(f"{API}/templates/{tpls[0]['id']}", json={**{k: tpls[0][k] for k in ("name", "scenario")},
-                                                            "body": "Halo {kontak}, mohon harga {item}."})
-    assert r.json()["body"].startswith("Halo {kontak}")
+    bad = {**pol, **WHO, "thresholds": {**pol["thresholds"], "price_increase_pct": 150}}
+    assert client.put(f"{API}/policies", json=bad).status_code == 422
+    bad = {**pol, **WHO, "thresholds": {**pol["thresholds"], "delivery_early_days": 1.5}}
+    assert client.put(f"{API}/policies", json=bad).status_code == 422
+    assert client.get(f"{API}/templates").status_code == 404                  # template pesan dihapus
     assert client.post(f"{API}/agent/pause", json=WHO).json()["paused"] is True
     assert client.get(f"{API}/status").json()["paused"] is True
 
@@ -354,7 +360,7 @@ def test_takeover_blocks_agent_and_allows_manual_message(hub, seeded):
 
 
 # ----------------------------------------------- documents -----------------------------------------------
-def test_sandbox_document_validation_against_po(hub, seeded):
+def test_sandbox_attachment_is_shown_in_thread(hub, seeded):
     client, make = hub
     make({})
     po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 20)
@@ -365,36 +371,22 @@ def test_sandbox_document_validation_against_po(hub, seeded):
                                                        "content_base64": base64.b64encode(pdf).decode()})
     assert r.status_code == 201, r.text
     [doc_id] = r.json()["documents"]
-    assert client.get(f"{API}/documents/{doc_id}/file").content == pdf
-    doc = client.get(f"{API}/documents/{doc_id}").json()
-    assert doc["po_id"] == po_id and doc["status"] == "NEEDS_REVIEW"       # satu-satunya PO terbuka supplier
-    assert client.post(f"{API}/documents/{doc_id}/archive", json=WHO).status_code == 422
-    po_number = H.po(po_id).po_number
-    doc = client.patch(f"{API}/documents/{doc_id}", json={**WHO, "doc_type": "INVOICE", "number": "INV-9",
-                                                          "po_number": po_number, "total": 999}).json()
-    total = next(row for row in doc["compare"] if row["key"] == "total")
-    assert total["match"] is False and total["critical"] and doc["critical_mismatches"] == 1
-    assert client.post(f"{API}/documents/{doc_id}/archive", json=WHO).status_code == 409
-    ok = client.post(f"{API}/documents/{doc_id}/archive", json={**WHO, "confirm_mismatch": True}).json()
-    assert ok["status"] == "ARCHIVED"
+    assert client.get(f"{API}/attachments/{doc_id}/file").content == pdf
+    assert client.get(f"{API}/documents/{doc_id}").status_code == 404          # tab Dokumen dihapus
     thread = client.get(f"{API}/threads/{seeded['suppliers']['SUP-KRT']}").json()
     assert any(a["doc_id"] == doc_id for x in thread["messages"] for a in x["attachments"])
+    assert "documents" not in thread["context"]
+    assert po_id
 
 
-def test_doc_request_mission_completes_when_document_arrives(hub, seeded):
+def test_doc_request_mission_is_no_longer_offered(hub, seeded):
     client, make = hub
     make({})
     po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 20)
-    link(client, seeded, "SUP-KRT")
-    m = client.post(f"{API}/missions", json={**WHO, "scenario": "DOC_REQUEST", "po_id": po_id, "deadline": deadline(),
-                                             "supplier_ids": [seeded["suppliers"]["SUP-KRT"]]}).json()
-    assert m["targets"][0]["state"] == "SENT"
-    r = client.post(f"{API}/sandbox/attachment", json={"supplier_id": seeded["suppliers"]["SUP-KRT"], "file_name": "sj.jpg",
-                                                       "mime": "image/jpeg", "content_base64": base64.b64encode(b"x").decode()})
-    doc = client.get(f"{API}/documents/{r.json()['documents'][0]}").json()
-    assert doc["mission_id"] == m["id"] and doc["po_id"] == po_id
-    m = client.get(f"{API}/missions/{m['id']}").json()
-    assert m["status"] == "DONE" and "1 dokumen" in m["summary"]
+    r = client.post(f"{API}/missions", json={**WHO, "scenario": "DOC_REQUEST", "po_id": po_id, "deadline": deadline(),
+                                             "supplier_ids": [seeded["suppliers"]["SUP-KRT"]]})
+    assert r.status_code == 422
+    assert "DOC_REQUEST" not in {x["key"] for x in client.get(f"{API}/mission-options/po/{po_id}").json()["scenarios"]}
 
 
 def test_telegram_attachment_update_is_stored(seeded):

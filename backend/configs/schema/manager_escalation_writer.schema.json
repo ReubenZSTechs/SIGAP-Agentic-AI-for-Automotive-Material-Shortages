@@ -28,6 +28,11 @@
         "abort",
         "approve_change",
         "resource",
+        "negotiate",
+        "accept_date",
+        "reject_date",
+        "continue_project",
+        "cancel_project",
         "none"
       ],
       "description": "Must be one of the provided option keys, or none."

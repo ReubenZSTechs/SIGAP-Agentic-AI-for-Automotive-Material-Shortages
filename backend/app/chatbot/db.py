@@ -1,6 +1,8 @@
 """Read-only database access for the chatbot.
 
-Two ways to read, both READ ONLY (every transaction starts with `SET TRANSACTION READ ONLY`):
+The chatbot shares the application database (`DATABASE_URL`); there is no separate chat database or role.
+Two ways to read, both READ ONLY (every transaction starts with `SET TRANSACTION READ ONLY` and a
+statement timeout, both transaction-scoped so they also work behind the Supabase transaction pooler):
 
     ORM (curated tools):          db = chat_session()            -> db.scalars(select(...))
     raw SQL (text-to-SQL agent):  conn = create_connection()      -> execute_sql_query(conn, sql, timeout_ms)
@@ -14,15 +16,18 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import settings
 
 
+DEFAULT_STATEMENT_TIMEOUT_MS = 10_000
+
+
 @lru_cache(maxsize=1)
 def chat_engine() -> Engine:
-    """Engine on `CHAT_DATABASE_URL` (fallback `DATABASE_URL`) whose transactions are READ ONLY. Built once."""
-    engine = create_engine(settings.CHAT_DATABASE_URL or settings.DATABASE_URL,
-                           pool_pre_ping=True, pool_recycle=1800, pool_size=3, max_overflow=2)
+    """Engine on `DATABASE_URL` whose transactions are READ ONLY and time-limited. Built once."""
+    engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True, pool_recycle=1800, pool_size=3, max_overflow=2)
 
     @event.listens_for(engine, "begin")
     def _read_only(conn):
         conn.exec_driver_sql("SET TRANSACTION READ ONLY")
+        conn.exec_driver_sql(f"SET LOCAL statement_timeout = {DEFAULT_STATEMENT_TIMEOUT_MS}")
 
     return engine
 

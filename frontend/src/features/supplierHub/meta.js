@@ -4,6 +4,9 @@ import { locale, t } from '../../i18n';
 // Registry jenis kartu. Jenis tak dikenal otomatis memakai tampilan generik.
 export const TYPE = {
   PO_REVISION: { label: 'Revisi PO', tone: 'violet', options: true },
+  PO_PRICE: { label: 'Harga di atas batas', tone: 'red', options: true },
+  PO_DATE: { label: 'Tanggal kirim di luar batas', tone: 'amber', options: true },
+  PO_CANCELLED: { label: 'Dibatalkan supplier', tone: 'red', options: true },
   PRICE_UPDATE: { label: 'Harga', tone: 'indigo', selectable: true },
   PO_DELAY: { label: 'Keterlambatan PO', tone: 'amber', hero: true },
   STOCK_CHECK: { label: 'Stok', tone: 'slate' },
@@ -71,7 +74,8 @@ export const SCENARIO = {
   PRICE_QUOTE: { label: 'Penawaran harga', icon: 'tag', desc: 'Minta harga dan lead time terbaru dari beberapa supplier.', needsItem: true },
   STOCK_CHECK: { label: 'Cek ketersediaan stok', icon: 'box', desc: 'Pastikan supplier sanggup sebelum PO disetujui atau diterbitkan.', needsItem: true },
   DELIVERY_CONFIRM: { label: 'Konfirmasi jadwal kirim', icon: 'truck', desc: 'Tanyakan apakah PO yang sudah terbit masih sesuai jadwal.', poOnly: true },
-  DOC_REQUEST: { label: 'Minta dokumen', icon: 'file', desc: 'Minta invoice, surat jalan, atau faktur pajak.', poSupplierOnly: true },
+  PO_CONFIRM: { label: 'Konfirmasi PO', icon: 'send', desc: 'Agent mengirim PO terbit ke supplier dan mengumpulkan konfirmasi serta tanggal kirim.', poOnly: true, agentPo: true },
+  PO_CANCEL: { label: 'Pembatalan PO', icon: 'x', desc: 'Agent meminta supplier menyetujui pembatalan PO terbit.', poOnly: true, agentPo: true },
 };
 export const MISSION_STATUS = {
   ACTIVE: { label: 'Berjalan', tone: 'indigo' }, SUMMARIZING: { label: 'Merangkum', tone: 'amber' },
@@ -82,16 +86,11 @@ export const TARGET_STATE = {
   QUEUED: { label: 'Antre', tone: 'slate' }, SENT: { label: 'Menunggu balasan', tone: 'indigo' },
   PAUSED: { label: 'Ditunda (ada percakapan PO)', tone: 'amber' }, REPLIED: { label: 'Dibalas', tone: 'green' },
   NO_REPLY: { label: 'Tanpa balasan', tone: 'amber' }, ESCALATED: { label: 'Eskalasi', tone: 'red' },
+  WAITING_MANAGER: { label: 'Menunggu keputusan manajer', tone: 'violet' },
 };
 export const AUTONOMY = {
-  AUTO: { label: 'Kirim otomatis', desc: 'Pesan template langsung dikirim. Balasan disimpan otomatis.' },
+  AUTO: { label: 'Kirim otomatis', desc: 'Pesan pembuka langsung dikirim. Balasan disimpan otomatis.' },
   REVIEW: { label: 'Draf dulu', desc: 'Setiap pesan menunggu review Anda di Percakapan sebelum dikirim.' },
-};
-
-// ---- Dokumen ----
-export const DOC_TYPE = { INVOICE: 'Invoice', DELIVERY_NOTE: 'Surat jalan', TAX_INVOICE: 'Faktur pajak', OTHER: 'Dokumen lain' };
-export const DOC_STATUS = {
-  NEEDS_REVIEW: { label: 'Perlu validasi', tone: 'amber' }, ARCHIVED: { label: 'Diarsipkan', tone: 'green' }, REREQUESTED: { label: 'Diminta ulang', tone: 'slate' },
 };
 
 // ---- Waktu ----

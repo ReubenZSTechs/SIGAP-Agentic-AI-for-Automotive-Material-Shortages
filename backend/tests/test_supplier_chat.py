@@ -224,3 +224,18 @@ def test_required_fields_are_configurable(seeded):
     assert H.confirmation_status(po_id) == "PENDING" and "nomor referensi" in H.messages("OUT", chat)[-1].text
     svc.handle_inbound(chat, "No SO-9")
     assert H.confirmation_status(po_id) == "CONFIRMED" and H.revisions(po_id)[-1].snapshot["supplier_reference"] == "SO-9"
+
+
+def test_worker_logs_never_contain_the_bot_token(caplog):
+    import logging
+    from app.supplier_chat.worker import RedactBotToken
+    fake = "bot123456789:FAKEfakeFAKEfakeFAKEfake_test-token"
+    log = logging.getLogger("redact-test")
+    caplog.handler.addFilter(RedactBotToken())
+    with caplog.at_level(logging.INFO, logger="redact-test"):
+        log.info("POST https://api.telegram.org/%s/getUpdates", fake)
+        try:
+            raise RuntimeError(f"connect to https://api.telegram.org/{fake}/sendMessage failed")
+        except RuntimeError:
+            log.exception("send failed")
+    assert "FAKEfake" not in caplog.text and caplog.text.count("bot<redacted>") == 2

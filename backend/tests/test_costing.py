@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 from app.chatbot.evidence import make_evidence, render_table
 from configs.tools.registry import run_curated
-from scripts.seed import BOM, SOURCING
+from tests.spec_seed import BOM, SOURCING
 
 
 def _leaf_needs(qty: float) -> dict[str, float]:

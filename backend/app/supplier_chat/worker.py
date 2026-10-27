@@ -6,6 +6,7 @@ Run exactly ONE worker per bot token (Telegram allows a single getUpdates consum
 mode it only dispatches queued conversations and handles timeouts.
 """
 import logging
+import re
 import time
 
 from app.chatbot.service import ChatUnavailable
@@ -58,6 +59,29 @@ def run_forever() -> None:
             backoff = min(backoff * 2, 60)
 
 
-if __name__ == "__main__":
+class RedactBotToken(logging.Filter):
+    """Masks Telegram bot tokens (`bot<id>:<secret>`) in every log line, including tracebacks."""
+    PATTERN = re.compile(r"bot\d+:[A-Za-z0-9_-]{20,}")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = self.PATTERN.sub("bot<redacted>", record.getMessage())
+        record.args = None
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if record.exc_text:
+            record.exc_text = self.PATTERN.sub("bot<redacted>", record.exc_text)
+        return True
+
+
+def setup_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(RedactBotToken())
+    # httpx logs every request URL at INFO, and the Telegram Bot API puts the token in the URL.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+if __name__ == "__main__":
+    setup_logging()
     run_forever()

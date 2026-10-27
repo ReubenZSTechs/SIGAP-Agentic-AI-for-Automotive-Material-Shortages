@@ -52,7 +52,7 @@ pytest -q        # atau dari root: docker compose exec backend pytest -q
 
 `TEST_DATABASE_URL` wajib Postgres lokal (`postgresql://mrp:mrp@localhost:5433/mrp_test`); URL Supabase dan URL yang sama
 dengan `DATABASE_URL` ditolak karena tes menghapus semua tabel. Cakupan: unit (eksplosi BOM, sourcing, MOQ, goods receipt),
-E2E golden test angka spesifikasi, chatbot & otomasi PO, agent Telegram supplier, Hub, serta `tests/test_agent_autonomy.py`
+E2E golden test angka spesifikasi (dataset tes tetap `tests/spec_seed.py`, skenario sepeda; seed demo otomotif di `scripts/seed.py` diuji terpisah di `tests/test_demo_seed.py`), chatbot & otomasi PO, agent Telegram supplier, Hub, serta `tests/test_agent_autonomy.py`
 (batas tanggal kirim & harga, pembatalan supplier + PO pengganti, misi PO, guardrail, Riwayat Aktivitas).
 
 ## Endpoint (`/api/v1`)

@@ -73,7 +73,7 @@ import app.models  # noqa: E402,F401
 from app.api.deps import get_db                    # noqa: E402
 from app.database import Base, engine as _engine   # noqa: E402
 from app.main import app as fastapi_app            # noqa: E402
-from scripts.seed import seed as seed_db           # noqa: E402
+from tests.spec_seed import seed as seed_db       # noqa: E402  (data tes tetap, bukan seed demo)
 
 
 @pytest.fixture(scope="session")

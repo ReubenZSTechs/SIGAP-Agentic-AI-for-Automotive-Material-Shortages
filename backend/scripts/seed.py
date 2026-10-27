@@ -1,4 +1,4 @@
-"""Enterprise automotive MRP seed data (20 vehicle models, 4-level BOM, 34 suppliers).
+"""Enterprise automotive MRP seed data (21 vehicle models incl. SokratesCar, 4-level BOM, 36 suppliers).
 
 Usage (from the project root):
     python -m scripts.seed                    # populate an empty database
@@ -18,6 +18,7 @@ Assumptions:
   * All supplier names, contacts and prices are fictitious dummy data (".example" domains).
 """
 import argparse
+import os
 from datetime import date, timedelta
 
 from sqlalchemy import select
@@ -29,6 +30,11 @@ from app.models import (BOMItem, Inventory, Material, MaterialSupplier, Producti
 from app.models.enums import ItemCategory
 
 FIN, SUB, BUY = ItemCategory.FINISHED, ItemCategory.SUB_PART, ItemCategory.PURCHASED
+
+# Telegram chat_id for the two SokratesCar test suppliers (Supplier has no telegram column, so it is stored
+# inside `contact`). Set env vars before seeding:  TELEGRAM_CHAT_ID_FANDI=123456789  TELEGRAM_CHAT_ID_CHRIS=987654321
+TG_FANDI = os.getenv("TELEGRAM_CHAT_ID_FANDI", "ISI_CHAT_ID_FANDI")
+TG_CHRIS = os.getenv("TELEGRAM_CHAT_ID_CHRIS", "ISI_CHAT_ID_CHRIS")
 
 # code, name, contact
 SUPPLIERS = [
@@ -68,6 +74,9 @@ SUPPLIERS = [
     ("SUP-ELX", "Elektra Power Electronics B.V. (Netherlands)", "Pieter de Vries | +31 40 250 3200 | sales@elektra-power.example"),
     ("SUP-MKT", "Mekatron Precision Malaysia Sdn Bhd (Malaysia)", "Farid Rahman | +60 3 5569 3300 | sales@mekatron-precision.example"),
     ("SUP-VHM", "Viet Harness Manufacturing JSC (Vietnam)", "Nguyen Van Minh | +84 24 3555 3400 | export@viet-harness.example"),
+    # ---- SokratesCar dedicated test suppliers (Telegram integration) ----
+    ("SUP-FND", "PT Fandi", f"Fandi | Telegram chat_id: {TG_FANDI}"),
+    ("SUP-CHR", "PT Chris", f"Chris | Telegram chat_id: {TG_CHRIS}"),
 ]
 
 # Plant production lines (label only; no capacity planning)
@@ -92,6 +101,7 @@ TERMS = {
     "SUP-CAT": 60, "SUP-LGX": 90, "SUP-ZHB": 90, "SUP-SPC": 90, "SUP-PNS": 90, "SUP-VLR": 60,
     "SUP-MGN": 60, "SUP-SHC": 60, "SUP-TRQ": 60, "SUP-TCS": 45, "SUP-AXL": 60, "SUP-SND": 60,
     "SUP-ADV": 60, "SUP-ELX": 60, "SUP-MKT": 14, "SUP-VHM": 45,
+    "SUP-FND": 14, "SUP-CHR": 30,
 }   # SUP-SPR intentionally omitted -> 0 days (cash)
 
 # sku, name, uom, category (FIN = finished vehicle, SUB = "Made" module/assembly, BUY = purchased component)
@@ -422,6 +432,46 @@ MATERIALS = [
     ("RM-DMS-CAM", "Driver Monitoring Camera IR", "Pcs", BUY),
     ("RM-ADC-L1", "ADAS Controller Level 1", "Pcs", BUY),
     ("RM-ADC-L2", "ADAS Domain Controller Level 2", "Pcs", BUY),
+
+    # ===================== SOKRATESCAR (21st vehicle; fully dedicated BOM, sourced only from PT Fandi & PT Chris) =====================
+    ("FG-SDN-SKR-21", "SokratesCar", "Unit", FIN),
+    ("SA-SKR-PWR", "SokratesCar Powertrain Module 1.5L Gasoline CVT", "Set", SUB),
+    ("SA-SKR-ENG", "SokratesCar Engine Assembly 1.5L 4-Cyl", "Unit", SUB),
+    ("SA-SKR-BODY", "SokratesCar Body & Chassis Module", "Set", SUB),
+    ("SA-SKR-CHS", "SokratesCar Chassis Assembly (Suspension, Brake, Steering, Wheels)", "Set", SUB),
+    ("SA-SKR-INT", "SokratesCar Interior / Cockpit Module", "Set", SUB),
+    ("SA-SKR-ELE", "SokratesCar Electrical Module", "Set", SUB),
+    ("RM-SKR-TRN", "SokratesCar CVT Transaxle with Torque Converter", "Set", BUY),
+    ("RM-SKR-ECU", "SokratesCar Engine Control Module", "Pcs", BUY),
+    ("RM-SKR-EXH", "SokratesCar Exhaust System with Catalytic Converter", "Set", BUY),
+    ("RM-SKR-RAD", "SokratesCar Radiator & Cooling Fan", "Pcs", BUY),
+    ("RM-SKR-FTK", "SokratesCar Fuel Tank 45 L with Pump Module", "Pcs", BUY),
+    ("RM-SKR-BLK", "SokratesCar Cylinder Block 1.5L with Crankshaft & Pistons", "Pcs", BUY),
+    ("RM-SKR-HED", "SokratesCar Cylinder Head 1.5L DOHC 16V", "Pcs", BUY),
+    ("RM-SKR-INJ", "SokratesCar Port Fuel Injector", "Pcs", BUY),
+    ("RM-SKR-SPK", "SokratesCar Iridium Spark Plug", "Pcs", BUY),
+    ("RM-SKR-OIL", "SokratesCar Engine Oil SAE 5W-30", "L", BUY),
+    ("RM-SKR-BSH", "SokratesCar Stamped Body Shell Kit", "Set", BUY),
+    ("RM-SKR-DRS", "SokratesCar Door & Closure Set", "Set", BUY),
+    ("RM-SKR-BMP", "SokratesCar Front & Rear Bumper Set", "Set", BUY),
+    ("RM-SKR-GLZ", "SokratesCar Glazing Set (Windshield, Side & Rear Glass)", "Set", BUY),
+    ("RM-SKR-PNT", "SokratesCar Paint System (Basecoat & Clearcoat)", "L", BUY),
+    ("RM-SKR-SUSF", "SokratesCar Front Suspension Set", "Set", BUY),
+    ("RM-SKR-SUSR", "SokratesCar Rear Suspension Set", "Set", BUY),
+    ("RM-SKR-BRK", "SokratesCar Brake System Set with ABS", "Set", BUY),
+    ("RM-SKR-STR", "SokratesCar Electric Power Steering Set", "Set", BUY),
+    ("RM-SKR-WHL", "SokratesCar Alloy Wheel & Tyre Set 16-inch", "Set", BUY),
+    ("RM-SKR-DSH", "SokratesCar Instrument Panel & Console", "Set", BUY),
+    ("RM-SKR-SEAT", "SokratesCar Seat Set 5-Seater Fabric", "Set", BUY),
+    ("RM-SKR-HVC", "SokratesCar HVAC Unit Automatic", "Set", BUY),
+    ("RM-SKR-HDU", "SokratesCar Head Unit 9-inch Touchscreen", "Pcs", BUY),
+    ("RM-SKR-TRM", "SokratesCar Interior Trim Set", "Set", BUY),
+    ("RM-SKR-HRN", "SokratesCar Complete Wiring Harness Set", "Set", BUY),
+    ("RM-SKR-BAT12", "SokratesCar 12V Battery 45Ah", "Pcs", BUY),
+    ("RM-SKR-BCM", "SokratesCar Body Control Module", "Pcs", BUY),
+    ("RM-SKR-ALT", "SokratesCar Alternator 120A", "Pcs", BUY),
+    ("RM-SKR-STM", "SokratesCar Starter Motor", "Pcs", BUY),
+    ("RM-SKR-LGT", "SokratesCar LED Head & Tail Lamp Set", "Set", BUY),
 ]
 
 # Finished vehicle selling price (Rp) and specification
@@ -445,6 +495,7 @@ FINISHED = {
     "FG-SUV-BEV-17": (1_249_000_000, "Powertrain: BEV dual motor 350 kW AWD; Segment: premium D-SUV; Seats: 5 leather; Battery: 90 kWh NMC, AC 11 kW / DC fast charge; Range: approx. 560 km (WLTP)"),
     "FG-MPV-BEV-18": (789_000_000, "Powertrain: BEV single motor 150 kW FWD; Segment: premium family MPV; Seats: 7 leather; Battery: 72 kWh NMC, AC 11 kW / DC fast charge; Range: approx. 430 km (WLTP)"),
     "FG-PKP-BEV-19": (979_000_000, "Powertrain: BEV dual motor 350 kW AWD; Segment: 1-ton double cab pickup; Seats: 5 leather; Battery: 90 kWh NMC, AC 11 kW / DC fast charge; Range: approx. 450 km (WLTP)"),
+    "FG-SDN-SKR-21": (299_000_000, "Powertrain: ICE gasoline 1.5L 4-cyl NA, 107 hp, CVT, FWD; Segment: C compact sedan; Seats: 5 fabric; Battery: 12V lead-acid only; Range: approx. 700 km (45 L tank); Note: test product, all raw materials sourced only from PT Fandi and PT Chris"),
     "FG-VAN-BEV-20": (559_000_000, "Powertrain: BEV single motor 150 kW; Segment: light commercial delivery van; Seats: 3 (cab); Battery: 60 kWh NMC, AC 11 kW / DC fast charge; Range: approx. 300 km (WLTP, laden)"),
 }
 
@@ -771,6 +822,22 @@ BOM = [
     ("SA-SET-7L", "RM-SBT-SET", 1),
     ("SA-SET-VAN", "RM-SFR-VAN", 1), ("SA-SET-VAN", "RM-FOM-SEAT", 1), ("SA-SET-VAN", "RM-COV-VNL-VAN", 1),
     ("SA-SET-VAN", "RM-SBT-SET", 1),
+
+    # ===== SOKRATESCAR: vehicle -> modules -> assemblies -> raw materials (PT Fandi / PT Chris only) =====
+    ("FG-SDN-SKR-21", "SA-SKR-PWR", 1), ("FG-SDN-SKR-21", "SA-SKR-BODY", 1),
+    ("FG-SDN-SKR-21", "SA-SKR-INT", 1), ("FG-SDN-SKR-21", "SA-SKR-ELE", 1),
+    ("SA-SKR-PWR", "SA-SKR-ENG", 1), ("SA-SKR-PWR", "RM-SKR-TRN", 1), ("SA-SKR-PWR", "RM-SKR-ECU", 1),
+    ("SA-SKR-PWR", "RM-SKR-EXH", 1), ("SA-SKR-PWR", "RM-SKR-RAD", 1), ("SA-SKR-PWR", "RM-SKR-FTK", 1),
+    ("SA-SKR-ENG", "RM-SKR-BLK", 1), ("SA-SKR-ENG", "RM-SKR-HED", 1), ("SA-SKR-ENG", "RM-SKR-INJ", 4),
+    ("SA-SKR-ENG", "RM-SKR-SPK", 4), ("SA-SKR-ENG", "RM-SKR-OIL", 4.0),
+    ("SA-SKR-BODY", "SA-SKR-CHS", 1), ("SA-SKR-BODY", "RM-SKR-BSH", 1), ("SA-SKR-BODY", "RM-SKR-DRS", 1),
+    ("SA-SKR-BODY", "RM-SKR-BMP", 1), ("SA-SKR-BODY", "RM-SKR-GLZ", 1), ("SA-SKR-BODY", "RM-SKR-PNT", 7.5),
+    ("SA-SKR-CHS", "RM-SKR-SUSF", 1), ("SA-SKR-CHS", "RM-SKR-SUSR", 1), ("SA-SKR-CHS", "RM-SKR-BRK", 1),
+    ("SA-SKR-CHS", "RM-SKR-STR", 1), ("SA-SKR-CHS", "RM-SKR-WHL", 1),
+    ("SA-SKR-INT", "RM-SKR-DSH", 1), ("SA-SKR-INT", "RM-SKR-SEAT", 1), ("SA-SKR-INT", "RM-SKR-HVC", 1),
+    ("SA-SKR-INT", "RM-SKR-HDU", 1), ("SA-SKR-INT", "RM-SKR-TRM", 1),
+    ("SA-SKR-ELE", "RM-SKR-HRN", 1), ("SA-SKR-ELE", "RM-SKR-BAT12", 1), ("SA-SKR-ELE", "RM-SKR-BCM", 1),
+    ("SA-SKR-ELE", "RM-SKR-ALT", 1), ("SA-SKR-ELE", "RM-SKR-STM", 1), ("SA-SKR-ELE", "RM-SKR-LGT", 1),
 ]
 
 # sku: (physical stock, safety stock)  -- allocated starts at 0.0 for every item
@@ -889,6 +956,18 @@ INVENTORY = {
     "RM-KEY-SMT": (800, 280), "RM-TCU-TEL": (430, 150), "RM-DCDC-HV": (250, 90), "RM-AVAS": (140, 50),
     "RM-CAM-FRT": (270, 95), "RM-RDR-FRT": (270, 95), "RM-RDR-CRN": (700, 240), "RM-DMS-CAM": (150, 50),
     "RM-ADC-L1": (120, 40), "RM-ADC-L2": (150, 50),
+
+    # ---- SokratesCar: low raw stock on purpose -> shortages trigger purchase proposals to PT Fandi / PT Chris ----
+    "FG-SDN-SKR-21": (0, 3),
+    "SA-SKR-PWR": (0, 0), "SA-SKR-ENG": (0, 0), "SA-SKR-BODY": (0, 0), "SA-SKR-CHS": (0, 0),
+    "SA-SKR-INT": (0, 0), "SA-SKR-ELE": (0, 0),
+    "RM-SKR-TRN": (2, 2), "RM-SKR-ECU": (2, 2), "RM-SKR-EXH": (2, 2), "RM-SKR-RAD": (2, 2), "RM-SKR-FTK": (2, 2),
+    "RM-SKR-BLK": (2, 2), "RM-SKR-HED": (2, 2), "RM-SKR-INJ": (8, 8), "RM-SKR-SPK": (8, 8), "RM-SKR-OIL": (20, 10),
+    "RM-SKR-BSH": (1, 2), "RM-SKR-DRS": (1, 2), "RM-SKR-BMP": (2, 2), "RM-SKR-GLZ": (1, 2), "RM-SKR-PNT": (30, 15),
+    "RM-SKR-SUSF": (2, 2), "RM-SKR-SUSR": (2, 2), "RM-SKR-BRK": (2, 2), "RM-SKR-STR": (2, 2), "RM-SKR-WHL": (2, 2),
+    "RM-SKR-DSH": (1, 2), "RM-SKR-SEAT": (1, 2), "RM-SKR-HVC": (2, 2), "RM-SKR-HDU": (2, 2), "RM-SKR-TRM": (1, 2),
+    "RM-SKR-HRN": (1, 2), "RM-SKR-BAT12": (3, 2), "RM-SKR-BCM": (2, 2), "RM-SKR-ALT": (2, 2), "RM-SKR-STM": (2, 2),
+    "RM-SKR-LGT": (1, 2),
 }
 
 # sku: [(supplier code, unit price Rp per UOM, lead time days, moq)]
@@ -1107,6 +1186,39 @@ SOURCING = {
     "RM-DMS-CAM": [("SUP-ADV", 950_000, 28, 100)],
     "RM-ADC-L1": [("SUP-ADV", 3_100_000, 28, 50), ("SUP-BRT", 3_250_000, 28, 50)],
     "RM-ADC-L2": [("SUP-ADV", 9_800_000, 28, 50)],
+
+    # ---- SokratesCar: ONLY PT Fandi (SUP-FND) and PT Chris (SUP-CHR) ----
+    "RM-SKR-TRN": [("SUP-FND", 17_200_000, 4, 1), ("SUP-CHR", 17_900_000, 5, 1)],
+    "RM-SKR-ECU": [("SUP-CHR", 3_650_000, 4, 1), ("SUP-FND", 3_800_000, 3, 1)],
+    "RM-SKR-EXH": [("SUP-FND", 5_300_000, 4, 1), ("SUP-CHR", 5_500_000, 5, 1)],
+    "RM-SKR-RAD": [("SUP-CHR", 1_460_000, 5, 1), ("SUP-FND", 1_400_000, 3, 1)],
+    "RM-SKR-FTK": [("SUP-FND", 1_100_000, 3, 1), ("SUP-CHR", 1_150_000, 4, 1)],
+    "RM-SKR-BLK": [("SUP-CHR", 6_250_000, 6, 1), ("SUP-FND", 6_000_000, 5, 1)],
+    "RM-SKR-HED": [("SUP-FND", 5_000_000, 5, 1), ("SUP-CHR", 5_150_000, 6, 1)],
+    "RM-SKR-INJ": [("SUP-CHR", 455_000, 4, 8), ("SUP-FND", 440_000, 3, 8)],
+    "RM-SKR-SPK": [("SUP-FND", 190_000, 3, 8), ("SUP-CHR", 185_000, 4, 8)],
+    "RM-SKR-OIL": [("SUP-CHR", 97_000, 3, 20), ("SUP-FND", 94_000, 3, 20)],
+    "RM-SKR-BSH": [("SUP-FND", 11_000_000, 7, 1), ("SUP-CHR", 11_400_000, 7, 1)],
+    "RM-SKR-DRS": [("SUP-CHR", 6_300_000, 6, 1), ("SUP-FND", 6_400_000, 5, 1)],
+    "RM-SKR-BMP": [("SUP-FND", 2_850_000, 4, 1), ("SUP-CHR", 2_950_000, 5, 1)],
+    "RM-SKR-GLZ": [("SUP-CHR", 4_250_000, 5, 1), ("SUP-FND", 4_100_000, 4, 1)],
+    "RM-SKR-PNT": [("SUP-FND", 160_000, 3, 20), ("SUP-CHR", 165_000, 4, 20)],
+    "RM-SKR-SUSF": [("SUP-CHR", 5_400_000, 5, 1), ("SUP-FND", 5_200_000, 4, 1)],
+    "RM-SKR-SUSR": [("SUP-FND", 4_100_000, 4, 1), ("SUP-CHR", 4_000_000, 5, 1)],
+    "RM-SKR-BRK": [("SUP-CHR", 4_650_000, 4, 1), ("SUP-FND", 4_500_000, 3, 1)],
+    "RM-SKR-STR": [("SUP-FND", 7_300_000, 5, 1), ("SUP-CHR", 7_500_000, 6, 1)],
+    "RM-SKR-WHL": [("SUP-CHR", 8_000_000, 4, 1), ("SUP-FND", 8_200_000, 3, 1)],
+    "RM-SKR-DSH": [("SUP-FND", 5_300_000, 5, 1), ("SUP-CHR", 5_500_000, 5, 1)],
+    "RM-SKR-SEAT": [("SUP-CHR", 11_900_000, 6, 1), ("SUP-FND", 11_500_000, 6, 1)],
+    "RM-SKR-HVC": [("SUP-FND", 6_200_000, 4, 1), ("SUP-CHR", 6_050_000, 5, 1)],
+    "RM-SKR-HDU": [("SUP-CHR", 3_450_000, 4, 1), ("SUP-FND", 3_300_000, 4, 1)],
+    "RM-SKR-TRM": [("SUP-FND", 4_700_000, 5, 1), ("SUP-CHR", 4_850_000, 5, 1)],
+    "RM-SKR-HRN": [("SUP-CHR", 8_700_000, 5, 1), ("SUP-FND", 8_400_000, 6, 1)],
+    "RM-SKR-BAT12": [("SUP-FND", 1_120_000, 3, 1), ("SUP-CHR", 1_160_000, 3, 1)],
+    "RM-SKR-BCM": [("SUP-CHR", 1_500_000, 4, 1), ("SUP-FND", 1_550_000, 4, 1)],
+    "RM-SKR-ALT": [("SUP-FND", 1_800_000, 4, 1), ("SUP-CHR", 1_850_000, 4, 1)],
+    "RM-SKR-STM": [("SUP-CHR", 1_290_000, 4, 1), ("SUP-FND", 1_240_000, 3, 1)],
+    "RM-SKR-LGT": [("SUP-FND", 6_000_000, 5, 1), ("SUP-CHR", 6_200_000, 6, 1)],
 }
 
 def validate_seed_data() -> None:
@@ -1188,6 +1300,13 @@ def validate_seed_data() -> None:
             if price < 0 or lead < 0 or moq <= 0:
                 err.append(f"SOURCING {sku}/{code}: violates check constraint")
     err += [f"supplier {c} supplies nothing" for c in sup_codes if c not in used_sup]
+    skr_raw = {s for s in buy if s.startswith("RM-SKR-")}
+    for sku in sorted(skr_raw):
+        if {r[0] for r in SOURCING.get(sku, [])} != {"SUP-FND", "SUP-CHR"}:
+            err.append(f"{sku}: SokratesCar raw material must be sourced from exactly PT Fandi and PT Chris")
+    for sku in sorted(buy - skr_raw):
+        if {r[0] for r in SOURCING.get(sku, [])} & {"SUP-FND", "SUP-CHR"}:
+            err.append(f"{sku}: PT Fandi / PT Chris must supply SokratesCar raw materials only")
     if err:
         raise ValueError("Seed data validation failed:\n  - " + "\n  - ".join(err))
 
@@ -1225,6 +1344,8 @@ def seed(db: Session, with_schedules: bool = False) -> dict:
         schedule_service.create_schedule(db, mat["FG-SUV-HEV-11"].id, monday, 30, lines["LINE-FA-01"].id)
         schedule_service.create_schedule(db, mat["FG-SUV-BEV-16"].id, monday + timedelta(days=1), 20,
                                          lines["LINE-FA-02"].id)
+        schedule_service.create_schedule(db, mat["FG-SDN-SKR-21"].id, monday + timedelta(days=2), 10,
+                                         lines["LINE-FA-01"].id)   # SokratesCar -> Telegram test
     return {
         "vehicles": {s: mat[s].id for s in FINISHED},
         "materials": {sku: m.id for sku, m in mat.items()},
@@ -1237,13 +1358,16 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Seed data: automotive MRP & vendor sourcing")
     ap.add_argument("--reset", action="store_true", help="drop & recreate all tables")
     ap.add_argument("--demo-schedules", action="store_true",
-                    help="add demo schedules: Monday 30 x FG-SUV-HEV-11, Tuesday 20 x FG-SUV-BEV-16 (nearest Monday)")
+                    help="add demo schedules (nearest Monday): 30 x FG-SUV-HEV-11, Tuesday 20 x FG-SUV-BEV-16, Wednesday 10 x SokratesCar")
     args = ap.parse_args()
     if args.reset:
         Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
         ids = seed(db, with_schedules=args.demo_schedules)
+    if TG_FANDI.startswith("ISI_") or TG_CHRIS.startswith("ISI_"):
+        print("WARNING: Telegram chat_id for PT Fandi / PT Chris not set. Export TELEGRAM_CHAT_ID_FANDI and "
+              "TELEGRAM_CHAT_ID_CHRIS before seeding (or update Supplier.contact later).")
     print(f"Seed complete: {len(ids['materials'])} materials ({len(ids['vehicles'])} vehicles), "
           f"{len(ids['suppliers'])} suppliers, {len(ids['lines'])} production lines, "
           f"{len(BOM)} BOM rows, {sum(len(v) for v in SOURCING.values())} sourcing rows.")

@@ -19,9 +19,7 @@ import { t } from '../i18n';
 const QUICK_ACTIONS = [
   'Ringkas stok saat ini untuk setiap item',
   'Item mana yang stoknya critical?',
-  'Supplier apa saja untuk material Ban Luar Karet?',
   'Ringkas PO yang belum diterima',
-  'Buat PO 50 Ban Luar Karet',
   'Saya ingin membuat produk baru',
   'Daftarkan supplier baru',
 ];

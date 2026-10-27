@@ -5,7 +5,7 @@ import { t } from '../../i18n';
 import { useHubStore } from '../../store/hubStore';
 
 const GROUPS = [
-  { label: null, links: [{ to: '/', label: 'Dashboard', icon: 'spark', end: true }] },
+  { label: null, links: [{ to: '/', label: 'Chat Bot', icon: 'spark', end: true }] },
   { label: 'Master', links: [
     { to: '/products', label: 'Produk Final', icon: 'box' },
     { to: '/materials', label: 'Material Beli', icon: 'layers' },

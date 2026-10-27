@@ -18,6 +18,21 @@ export const formatDateTime = (iso) =>
     day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
   }) : '—';
 
+// Waktu relatif mengikuti bahasa UI ("5 menit yang lalu" / "5 minutes ago"); lebih dari seminggu -> tanggal.
+// `iso` = waktu UTC dari backend (tanpa 'Z', sama seperti formatDateTime).
+export const timeAgo = (iso) => {
+  if (!iso) return '';
+  const then = new Date(iso.endsWith('Z') ? iso : `${iso}Z`);
+  const seconds = Math.round((then.getTime() - Date.now()) / 1000); // negatif = sudah lewat
+  const abs = Math.abs(seconds);
+  const rtf = new Intl.RelativeTimeFormat(locale(), { numeric: 'auto' });
+  if (abs < 60) return rtf.format(0, 'second');
+  if (abs < 3600) return rtf.format(Math.round(seconds / 60), 'minute');
+  if (abs < 86400) return rtf.format(Math.round(seconds / 3600), 'hour');
+  if (abs < 7 * 86400) return rtf.format(Math.round(seconds / 86400), 'day');
+  return then.toLocaleDateString(locale(), { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
 export const formatLead = (d) => t('{n} hari', { n: d });
 
 export const todayISO = () => {

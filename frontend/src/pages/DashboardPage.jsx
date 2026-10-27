@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import ConfirmDialog from '../components/common/ConfirmDialog';
+import { Spinner } from '../components/common/EmptyState';
 import CommonIcon from '../components/common/Icon';
 import PageHeader from '../components/layout/PageHeader';
 import ChatForm from '../features/chat/ChatForm';
+import ChatHistoryPanel from '../features/chat/ChatHistoryPanel';
 import useAutoGrow from '../hooks/useAutoGrow';
 import useFetch from '../hooks/useFetch';
 import { chatService } from '../services/chatService';
 import { inventoryService } from '../services/inventoryService';
 import { purchaseOrderService } from '../services/purchaseOrderService';
 import { useMasterStore } from '../store/masterStore';
+import { toast } from '../store/toastStore';
 import { OPEN_PO_STATUSES } from '../utils/constants';
 import { t } from '../i18n';
 
@@ -57,6 +61,9 @@ const ACTION_STATUS = {
   expired: { label: 'Kedaluwarsa / digantikan', tone: 'text-slate-500', icon: 'x' },
   failed: { label: 'Gagal', tone: 'text-red-700', icon: 'alert' },
 };
+
+// Layar lebar (md+): panel riwayat berdampingan dengan chat; di bawahnya panel menimpa chat.
+const isDesktop = () => window.matchMedia?.('(min-width: 768px)').matches ?? true;
 
 let uid = 0;
 const nextId = (p = 'id') => `${p}${Date.now().toString(36)}${uid++}`;
@@ -368,13 +375,25 @@ export default function AgenticMrpPage() {
   const endRef = useRef(null);
   const abortRef = useRef(null);
 
+  // Riwayat percakapan: daftar di panel kiri, dibuka ulang dengan memilihnya, dihapus satu per satu atau semua.
+  const convos = useFetch(() => chatService.threads(), []);
+  const [historyOpen, setHistoryOpen] = useState(isDesktop);
+  const [historyLoading, setHistoryLoading] = useState(false);   // isi percakapan sedang dimuat
+  const [toDelete, setToDelete] = useState(null);                // percakapan atau null
+  const [deleting, setDeleting] = useState(false);
+  const pickedFromList = useRef(false);                          // galat muat hanya ditampilkan bila pengguna yang memilih
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages, steps]);
 
   useEffect(() => {
     let alive = true;
+    const picked = pickedFromList.current;
+    pickedFromList.current = false;
     setMessages([greeting()]);
+    setActions({});
+    setHistoryLoading(true);
     chatService
       .history(threadId)
       .then((res) => {
@@ -383,7 +402,8 @@ export default function AgenticMrpPage() {
         }
         if (alive && res.actions) setActions(res.actions);
       })
-      .catch(() => {});
+      .catch((e) => { if (alive && picked) toast.error(t('Gagal memuat percakapan: {msg}', { msg: e.message })); })
+      .finally(() => { if (alive) setHistoryLoading(false); });
     return () => { alive = false; };
   }, [threadId]);
 
@@ -431,12 +451,13 @@ export default function AgenticMrpPage() {
       setBusy(false);
       setSteps([]);
       abortRef.current = null;
+      convos.reload();                // percakapan baru muncul di riwayat, yang lama naik ke atas
     }
   };
 
   const handleSend = async (text) => {
     const content = text.trim();
-    if (!content || busy) return;
+    if (!content || busy || historyLoading) return;
     push({ role: 'user', blocks: [{ type: 'text', text: content }] });
     // Pesan baru menggantikan kartu konfirmasi yang masih menunggu (backend menandainya superseded).
     setActions((a) => Object.fromEntries(Object.entries(a).map(([id, v]) => [id, v.status === 'pending' ? { ...v, status: 'expired' } : v])));
@@ -459,9 +480,43 @@ export default function AgenticMrpPage() {
     await runTurn({ resume: { actionId: formId, decision: 'reject' } });
   };
 
+  // Di layar kecil panel riwayat menutupi chat, jadi ditutup setelah memilih.
+  const closeHistoryOnMobile = () => {
+    if (!isDesktop()) setHistoryOpen(false);
+  };
+
   const newConversation = () => {
     abortRef.current?.abort();
     setThreadId(chatService.threadId({ reset: true }));
+    closeHistoryOnMobile();
+  };
+
+  const openConversation = (id) => {
+    closeHistoryOnMobile();
+    if (id === threadId) return;
+    abortRef.current?.abort();
+    pickedFromList.current = true;
+    setThreadId(chatService.openThread(id));
+  };
+
+  const confirmDelete = async () => {
+    const target = toDelete;
+    setDeleting(true);
+    try {
+      await chatService.deleteThread(target.thread_id);
+    } catch (e) {
+      // 404 = sudah terhapus (mis. dari tab lain): tujuannya tercapai, lanjutkan seperti berhasil.
+      if (e?.status !== 404) {
+        toast.error(e.message);
+        setDeleting(false);
+        return;
+      }
+    }
+    toast.success('Percakapan dihapus');
+    if (target.thread_id === threadId) newConversation();   // yang sedang dibuka ikut hilang
+    setToDelete(null);
+    setDeleting(false);
+    convos.reload();
   };
 
   return (
@@ -481,39 +536,90 @@ export default function AgenticMrpPage() {
         <MiniStat label={t('Stok Critical')} value={count('CRITICAL')} to="/inventory" tone="border-red-200 bg-red-50 text-red-700" />
         <MiniStat label={t('Stok Warning')} value={count('WARNING')} to="/inventory" tone="border-amber-200 bg-amber-50 text-amber-800" />
         <MiniStat label={t('PO Terbuka')} value={openPo} to="/purchase-orders" tone="border-indigo-200 bg-indigo-50 text-indigo-700" />
-        <button
-          type="button"
-          onClick={newConversation}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-        >
-          <CommonIcon name="plus" className="h-3.5 w-3.5" />
-          {t('Percakapan baru')}
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setHistoryOpen((o) => !o)}
+            aria-pressed={historyOpen}
+            aria-controls="chat-history"
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium shadow-sm ${
+              historyOpen ? 'border-primary-300 bg-primary-50 text-primary-800' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            <CommonIcon name="clock" className="h-3.5 w-3.5" />
+            {t('Riwayat')}
+          </button>
+          <button
+            type="button"
+            onClick={newConversation}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            <CommonIcon name="plus" className="h-3.5 w-3.5" />
+            {t('Percakapan baru')}
+          </button>
+        </div>
       </div>
 
       {/* Split view */}
       <div className="relative flex h-[calc(100vh-17rem)] min-h-[34rem] overflow-hidden rounded-2xl border border-slate-200 bg-white">
+        {historyOpen && (
+          <>
+            {/* Layar kecil: panel menimpa chat; klik di luar menutupnya */}
+            <div className="anim-fade absolute inset-0 z-10 bg-primary-950/40 md:hidden" onClick={() => setHistoryOpen(false)} aria-hidden="true" />
+            <aside
+              id="chat-history"
+              aria-label={t('Riwayat percakapan')}
+              className="absolute inset-y-0 left-0 z-20 w-72 max-w-[85%] border-r border-slate-200 bg-white shadow-xl md:static md:z-auto md:max-w-none md:shrink-0 md:shadow-none"
+            >
+              <ChatHistoryPanel
+                threads={convos.data?.threads}
+                loading={convos.loading}
+                error={convos.error}
+                activeId={threadId}
+                busy={busy}
+                onOpen={openConversation}
+                onDelete={setToDelete}
+                onRetry={convos.reload}
+                onClose={() => setHistoryOpen(false)}
+              />
+            </aside>
+          </>
+        )}
         <section className="flex min-w-0 flex-1 flex-col" aria-label={t('Percakapan dengan Agent')}>
           <div className="flex-1 space-y-5 overflow-y-auto px-5 py-6" role="log" aria-live="polite">
-            {messages.map((m, i) => (
-              <Message
-                key={m.id}
-                msg={m}
-                actions={actions}
-                onResolve={handleResolve}
-                onPick={handleSend}
-                onSubmitForm={handleSubmitForm}
-                onCancelForm={handleCancelForm}
-                busy={busy}
-                isLast={i === messages.length - 1}
-              />
-            ))}
+            {historyLoading ? (
+              <Spinner label="Memuat percakapan…" />
+            ) : (
+              messages.map((m, i) => (
+                <Message
+                  key={m.id}
+                  msg={m}
+                  actions={actions}
+                  onResolve={handleResolve}
+                  onPick={handleSend}
+                  onSubmitForm={handleSubmitForm}
+                  onCancelForm={handleCancelForm}
+                  busy={busy}
+                  isLast={i === messages.length - 1}
+                />
+              ))
+            )}
             {busy && <Progress steps={steps} />}
             <div ref={endRef} />
           </div>
-          <Composer onSend={handleSend} busy={busy} />
+          <Composer onSend={handleSend} busy={busy || historyLoading} />
         </section>
       </div>
+
+      <ConfirmDialog
+        open={toDelete != null}
+        title="Hapus percakapan?"
+        message={t('Percakapan "{title}" akan dihapus permanen dan tidak bisa dikembalikan.', { title: toDelete?.title ?? '' })}
+        confirmLabel="Hapus"
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => { if (!deleting) setToDelete(null); }}
+      />
     </>
   );
 }

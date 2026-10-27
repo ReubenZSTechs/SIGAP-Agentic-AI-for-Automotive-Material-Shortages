@@ -2,10 +2,13 @@ import json
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Header, Path
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy.orm import Session
 
+from app.api.deps import get_db
+from app.chatbot import threads
 from app.chatbot.service import ChatService, ChatUnavailable, get_chat_service
 from app.config import settings
 from app.core.exceptions import AppError
@@ -13,6 +16,7 @@ from app.core.exceptions import AppError
 router = APIRouter()
 
 THREAD_ID = r"^[A-Za-z0-9_-]{8,64}$"
+CLIENT_ID = r"^[A-Za-z0-9_-]{8,64}$"      # id acak per browser (header X-Client-Id); lihat app/models/chat_thread.py
 
 
 MAX_FORM_BYTES = 50_000
@@ -62,6 +66,16 @@ def service() -> ChatService:
         raise AppError(503, str(e)) from e
 
 
+def owner_id(x_client_id: str | None = Header(default=None, pattern=CLIENT_ID)) -> str | None:
+    """Browser that owns the conversation (optional: clients without the header just are not listed)."""
+    return x_client_id
+
+
+def required_owner_id(x_client_id: str = Header(pattern=CLIENT_ID)) -> str:
+    """Same, but required: the history list and deletes are always scoped to one browser."""
+    return x_client_id
+
+
 def _sse(event: dict) -> str:
     return f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
 
@@ -73,17 +87,43 @@ def chat_health():
 
 
 @router.post("/stream")
-def chat_stream(body: ChatRequest, svc: ChatService = Depends(service)):
+def chat_stream(body: ChatRequest, svc: ChatService = Depends(service), owner: str | None = Depends(owner_id)):
     """Server-Sent Events: `progress`* then `final` (or `error`)."""
-    return StreamingResponse((_sse(e) for e in svc.stream(*body.args())),
+    return StreamingResponse((_sse(e) for e in svc.stream(*body.args(), owner=owner)),
                              media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.post("")
-def chat(body: ChatRequest, svc: ChatService = Depends(service)):
+def chat(body: ChatRequest, svc: ChatService = Depends(service), owner: str | None = Depends(owner_id)):
     """Non-streaming variant: returns the final (or error) event."""
-    return svc.run(*body.args())
+    return svc.run(*body.args(), owner=owner)
+
+
+@router.get("/threads")
+def chat_threads(owner: str = Depends(required_owner_id), db: Session = Depends(get_db)):
+    """Past conversations of this browser, newest first (history list). Open one with `GET /{thread_id}/history`."""
+    return {"threads": [{"thread_id": t.thread_id, "title": t.title, "created_at": t.created_at,
+                         "updated_at": t.updated_at} for t in threads.list_for(db, owner)]}
+
+
+@router.delete("/threads/{thread_id}", status_code=204)
+def delete_chat_thread(thread_id: str = Path(pattern=THREAD_ID), owner: str = Depends(required_owner_id),
+                       db: Session = Depends(get_db), svc: ChatService = Depends(service)):
+    """Deletes one conversation of this browser (messages + list entry). Someone else's thread is a plain 404."""
+    if not threads.is_owned(db, thread_id, owner):
+        raise AppError(404, "Percakapan tidak ditemukan")
+    svc.delete_thread(thread_id)
+
+
+@router.delete("/threads")
+def delete_all_chat_threads(owner: str = Depends(required_owner_id), db: Session = Depends(get_db),
+                            svc: ChatService = Depends(service)):
+    """Deletes every conversation of this browser."""
+    ids = threads.owned_ids(db, owner)
+    for thread_id in ids:
+        svc.delete_thread(thread_id)
+    return {"deleted": len(ids)}
 
 
 @router.get("/{thread_id}/history")

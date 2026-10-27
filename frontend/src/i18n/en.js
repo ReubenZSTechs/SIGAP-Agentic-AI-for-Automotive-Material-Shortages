@@ -992,6 +992,16 @@ const EN = {
   "tepat tenggat": "on the deadline",
   "{n} hari setelah tenggat {d}": "{n} days after deadline {d}",
   "{n} hari sebelum tenggat {d}": "{n} days before deadline {d}",
+  "Riwayat percakapan": "Conversation history",
+  "Tutup riwayat": "Close history",
+  "Belum ada riwayat percakapan. Percakapan Anda akan muncul di sini setelah Anda mengirim pesan.": "No conversation history yet. Your conversations will appear here once you send a message.",
+  "Hapus percakapan": "Delete conversation",
+  "Hapus percakapan?": "Delete conversation?",
+  "Tunggu Agent selesai sebelum menghapus percakapan ini": "Wait for the agent to finish before deleting this conversation",
+  "Memuat percakapan…": "Loading conversation…",
+  "Gagal memuat percakapan: {msg}": "Could not load the conversation: {msg}",
+  "Percakapan dihapus": "Conversation deleted",
+  "Percakapan \"{title}\" akan dihapus permanen dan tidak bisa dikembalikan.": "The conversation \"{title}\" will be deleted permanently and cannot be restored.",
 };
 
 export default EN;

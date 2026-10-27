@@ -42,13 +42,32 @@ class ChatService:
         return None
 
     def stream(self, message: str | None, thread_id: str, resume: dict | None = None,
-               language: str | None = None) -> Iterator[dict]:
+               language: str | None = None, owner: str | None = None) -> Iterator[dict]:
         """Yields progress events, then exactly one `final` (or `error`) event.
 
         `resume={action_id, decision: approve|reject}` answers a pending confirmation card;
         `resume={action_id, decision: submit, values}` answers a pending chat form. A new `message` while a
         card or form is pending first marks it as superseded. `language` ("id"/"en") fixes the reply language.
+        `owner` (browser client id) is who the conversation belongs to in the history list.
         """
+        self._note_turn(thread_id, message, owner)
+        yield from self._stream(message, thread_id, resume, language)
+
+    def _note_turn(self, thread_id: str, message: str | None, owner: str | None) -> None:
+        """Keeps the history list (`chat_threads`) current. Best effort: never fails the chat turn."""
+        try:
+            from app.chatbot import threads
+            from app.database import SessionLocal
+            with SessionLocal() as db:
+                if message is not None:
+                    threads.register(db, thread_id, owner, message)
+                else:
+                    threads.touch(db, thread_id)
+        except Exception:  # noqa: BLE001
+            log.exception("cannot record chat thread %s in the history list", thread_id)
+
+    def _stream(self, message: str | None, thread_id: str, resume: dict | None = None,
+                language: str | None = None) -> Iterator[dict]:
         config = self._config(thread_id)
         trace = tracing.new_trace("chat", thread_id=thread_id)     # semua agent dalam giliran ini satu trace
         try:
@@ -79,10 +98,10 @@ class ChatService:
             yield {"type": "error", "message": ERROR_TEXT["id"], "detail": f"{type(e).__name__}: {e}"}
 
     def run(self, message: str | None, thread_id: str, resume: dict | None = None,
-            language: str | None = None) -> dict:
+            language: str | None = None, owner: str | None = None) -> dict:
         """Runs one turn and returns the final event (or the error event)."""
         last = {}
-        for event in self.stream(message, thread_id, resume, language):
+        for event in self.stream(message, thread_id, resume, language, owner):
             last = event
         return last
 
@@ -116,6 +135,30 @@ class ChatService:
                     if row is not None:
                         cards[aid] = {**card, "status": UI_STATUS[row.status]}
         return cards
+
+    def delete_thread(self, thread_id: str) -> None:
+        """Deletes a conversation: its messages (checkpoints) and its entry in the history list.
+
+        Business records stay: executed/awaiting PO actions in `automation_actions` and agent traces are an audit
+        trail. A proposal still waiting for confirmation can no longer be answered (its graph state is gone), so it
+        is marked superseded, the same status a newer message gives it.
+        """
+        from sqlalchemy import update
+
+        from app.chatbot import threads
+        from app.database import SessionLocal
+        from app.models import AutomationAction
+        from app.models.chat_thread import utcnow
+        from app.models.enums import AutomationStatus
+        with SessionLocal() as db:
+            db.execute(update(AutomationAction)
+                       .where(AutomationAction.thread_id == thread_id,
+                              AutomationAction.status == AutomationStatus.PROPOSED)
+                       .values(status=AutomationStatus.SUPERSEDED, decided_at=utcnow()))
+            db.commit()
+        self.graph.checkpointer.delete_thread(thread_id)       # removes checkpoints, blobs and writes
+        with SessionLocal() as db:                              # last: if the line above fails the entry stays, so retry works
+            threads.forget(db, thread_id)
 
 
 _lock = threading.Lock()

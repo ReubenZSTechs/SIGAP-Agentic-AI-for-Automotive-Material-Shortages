@@ -4,6 +4,36 @@ import { t } from '../i18n';
 
 const BASE = (import.meta.env.VITE_API_URL ?? '/api/v1').replace(/\/$/, '');
 const THREAD_KEY = 'mrp-chat-thread';
+const CLIENT_KEY = 'mrp-chat-client';
+
+/** Random id that fits the backend pattern ^[A-Za-z0-9_-]{8,64}$ (thread ids and client ids). */
+const newId = () =>
+  (crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, '');
+
+/**
+ * Anonymous id of this browser, sent as `X-Client-Id`. The app has no login, so this is what keeps the history
+ * list (and the delete buttons) to the conversations created in this browser. Kept in memory too, in case
+ * localStorage is unavailable.
+ */
+let memoryClientId = null;
+function clientId() {
+  if (memoryClientId) return memoryClientId;
+  try {
+    memoryClientId = localStorage.getItem(CLIENT_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+  if (!memoryClientId) {
+    memoryClientId = newId();
+    try {
+      localStorage.setItem(CLIENT_KEY, memoryClientId);
+    } catch {
+      /* storage unavailable */
+    }
+  }
+  return memoryClientId;
+}
+const clientHeaders = () => ({ 'X-Client-Id': clientId() });
 
 /** Parses one SSE frame ("event: x\ndata: {...}") into an object, or null. */
 function parseFrame(frame) {
@@ -47,7 +77,7 @@ export const chatService = {
       : { thread_id: threadId, message, language: currentLang() };
     const res = await fetch(`${BASE}/chat/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', 'Accept-Language': currentLang() },
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', 'Accept-Language': currentLang(), ...clientHeaders() },
       body: JSON.stringify(body),
       signal,
     });
@@ -80,6 +110,10 @@ export const chatService = {
   history: (threadId) => api.get(`/chat/${threadId}/history`),
   health: () => api.get('/chat/health'),
 
+  /** Past conversations of this browser, newest first: { threads: [{ thread_id, title, created_at, updated_at }] }. */
+  threads: () => api.get('/chat/threads', { headers: clientHeaders() }),
+  deleteThread: (threadId) => api.delete(`/chat/threads/${threadId}`, { headers: clientHeaders() }),
+
   /** Conversation id kept in localStorage so history survives reloads. */
   threadId({ reset = false } = {}) {
     let id = null;
@@ -89,12 +123,18 @@ export const chatService = {
       /* storage unavailable */
     }
     if (!id) {
-      id = (crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, '');
-      try {
-        localStorage.setItem(THREAD_KEY, id);
-      } catch {
-        /* storage unavailable */
-      }
+      id = newId();
+      chatService.openThread(id);
+    }
+    return id;
+  },
+
+  /** Makes `id` the active conversation (remembered across reloads). */
+  openThread(id) {
+    try {
+      localStorage.setItem(THREAD_KEY, id);
+    } catch {
+      /* storage unavailable */
     }
     return id;
   },

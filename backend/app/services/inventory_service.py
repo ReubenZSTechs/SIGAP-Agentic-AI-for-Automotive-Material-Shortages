@@ -2,7 +2,7 @@
 from collections import defaultdict
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.exceptions import AppError
 from app.models import Inventory, Material, PurchaseOrder, StockMovement
@@ -36,7 +36,10 @@ def to_out(inv: Inventory, on_order: dict[int, float] | None = None) -> dict:
 
 
 def list_inventory(db: Session, status: StockStatus | None = None) -> list[dict]:
+    # joinedload: muat Material dalam query yang sama (to_out membaca inv.material per baris;
+    # tanpa ini terjadi N+1 query, satu round-trip ke DB per baris).
     rows = db.scalars(select(Inventory).join(Material, Inventory.material_id == Material.id)
+                      .options(joinedload(Inventory.material))
                       .order_by(Material.sku)).all()
     on_order = planning_service._on_order_map(db)
     out = [to_out(i, on_order) for i in rows]

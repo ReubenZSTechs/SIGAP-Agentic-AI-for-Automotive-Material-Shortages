@@ -19,17 +19,20 @@ export default function InventoryPage() {
   const { materials, ensureLoaded } = useMasterStore();
   useEffect(() => { ensureLoaded(); }, [ensureLoaded]);
 
-  const { data, loading, error, reload } = useFetch(
-    () => inventoryService.list({ status: status || undefined }), [status]);
-  const all = useFetch(() => inventoryService.list(), []); // untuk menentukan material tanpa data stok
+  // Satu fetch tanpa filter; filter status dilakukan di klien (status dihitung di server dari
+  // available vs safety_stock, jadi hasilnya sama) sehingga ganti filter tidak memanggil API lagi.
+  const { data: all, loading, error, reload } = useFetch(() => inventoryService.list(), []);
+
+  const data = useMemo(
+    () => (status ? (all ?? []).filter((r) => r.status === status) : all), [all, status]);
 
   // Material BUY aktif yang belum punya baris inventory
   const candidates = useMemo(() => {
-    const have = new Set((all.data ?? []).map((r) => r.material_id));
+    const have = new Set((all ?? []).map((r) => r.material_id));
     return materials.filter((m) => m.category === 'PURCHASED' && m.is_active && !have.has(m.id));
-  }, [all.data, materials]);
+  }, [all, materials]);
 
-  const refresh = () => { reload(); all.reload(); };
+  const refresh = reload;
 
   return (
     <>

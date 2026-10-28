@@ -1002,6 +1002,13 @@ const EN = {
   "Gagal memuat percakapan: {msg}": "Could not load the conversation: {msg}",
   "Percakapan dihapus": "Conversation deleted",
   "Percakapan \"{title}\" akan dihapus permanen dan tidak bisa dikembalikan.": "The conversation \"{title}\" will be deleted permanently and cannot be restored.",
+  "Harga satuan boleh berubah (naik atau turun) hingga ±": "Unit price may change (up or down) by up to ±",
+  "Contoh 10%: harga Rp100.000 -> Rp90.000–110.000 disetujui agent dan PO direvisi otomatis; di luar itu ke manajer. Berlaku juga untuk supplier pengganti.": "Example 10%: a price of Rp100,000 -> Rp90,000–110,000 is approved by the agent and the PO is revised automatically; outside that it goes to the manager. Also applies to replacement suppliers.",
+  "Batalkan PO otomatis bila harga berubah lebih dari ±": "Cancel the PO automatically if the price changes by more than ±",
+  "Perubahan tidak masuk akal (mis. >100% atau harga 0): agent membatalkan PO tanpa persetujuan, memberi tahu manajer, lalu mencari supplier pengganti.": "Unreasonable changes (e.g. >100% or a price of 0): the agent cancels the PO without approval, informs the manager, then looks for a replacement supplier.",
+  "Batas hari maksimal 365, toleransi harga maksimal 100%, batas pembatalan maksimal 1000%": "Day limits max 365, price tolerance max 100%, cancel limit max 1000%",
+  "Batas pembatalan otomatis harus lebih besar dari toleransi harga": "The auto-cancel limit must be greater than the price tolerance",
+  "Membatalkan PO (harga tidak wajar)": "Cancelled PO (unreasonable price)",
 };
 
 export default EN;

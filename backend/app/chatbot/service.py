@@ -171,7 +171,7 @@ def _checkpointer():
     from psycopg_pool import ConnectionPool
     conninfo = settings.DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://", 1)
     pool = ConnectionPool(conninfo, max_size=5, open=True,
-                          kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row})
+                          kwargs={"autocommit": True, "prepare_threshold": None, "row_factory": dict_row})
     saver = PostgresSaver(pool)
     saver.setup()
     return saver

@@ -151,8 +151,8 @@ def finalize_po_revision(db: Session, po: PurchaseOrder) -> PORevision:
 
 
 # ------------------------------- confirmation details (required) -------------------------------
-CONFIRMATION_FIELDS = {"promised_delivery_date": "tanggal pengiriman",
-                       "supplier_reference": "nomor referensi/pesanan dari pihak Anda"}
+CONFIRMATION_FIELDS = {"promised_delivery_date": "the delivery date",
+                       "supplier_reference": "your order/reference number"}
 
 
 def collect_confirmation(conv: SupplierConversation, values: dict, required: list[str]) -> list[str]:
@@ -218,8 +218,8 @@ def valid_future_date(value) -> str | None:
 
 
 def missing_fields_text(po_number: str, missing: list[str]) -> str:
-    asks = " dan ".join(CONFIRMATION_FIELDS.get(f, f) for f in missing)
-    return f"Terima kasih atas konfirmasinya untuk {po_number}. Mohon informasikan {asks} agar PO dapat kami finalkan."
+    asks = " and ".join(CONFIRMATION_FIELDS.get(f, f) for f in missing)
+    return f"Thank you for confirming {po_number}. Please let us know {asks} so we can finalise the PO."
 
 
 def split_promised_dates(po: PurchaseOrder, proposed: list[dict]) -> tuple[str | None, list[dict]]:

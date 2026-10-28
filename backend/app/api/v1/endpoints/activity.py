@@ -27,7 +27,7 @@ ACTION_LABEL = {
     "press_button": "Menekan tombol manajer",
     # tindakan agent
     "create_mission": "Membuat misi", "mission_done": "Misi selesai", "mission_cancelled": "Misi berhenti",
-    "auto_accept_date": "Menerima tanggal kirim (dalam batas)", "auto_accept_price": "Menerima harga (dalam batas)",
+    "auto_accept_date": "Menerima tanggal kirim (dalam batas)", "auto_accept_price": "Menerima harga (dalam batas)", "auto_cancel_price": "Membatalkan PO (harga tidak wajar)",
     "escalate_date": "Tanggal kirim ke manajer", "escalate_change": "Perubahan PO ke manajer",
     "escalate_cancellation": "Pembatalan ke manajer", "supplier_cancelled": "PO dibatalkan supplier",
     "supplier_cancel_partial": "Pembatalan sebagian ke manajer", "replacement_po": "Menerbitkan PO pengganti",

@@ -80,15 +80,15 @@ def po_summary_text(snap: dict) -> str:
     """Exact, deterministic PO details appended to every Telegram message (never LLM-written)."""
     lines = [f"{snap['po_number']} · {snap['supplier_name']}"]
     for n, it in enumerate(snap["items"], 1):
-        need = f" · dibutuhkan {it['needed_by_date']}" if it.get("needed_by_date") else ""
+        need = f" · needed by {it['needed_by_date']}" if it.get("needed_by_date") else ""
         lines.append(f"{n}. {it['sku']} {it['name']} — {fmt_qty(it['qty_ordered'])} {it['uom']} × "
                      f"{rupiah(it['unit_price'])} = {rupiah(it['line_total'])}{need}")
-    lines.append(f"Total: {rupiah(snap['total_amount'])} · Termin: Net {snap.get('payment_term_days', 0)}")
+    lines.append(f"Total: {rupiah(snap['total_amount'])} · Payment terms: Net {snap.get('payment_term_days', 0)}")
     return "\n".join(lines)
 
 
-FIELD_LABEL = {"qty_ordered": "qty", "unit_price": "harga satuan", "needed_by_date": "tanggal kebutuhan",
-               "promised_delivery_date": "tanggal kirim", "status": "status"}
+FIELD_LABEL = {"qty_ordered": "qty", "unit_price": "unit price", "needed_by_date": "needed-by date",
+               "promised_delivery_date": "delivery date", "status": "status"}
 
 
 def change_value(field: str, v) -> str:
@@ -108,7 +108,7 @@ def describe_change(c: dict) -> str:
 
 def revision_diff_text(changes: list[dict], total_before: int, total_after: int) -> str:
     """What changed in an approved revision (sent to the supplier instead of the full PO again)."""
-    lines = ["Perubahan yang disetujui:", *[f"- {describe_change(c)}" for c in changes]]
+    lines = ["Approved changes:", *[f"- {describe_change(c)}" for c in changes]]
     if total_before != total_after:
         lines.append(f"Total: {rupiah(total_before)} → {rupiah(total_after)}")
     return "\n".join(lines)

@@ -16,7 +16,7 @@ export default function AppLayout() {
   const menu = useDisclosure();
   const refreshStatus = useHubStore((s) => s.refreshStatus);
   useEffect(() => { refreshStatus(); }, [refreshStatus]);
-  usePolling(refreshStatus, 15000); // lencana Hub di Sidebar
+  usePolling(refreshStatus, 30000); // lencana Hub di Sidebar
   const [collapsed, setCollapsed] = useState(readCollapsed); // hanya berlaku di desktop
 
   const toggle = () => setCollapsed((c) => {

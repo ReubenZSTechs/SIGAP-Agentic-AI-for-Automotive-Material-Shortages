@@ -28,7 +28,7 @@ def run_forever() -> None:
             break
         except ChatUnavailable as e:
             log.warning("supplier worker idle: %s", e)
-            time.sleep(60)
+            time.sleep(5)
     cfg = svc.cfg
     live = settings.telegram_live
     log.info("supplier worker started (mode=%s, manager chat=%s)", svc.transport.name, svc.manager_chat_id)

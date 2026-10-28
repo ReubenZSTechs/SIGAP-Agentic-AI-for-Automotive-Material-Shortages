@@ -39,7 +39,7 @@ system_prompt: |
   - promised_delivery_date: the delivery date they state, resolved against today ($today), as
     YYYY-MM-DD; null if none.
   - reason: the supplier's reason for a cancellation or revision (short), else null.
-  - reply_text: short polite reply in the supplier's language (default $language_name). If the
+  - reply_text: short polite reply, always in English (also when the supplier writes Indonesian). If the
     PO is unclear, ask which PO number they mean. Never say that a date, a cancellation or
     anything else has been recorded, accepted or changed: the system confirms that itself.
   Return only JSON that matches the provided schema.

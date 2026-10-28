@@ -5,9 +5,14 @@ A trace is one unit of work (a chat turn, a supplier message, a dispatch round â
 inside it shares the trace id, so a whole flow (rewrite -> route -> parse -> clarify) can be followed
 step by step. The current trace lives in a ContextVar, which `ThreadPoolExecutor` calls made with
 `copy_context()` inherit. Recording never raises: tracking must not break a chat.
+
+Rows are written by one background thread (AGENT_TRACE_ASYNC), so an LLM or tool call never waits for the
+trace insert; on SAP BTP that insert is several ~140 ms round trips to Supabase.
 """
 import json
 import logging
+import queue
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -53,6 +58,54 @@ def trace_scope(workflow: str, **ref):
         yield trace
 
 
+_queue: "queue.Queue[tuple[str, object]]" = queue.Queue(maxsize=1000)
+_writer: threading.Thread | None = None
+_writer_lock = threading.Lock()
+
+
+def _insert(label: str, row) -> None:
+    try:
+        from app.database import SessionLocal
+        with SessionLocal() as db:
+            db.add(row)
+            db.commit()
+    except Exception:  # noqa: BLE001  (pencatatan gagal tidak boleh menggagalkan agent/tool)
+        log.exception("recording %s failed", label)
+
+
+def _drain() -> None:
+    while True:
+        label, row = _queue.get()
+        try:
+            _insert(label, row)
+        finally:
+            _queue.task_done()
+
+
+def _write(label: str, row) -> None:
+    """Saves one trace row: in the background writer when AGENT_TRACE_ASYNC, else inline. Drops the row when
+    the queue is full (tracing must never slow the app down)."""
+    global _writer
+    if not settings.AGENT_TRACE_ASYNC:
+        _insert(label, row)
+        return
+    with _writer_lock:
+        if _writer is None or not _writer.is_alive():
+            _writer = threading.Thread(target=_drain, name="agent-trace-writer", daemon=True)
+            _writer.start()
+    try:
+        _queue.put_nowait((label, row))
+    except queue.Full:
+        log.warning("trace queue full, dropping %s", label)
+
+
+def flush(timeout: float = 5.0) -> None:
+    """Waits until queued trace rows are written (used before shutdown and in tests)."""
+    end = time.monotonic() + timeout
+    while _queue.unfinished_tasks and time.monotonic() < end:
+        time.sleep(0.02)
+
+
 def record_run(*, agent: str, model: str | None, system_prompt: str, input: str, output: dict | None,
                attempts: list[dict], status: str, error: str | None, latency_ms: int,
                input_tokens: int | None, output_tokens: int | None) -> None:
@@ -60,16 +113,15 @@ def record_run(*, agent: str, model: str | None, system_prompt: str, input: str,
         return
     trace = _current.get() or {"trace_id": uuid.uuid4().hex, "workflow": "other", "ref": {}}
     try:
-        from app.database import SessionLocal
         from app.models import AgentRun
-        with SessionLocal() as db:
-            db.add(AgentRun(agent=agent, model=model, workflow=trace["workflow"], trace_id=trace["trace_id"],
-                            ref=trace["ref"] or None, status=status, error=(error or None) and error[:500],
-                            latency_ms=latency_ms, input_tokens=input_tokens, output_tokens=output_tokens,
-                            output=output, input=input, system_prompt=system_prompt, attempts=attempts))
-            db.commit()
+        row = AgentRun(agent=agent, model=model, workflow=trace["workflow"], trace_id=trace["trace_id"],
+                       ref=trace["ref"] or None, status=status, error=(error or None) and error[:500],
+                       latency_ms=latency_ms, input_tokens=input_tokens, output_tokens=output_tokens,
+                       output=output, input=input, system_prompt=system_prompt, attempts=attempts)
     except Exception:  # noqa: BLE001  (pencatatan gagal tidak boleh menggagalkan agent)
         log.exception("recording agent run for %s failed", agent)
+        return
+    _write(f"agent run for {agent}", row)
 
 
 # ------------------------------------------------------------------ Postgres tool runs
@@ -166,18 +218,17 @@ def _save_tool_run(recorder: ToolRecorder, latency_ms: int) -> None:
         return
     trace = _current.get() or {"trace_id": uuid.uuid4().hex, "workflow": "other", "ref": {}}
     try:
-        from app.database import SessionLocal
         from app.models import ToolRun
-        with SessionLocal() as db:
-            db.add(ToolRun(tool=recorder.tool, kind=recorder.kind, workflow=trace["workflow"],
-                           trace_id=trace["trace_id"], ref=trace["ref"] or None,
-                           status="error" if recorder.error else "ok",
-                           error=(recorder.error or None) and recorder.error[:500], latency_ms=latency_ms,
-                           row_count=recorder.row_count, args=_json_safe(recorder.args),
-                           result_preview=_json_safe(recorder.result), statements=recorder.statements))
-            db.commit()
+        row = ToolRun(tool=recorder.tool, kind=recorder.kind, workflow=trace["workflow"],
+                      trace_id=trace["trace_id"], ref=trace["ref"] or None,
+                      status="error" if recorder.error else "ok",
+                      error=(recorder.error or None) and recorder.error[:500], latency_ms=latency_ms,
+                      row_count=recorder.row_count, args=_json_safe(recorder.args),
+                      result_preview=_json_safe(recorder.result), statements=recorder.statements)
     except Exception:  # noqa: BLE001  (pencatatan gagal tidak boleh menggagalkan tool)
         log.exception("recording tool run for %s failed", recorder.tool)
+        return
+    _write(f"tool run for {recorder.tool}", row)
 
 
 def purge_old(days: int | None = None) -> int:

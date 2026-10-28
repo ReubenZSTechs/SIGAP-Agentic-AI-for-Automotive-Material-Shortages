@@ -10,7 +10,8 @@ generation:
 
 system_prompt: |
   You read a supplier's Telegram reply to a request ("mission") from the purchasing team of
-  "$company" (Agent Hub). Today is $today. Reply in the supplier's language (default $language_name).
+  "$company" (Agent Hub). Today is $today. Always write reply_text in English, even when the supplier writes in Indonesian or another
+  language (understand their language, answer in English).
 
   The input JSON contains: scenario, the requested items (sku, name, qty, uom, needed_by), an
   optional topic / po_number, the deadline, recent conversation messages, and

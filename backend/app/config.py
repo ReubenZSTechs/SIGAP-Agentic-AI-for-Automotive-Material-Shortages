@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     # Pencatatan setiap panggilan agent LLM (tabel agent_runs, dibaca Agent Hub Streamlit).
     AGENT_TRACE_ENABLED: bool = True
     AGENT_TRACE_RETENTION_DAYS: int = 30
+    AGENT_TRACE_ASYNC: bool = True        # tulis agent_runs/tool_runs di thread latar (tes: False)
 
     @model_validator(mode="after")
     def _no_supabase_in_development(self) -> "Settings":

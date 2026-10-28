@@ -11,7 +11,7 @@ from fpdf import FPDF
 from configs.tools import po_actions as A
 
 COMPANY = "SIGAP"
-COLS = [("No", 10), ("SKU", 26), ("Material", 54), ("Qty", 22), ("Harga", 26), ("Subtotal", 28), ("Dibutuhkan", 24)]  # = 190 mm (A4 - margin)
+COLS = [("No", 10), ("SKU", 26), ("Material", 54), ("Qty", 22), ("Unit price", 26), ("Subtotal", 28), ("Needed by", 24)]  # = 190 mm (A4 - margin)
 TZ = ZoneInfo("Asia/Jakarta")
 
 
@@ -31,22 +31,22 @@ def render_po_pdf(snapshot: dict, version: int, final: bool = True, finalized_at
     pdf.set_font("Helvetica", "B", 16)
     pdf.cell(0, 9, _t(f"{COMPANY} - Purchase Order"), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, _t(f"{snapshot['po_number']} · versi {version}" + (" · FINAL" if final else "")),
+    pdf.cell(0, 6, _t(f"{snapshot['po_number']} · version {version}" + (" · FINAL" if final else "")),
              new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
     rows = [("Supplier", f"{snapshot.get('supplier_code', '')} {snapshot['supplier_name']}".strip()),
-            ("Tanggal PO", snapshot.get("po_date") or "-"),
-            ("Termin", f"Net {snapshot.get('payment_term_days', 0)} hari")]
+            ("PO date", snapshot.get("po_date") or "-"),
+            ("Payment terms", f"Net {snapshot.get('payment_term_days', 0)} days")]
     if snapshot.get("promised_delivery_date"):
-        rows.append(("Janji kirim", snapshot["promised_delivery_date"]))
+        rows.append(("Promised delivery", snapshot["promised_delivery_date"]))
     if snapshot.get("supplier_reference"):
-        rows.append(("Ref. supplier", snapshot["supplier_reference"]))
+        rows.append(("Supplier ref.", snapshot["supplier_reference"]))
     if finalized_at:
         local = finalized_at.replace(tzinfo=timezone.utc).astimezone(TZ)      # disimpan sebagai UTC naif
-        rows.append(("Dikonfirmasi", local.strftime("%Y-%m-%d %H:%M WIB")))
+        rows.append(("Confirmed", local.strftime("%Y-%m-%d %H:%M WIB")))
     for label, value in rows:
         pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(32, 6, _t(label))
+        pdf.cell(38, 6, _t(label))
         pdf.set_font("Helvetica", "", 10)
         pdf.cell(0, 6, _t(value), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
@@ -68,6 +68,6 @@ def render_po_pdf(snapshot: dict, version: int, final: bool = True, finalized_at
     pdf.cell(sum(w for _, w in COLS[5:]), 8, _t(A.rupiah(snapshot["total_amount"])), border=1, align="R")
     pdf.ln(12)
     pdf.set_font("Helvetica", "", 9)
-    pdf.multi_cell(0, 5, _t("Dokumen ini dibuat otomatis dari data PO yang telah dikonfirmasi melalui Telegram. "
-                            "Mohon periksa dan balas di chat bila ada yang tidak sesuai."))
+    pdf.multi_cell(0, 5, _t("This document was generated automatically from the PO data confirmed via Telegram. "
+                            "Please check it and reply in the chat if anything is not correct."))
     return bytes(pdf.output())

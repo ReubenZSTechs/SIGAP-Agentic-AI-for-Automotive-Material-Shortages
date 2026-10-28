@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
 
 from app.core.exceptions import AppError
+from app.core.i18n import translate
 from app.database import SessionLocal
 from app.models import POChangeRequest, SupplierConversation
 from app.models.enums import ChangeRequestStatus, ConversationStatus, MessageDirection
@@ -35,8 +36,8 @@ class ManagerTurn(TypedDict, total=False):
     result: dict
 
 
-KIND_TITLE = {"REVISION": "Permintaan revisi", "PRICE_CHANGE": "Perubahan harga di atas batas agent",
-              "DATE_CHANGE": "Tanggal kirim di luar batas agent", "CANCELLATION": "Supplier membatalkan PO"}
+KIND_TITLE = {"REVISION": "Revision request", "PRICE_CHANGE": "Price change outside the agent's band",
+              "DATE_CHANGE": "Delivery date outside the agent's window", "CANCELLATION": "PO cancelled"}
 SITUATION = {"REVISION": "revision_request", "PRICE_CHANGE": "price_change", "DATE_CHANGE": "date_change",
              "CANCELLATION": "supplier_cancellation"}
 
@@ -44,41 +45,42 @@ SITUATION = {"REVISION": "revision_request", "PRICE_CHANGE": "price_change", "DA
 def change_request_details(cr: POChangeRequest) -> str:
     """Exact text of what the supplier asked for and what each option does (no LLM numbers)."""
     snap = cr.po_snapshot
-    lines = [f"{KIND_TITLE.get(cr.kind, 'Permintaan')} #{cr.id} — {cr.po_number} ({snap['supplier_name']}), "
+    lines = [f"{KIND_TITLE.get(cr.kind, 'Request')} #{cr.id} — {cr.po_number} ({snap['supplier_name']}), "
              f"total {A.rupiah(snap['total_amount'])}"]
     if cr.kind == "DATE_CHANGE" and cr.proposed_changes:
         c = cr.proposed_changes[0]
-        lines.append(f"Tanggal kirim diminta: {c['reason']}")
+        lines.append(f"Requested delivery date: {c['reason']}")
         if c.get("old"):
-            lines.append(f"Tanggal kirim saat ini: {c['old']}")
+            lines.append(f"Current delivery date: {c['old']}")
     elif cr.kind == "CANCELLATION":
-        lines.append(f"{cr.po_number} sudah dibatalkan otomatis. Alasan supplier: {cr.proposed_changes[0].get('reason') or '-'}")
+        lines.append(f"{cr.po_number} has already been cancelled automatically. Reason: "
+                     f"{cr.proposed_changes[0].get('reason') or '-'}")
     elif cr.proposed_changes:
-        lines.append("Perubahan diminta:")
+        lines.append("Requested changes:")
         lines += [f"- {A.describe_change(c)}" for c in cr.proposed_changes]
         if cr.kind == "PRICE_CHANGE":
-            lines += [f"  ({c['sku']}: +{L.price_increase_pct(c['old'], c['new']):.1f}%)" for c in cr.proposed_changes
-                      if c["field"] == "unit_price" and c["new"] > c["old"]]
+            lines += [f"  ({c['sku']}: {L.price_change_pct(c['old'], c['new']):+.1f}%)" for c in cr.proposed_changes
+                      if c["field"] == "unit_price"]
     if cr.invalid_changes:
-        lines.append("Tidak dapat diproses otomatis: " + "; ".join(
+        lines.append("Could not be processed automatically: " + "; ".join(
             f"{c.get('material_ref')} {c.get('field')}={c.get('new_value')} ({c.get('error')})" for c in cr.invalid_changes))
-    lines.append(f'Pesan supplier: "{cr.supplier_message[:300]}"')
-    lines.append("Opsi:")
+    lines.append(f'Supplier message: "{cr.supplier_message[:300]}"')
+    lines.append("Options:")
     for n, o in enumerate(cr.options, 1):
         detail = o["effect"]
         if o["key"] == "approve_change":
             detail += f" Total {A.rupiah(o['total_before'])} → {A.rupiah(o['total_after'])}."
         elif o["key"] == "resource":
             detail += " " + "; ".join(
-                f"{g['supplier_name']}: {A.rupiah(g['total_amount'])} (lead time maks "
-                f"{max(i['lead_time_days'] for i in g['items'])} hari)" for g in o["purchase_orders"])
+                f"{g['supplier_name']}: {A.rupiah(g['total_amount'])} (max lead time "
+                f"{max(i['lead_time_days'] for i in g['items'])} days)" for g in o["purchase_orders"])
             if o.get("warnings"):
-                detail += " Catatan: " + "; ".join(o["warnings"])
+                detail += " Note: " + "; ".join(o["warnings"])
         elif o["key"] in ("continue_project", "cancel_project") and o.get("schedules"):
-            detail += " Jadwal: " + ", ".join(f"{x['batch_code']} {x['product']} ({x['production_date']})"
+            detail += " Schedules: " + ", ".join(f"{x['batch_code']} {x['product']} ({x['production_date']})"
                                               for x in o["schedules"][:6])
         elif o["key"] == "negotiate":
-            detail += " Balas dengan harga nego, mis. \"nego 12000\"."
+            detail += " Reply with your counter price, e.g. \"nego 12000\"."
         lines.append(f"{n}. {o['label']} — {detail}")
     return "\n".join(lines)
 
@@ -126,9 +128,9 @@ def build_manager_graph(svc):
             body = out["message_text"]
             if out["recommended_option"] in {o["key"] for o in options}:
                 label = next(o["label"] for o in options if o["key"] == out["recommended_option"])
-                details += f"\nRekomendasi agent: {label} — {out['rationale']}"
+                details += f"\nAgent recommendation: {label} — {out['rationale']}"
         except Exception:  # noqa: BLE001  (opsi tetap dikirim dengan teks standar)
-            out, body = None, f"{KIND_TITLE.get(payload.get('kind'), 'Permintaan supplier')}: {payload['po']['po_number']}. Mohon pilih tindakan."
+            out, body = None, f"{KIND_TITLE.get(payload.get('kind'), 'Supplier request')}: {payload['po']['po_number']}. Please choose an action."
         buttons = [{"label": o["label"], "data": f"cr:{cr_id}:{o['key']}"} for o in options]
         return {"sends": [svc.manager_send(f"{body}\n\n{details}", buttons, out, conv_id)], "result": {"presented": cr_id}}
 
@@ -145,21 +147,21 @@ def build_manager_graph(svc):
                     cr.status, cr.pending_choice = CRS.PENDING_MANAGER, None
                     db.commit()
             svc.close_manager_buttons(cr_id)                   # tombol Ya/Tidak lama tidak berlaku lagi
-            return {"sends": [svc.manager_send(f"Baik, belum ada perubahan untuk permintaan revisi #{cr_id}.")],
+            return {"sends": [svc.manager_send(f"OK, nothing has changed for request #{cr_id}.")],
                     "execute": False, "result": {"cancelled": cr_id}}
         if kind == "crc" and len(parts) == 3 and not confirm_pending(cr_id, parts[2]):
-            return {"sends": [svc.manager_send(f"Konfirmasi ini sudah tidak berlaku untuk permintaan revisi #{cr_id}.")],
+            return {"sends": [svc.manager_send(f"This confirmation is no longer valid for request #{cr_id}.")],
                     "execute": False, "result": {"handled": True, "stale_confirmation": cr_id}}
         if kind == "cr" and len(parts) == 3 and parts[2] == "negotiate" and not (state.get("params") or {}).get("counter_prices"):
             with SessionLocal() as db:                         # tombol tidak membawa harga: minta lewat teks
                 cr = db.get(POChangeRequest, cr_id)
                 if cr is None or cr.status not in PENDING:
-                    return {"sends": [svc.manager_send(f"Permintaan #{cr_id} sudah diproses.")], "execute": False,
+                    return {"sends": [svc.manager_send(f"Request #{cr_id} has already been processed.")], "execute": False,
                             "result": {"handled": True}}
-                lines = ", ".join(f"{c['sku']} (diminta {A.rupiah(c['new'])}, sebelumnya {A.rupiah(c['old'])})"
+                lines = ", ".join(f"{c['sku']} (asked {A.rupiah(c['new'])}, was {A.rupiah(c['old'])})"
                                   for c in cr.proposed_changes if c["field"] == "unit_price")
             return {"execute": False, "result": {"handled": True, "awaiting_counter": cr_id}, "sends": [svc.manager_send(
-                f"Balas dengan harga nego untuk {lines}, mis. \"nego 12000\" (atau per SKU: \"nego SKU-1 12000, SKU-2 9500\").")]}
+                f"Reply with your counter price for {lines}, e.g. \"nego 12000\" (or per SKU: \"nego SKU-1 12000, SKU-2 9500\").")]}
         if kind in ("cr", "crc") and len(parts) == 3:
             return {"change_request_id": cr_id, "choice": parts[2], "execute": True, "sends": []}
         return {"sends": [], "execute": False, "result": {"handled": False, "reason": "bad button"}}
@@ -174,7 +176,7 @@ def build_manager_graph(svc):
                                             .order_by(POChangeRequest.id))]
         if not pending:
             return {"execute": False, "sends": [svc.manager_send(
-                "Terima kasih. Saat ini tidak ada permintaan supplier yang menunggu keputusan Anda.")],
+                "Thank you. There are no supplier requests waiting for your decision right now.")],
                 "result": {"handled": True, "pending": 0}}
         out = svc.run_agent("manager_decision_agent", {"message": state["text"], "pending_requests": pending})
         target = next((p for p in pending if p["id"] == out.get("change_request_id")), None)
@@ -193,7 +195,7 @@ def build_manager_graph(svc):
                 counter = _counter_from_text(cr, out.get("counter_prices"))
                 if counter is None:
                     return {"execute": False, "sends": [svc.manager_send(
-                        "Sebutkan harga nego per SKU, mis. \"nego 12000\" atau \"nego SKU-1 12000, SKU-2 9500\".")],
+                        "Please state the counter price per SKU, e.g. \"nego 12000\" or \"nego SKU-1 12000, SKU-2 9500\".")],
                         "result": {"handled": True, "understood": False}}
                 cr.result = {**(cr.result or {}), "pending_counter": counter}
                 counter_note = " (" + ", ".join(f"{c['sku']} {A.rupiah(counter[c['po_item_id']])}"
@@ -201,10 +203,10 @@ def build_manager_graph(svc):
             cr.status, cr.pending_choice = CRS.AWAITING_MANAGER_CONFIRM, out["choice"]
             db.commit()
         label = next(o["label"] for o in target["options"] if o["key"] == out["choice"]) + counter_note
-        buttons = [{"label": f"Ya, {label.lower()}", "data": f"crc:{target['id']}:{out['choice']}"},
-                   {"label": "Tidak, batalkan", "data": f"crx:{target['id']}"}]
+        buttons = [{"label": f"Yes, {label.lower()}", "data": f"crc:{target['id']}:{out['choice']}"},
+                   {"label": "No, cancel", "data": f"crx:{target['id']}"}]
         return {"execute": False, "sends": [svc.manager_send(
-            f"{out['reply_text']}\nKonfirmasi: {label} untuk {target['po_number']}?", buttons, out)],
+            f"{out['reply_text']}\nConfirm: {label} for {target['po_number']}?", buttons, out)],
             "result": {"handled": True, "awaiting_confirmation": target["id"], "choice": out["choice"]}}
 
     def execute(state: ManagerTurn) -> ManagerTurn:
@@ -213,14 +215,14 @@ def build_manager_graph(svc):
             with A.write_session() as db:
                 cr = db.get(POChangeRequest, cr_id)
                 if cr is None:
-                    raise AppError(404, f"Permintaan revisi #{cr_id} tidak ditemukan")
+                    raise AppError(404, f"Request #{cr_id} not found")
                 actor = state.get("actor") or cfg.get("manager_actor", "Manager via Telegram")
                 result = A.apply_change_request(db, cr, choice, actor, state.get("params"))
                 if not state.get("actor"):                     # dari Telegram: catat seperti keputusan Hub
                     from app.hub.audit_log import record
                     record(db, actor, "choose", "change_request", cr_id, choice=choice, po_number=cr.po_number,
                            supplier_id=cr.supplier_id, source="telegram", kind=cr.kind,
-                           summary=f"{A.OPTION_LABEL.get(choice, choice)} untuk {cr.po_number} "
+                           summary=f"{A.OPTION_LABEL.get(choice, choice)} for {cr.po_number} "
                                    f"({KIND_TITLE.get(cr.kind, cr.kind).lower()})")
                 notices = [svc.withdrawal_send(db, n["supplier_id"], n["snapshot"], n["conversation_id"])
                            for n in result.pop("notices")]
@@ -239,35 +241,35 @@ def build_manager_graph(svc):
                         A.close_conversation(conv, ConversationStatus.ESCALATED, reason=e.detail)
                 db.commit()
             svc.close_manager_buttons(cr_id)
-            return {"sends": [svc.manager_send(f"Tidak dapat menjalankan pilihan untuk permintaan #{cr_id}: {e.detail}")],
+            return {"sends": [svc.manager_send(f"Could not run the choice for request #{cr_id}: {translate(e.detail, 'en')}")],
                     "result": {"handled": True, "error": e.detail}}
         svc.close_manager_buttons(cr_id)
         if choice == "approve_change":
-            text = (f"Revisi {result['po_number']} disetujui (versi {result['revision']['version']}); total baru "
-                    f"{A.rupiah(result['total_after'])}. Supplier menerima daftar perubahan untuk dikonfirmasi.")
+            text = (f"Revision of {result['po_number']} approved (version {result['revision']['version']}); new total "
+                    f"{A.rupiah(result['total_after'])}. The supplier received the changes to confirm.")
         elif choice == "negotiate":
-            text = (f"Harga nego untuk {result['po_number']} dikirim ke supplier (versi {result['revision']['version']}, "
-                    f"total {A.rupiah(result['total_after'])}). Supplier diminta mengonfirmasi.")
+            text = (f"Counter price for {result['po_number']} sent to the supplier (version {result['revision']['version']}, "
+                    f"total {A.rupiah(result['total_after'])}). The supplier is asked to confirm.")
         elif choice == "accept_date":
-            text = (f"Tanggal kirim baru {result['po_number']} diterima; PO versi {result['revision']['version']} "
-                    "dikirim ke supplier.")
+            text = (f"New delivery date for {result['po_number']} accepted; PO version {result['revision']['version']} "
+                    "was sent to the supplier.")
         elif choice == "reject_date":
-            text = f"Tanggal kirim baru untuk {result['po_number']} ditolak; supplier diberi tahu."
+            text = f"New delivery date for {result['po_number']} rejected; the supplier has been informed."
         elif choice == "abort":
-            text = f"{result['po_number']} dibatalkan (status Dibatalkan, data tetap tersimpan); supplier telah diberi tahu."
+            text = f"{result['po_number']} cancelled (status Cancelled, data kept); the supplier has been informed."
         elif choice == "continue_project":
-            text = (f"Proyek dilanjutkan tanpa pengganti {result['po_number']}. Kekurangan material terlihat di MPS & "
-                    "Planning (run ditandai perlu dijalankan ulang); silakan cari sumber lain secara manual.")
+            text = (f"Project continues without a replacement for {result['po_number']}. The material shortage shows "
+                    "in MPS & Planning (run marked for re-planning); please find another source manually.")
         elif choice == "cancel_project":
-            text = "Jadwal produksi dibatalkan: " + ", ".join(result.get("cancelled_schedules") or ["-"]) + "."
+            text = "Production schedules cancelled: " + ", ".join(result.get("cancelled_schedules") or ["-"]) + "."
         elif result.get("kind") == "CANCELLATION":
-            text = ("PO pengganti untuk " + result["po_number"] + " diterbitkan: " + "; ".join(
+            text = ("Replacement PO for " + result["po_number"] + " issued: " + "; ".join(
                 f"{p['po_number']} ({p['supplier_name']}, {A.rupiah(p['total_amount'])})" for p in result["new_pos"])
-                + ". Agent menghubungi supplier baru untuk konfirmasi.")
+                + ". The agent is contacting the new supplier for confirmation.")
         else:
-            text = (f"{result['po_number']} dialihkan ke PO baru: " + "; ".join(
+            text = (f"{result['po_number']} moved to new PO(s): " + "; ".join(
                 f"{p['po_number']} ({p['supplier_name']}, {A.rupiah(p['total_amount'])})" for p in result["new_pos"])
-                + ". Supplier lama diberi tahu, supplier baru diminta konfirmasi.")
+                + ". The previous supplier was informed; the new supplier is asked to confirm.")
         return {"sends": [svc.manager_send(text), *notices], "result": {"handled": True, **result}}
 
     def deliver(state: ManagerTurn) -> ManagerTurn:

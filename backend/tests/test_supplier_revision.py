@@ -82,7 +82,7 @@ def test_reminder_does_not_resend_the_po(seeded):
     H.start(svc, po_id)
     assert svc.tick_timeouts()["reminded"] == 1
     reminder = H.messages("OUT", chat)[-1].text
-    assert reminder.startswith("Pengingat") and "Termin: Net" not in reminder
+    assert reminder.startswith("Reminder") and "Payment terms: Net" not in reminder
 
 
 def test_hub_decision_removes_telegram_buttons_and_logs_once(seeded):
@@ -96,7 +96,7 @@ def test_hub_decision_removes_telegram_buttons_and_logs_once(seeded):
     fake.script["SupplierReplyOutput"] = [F.reply("confirmed", promised=F.SOON)]
     approvals.choose_change_request(svc, cr.id, "approve_change", "Rina")
     assert (svc.manager_chat_id, options.telegram_message_id, None) in transport.edited
-    assert any("Diputuskan via Hub oleh Rina" in text for _, text, _ in transport.sent)
+    assert any("Decided via the Hub by Rina" in text for _, text, _ in transport.sent)
     with SessionLocal() as db:
         thread = manager.manager_thread(db)["messages"]
     states = next(m for m in thread if m["id"] == options.id)["buttons"]
@@ -152,7 +152,7 @@ def test_resource_issues_new_po_to_alternative_supplier(seeded):
     assert new_conv.supplier_id == seeded["suppliers"]["SUP-RBR"] and new_conv.status.value == "AWAITING_SUPPLIER"
     assert H.messages("OUT", rbr_chat)
     assert H.change_requests()[0].status.value == "RESOURCED"
-    assert "dialihkan ke PO baru" in H.messages("MANAGER_OUT")[-1].text
+    assert "moved to new PO(s)" in H.messages("MANAGER_OUT")[-1].text
 
 
 def test_no_resource_option_without_alternative_supplier(seeded):
@@ -195,7 +195,7 @@ def test_stale_yes_button_after_cancel_does_nothing(seeded):
     svc.handle_button(svc.manager_chat_id, no["data"])
     svc.handle_button(svc.manager_chat_id, yes["data"])
     assert H.po(po_id).items[0].qty_ordered == 50 and H.change_requests()[0].status.value == "PENDING_MANAGER"
-    assert "sudah tidak berlaku" in H.messages("MANAGER_OUT")[-1].text
+    assert "no longer valid" in H.messages("MANAGER_OUT")[-1].text
 
 
 def test_po_changed_meanwhile_fails_safely(client, seeded):
@@ -206,7 +206,7 @@ def test_po_changed_meanwhile_fails_safely(client, seeded):
     svc.handle_button(svc.manager_chat_id, f"cr:{cr.id}:abort")
     assert H.po(po_id) is not None and H.change_requests()[0].status.value == "FAILED"
     assert H.conversation(cid).status.value == "ESCALATED"
-    assert "Tidak dapat menjalankan" in H.messages("MANAGER_OUT")[-1].text
+    assert "Could not run the choice" in H.messages("MANAGER_OUT")[-1].text
 
 
 def test_supplier_buttons_are_ignored(seeded):

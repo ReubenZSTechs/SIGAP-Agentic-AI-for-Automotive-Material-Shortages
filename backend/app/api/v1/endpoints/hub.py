@@ -48,13 +48,12 @@ def status(db: Session = Depends(get_db)):
     unsent = db.query(SupplierMessage).filter(SupplierMessage.direction == MessageDirection.OUT,
                                               SupplierMessage.error.isnot(None),
                                               SupplierMessage.created_at >= A.now() - C.timedelta(hours=24)).count()
-    thread_rows = threads.list_threads(db)
     out = {
         "paused": st.paused, "pending": approvals.pending_count(db), "ai_configured": settings.aicore_configured,
         "telegram": {"mode": settings.TELEGRAM_MODE, "live": settings.telegram_live, "bot": settings.TELEGRAM_BOT_USERNAME,
                      "connected": settings.TELEGRAM_MODE == "sandbox" or settings.telegram_live, "unsent": unsent},
         "counts": {
-            "threads": sum(1 for t in thread_rows if t["unread"] or t["drafts"] or t["failed"]),
+            "threads": threads.attention_count(db),          # grouped queries, not one summary per thread
             "missions": db.query(HubMission).filter(HubMission.status == MissionStatus.ACTIVE).count(),
             "manager": db.query(POChangeRequest).filter(POChangeRequest.status.in_(approvals.CR_PENDING)).count(),
         },
@@ -319,18 +318,26 @@ def put_policies(body: dict, db: Session = Depends(get_db)):
     return row.policies
 
 
-def _supplier_row(db: Session, sup: Supplier) -> dict:
-    """Tanpa menulis apa pun (tautan /start baru dibuat saat undangan dikirim)."""
-    link = db.scalar(select(SupplierTelegramLink).where(SupplierTelegramLink.supplier_id == sup.id))
-    view = threads.supplier_view(db, sup)
-    has_msgs = db.query(SupplierMessage.id).filter(SupplierMessage.supplier_id == sup.id).first() is not None
-    return {**view, "is_active": sup.is_active, "deep_link": deep_link(link) if link else None,
-            "linked_at": C.iso(link.linked_at) if link else None, "thread_id": sup.id if has_msgs else None}
+def _supplier_rows(db: Session, suppliers: list[Supplier]) -> list[dict]:
+    """Telegram connection rows with a constant number of queries (no per-supplier round trips; writes nothing,
+    the /start link is created when the invitation is sent)."""
+    views = threads.supplier_views(db, suppliers)
+    ids = [s.id for s in suppliers]
+    with_msgs = set(db.scalars(select(SupplierMessage.supplier_id).distinct().where(
+        SupplierMessage.supplier_id.in_(ids)))) if ids else set()
+    rows = []
+    for sup in suppliers:
+        view = dict(views[sup.id])
+        link = view.pop("_link")
+        rows.append({**view, "is_active": sup.is_active, "deep_link": deep_link(link) if link else None,
+                     "linked_at": C.iso(link.linked_at) if link else None,
+                     "thread_id": sup.id if sup.id in with_msgs else None})
+    return rows
 
 
 @router.get("/suppliers")
 def list_suppliers(db: Session = Depends(get_db)):
-    return [_supplier_row(db, s) for s in db.scalars(select(Supplier).order_by(Supplier.name))]
+    return _supplier_rows(db, list(db.scalars(select(Supplier).order_by(Supplier.name))))
 
 
 @router.get("/suppliers/{supplier_id}")
@@ -338,7 +345,7 @@ def get_supplier(supplier_id: int, db: Session = Depends(get_db)):
     sup = db.get(Supplier, supplier_id)
     if sup is None:
         raise AppError(404, "Supplier tidak ditemukan")
-    return _supplier_row(db, sup)
+    return _supplier_rows(db, [sup])[0]
 
 
 @router.post("/suppliers/{supplier_id}/invite")

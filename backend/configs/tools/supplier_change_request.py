@@ -3,12 +3,14 @@
 Kinds of `POChangeRequest` (options are always computed here, never by the LLM):
 
     REVISION      qty (and/or price) changes            abort | approve_change | resource
-    PRICE_CHANGE  unit price above `price_increase_pct` approve_change | negotiate | resource | abort
+    PRICE_CHANGE  unit price outside the ±tolerance band approve_change | negotiate | resource | abort
     DATE_CHANGE   delivery date outside the day window  accept_date | reject_date | resource | abort
-    CANCELLATION  supplier cancelled; the replacement   resource | continue_project | cancel_project
-                  is late / too expensive / missing
+    CANCELLATION  PO cancelled (by the supplier, or by  resource | continue_project | cancel_project
+                  the agent for a nonsensical price); the replacement is late / off-band / missing
 
-Within the limits (`agent_limits`), the agent applies the change itself and only informs the manager.
+Within the limits (`agent_limits`), the agent applies the change itself and only informs the manager. A price
+change beyond the auto-cancel limit (or a price <= 0) cancels the PO without a human and re-sources it.
+All texts here end up in Telegram messages and are English.
 """
 import re
 from datetime import date, timedelta
@@ -39,9 +41,9 @@ from configs.tools.supplier_conversation import (
 AGENT = "Agent"
 FULFILLABLE = (POStatus.ISSUED, POStatus.PARTIALLY_RECEIVED)
 OPTION_LABEL = {
-    "abort": "Batalkan PO", "approve_change": "Setujui perubahan", "resource": "Pesan ke supplier lain",
-    "negotiate": "Ajukan harga nego", "accept_date": "Terima tanggal baru", "reject_date": "Tolak tanggal baru",
-    "continue_project": "Lanjutkan proyek", "cancel_project": "Batalkan proyek",
+    "abort": "Cancel PO", "approve_change": "Approve change", "resource": "Order from another supplier",
+    "negotiate": "Offer a counter price", "accept_date": "Accept new date", "reject_date": "Reject new date",
+    "continue_project": "Continue project", "cancel_project": "Cancel project",
 }
 
 
@@ -99,26 +101,14 @@ def _resource_option(groups: list[dict], effect: str, warnings: list[str] | None
 
 def _abort_option(po_number: str) -> dict:
     return {"key": "abort", "label": OPTION_LABEL["abort"],
-            "effect": f"{po_number} dibatalkan (status Dibatalkan, data PO tetap tersimpan; stok on-order "
-                      "dikembalikan) dan supplier diberi tahu."}
+            "effect": f"{po_number} is cancelled (status Cancelled, PO data kept; on-order stock released) "
+                      "and the supplier is informed."}
 
 
-def open_change_request(db: Session, conv: SupplierConversation, proposed: list[dict], supplier_message: str,
-                        max_revision_rounds: int) -> POChangeRequest | None:
-    """Validates a supplier's revision (qty / unit price) and decides who handles it.
-
-    - Only price changes, each a decrease or an increase within `price_increase_pct`: the agent approves
-      it itself (`cr.result["auto"]`; the caller informs the manager instead of asking).
-    - Only price changes, at least one above the limit: PRICE_CHANGE with approve / negotiate / cheaper
-      supplier / cancel.
-    - Anything with qty (or invalid) changes: REVISION, as before (abort | approve_change | resource).
-    Returns None when the supplier proposed nothing concrete.
-    """
-    if not proposed:
-        return None
-    po = _get_po(db, conv.po_id)
+def _validate_changes(po: PurchaseOrder, proposed: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Supplier-proposed line changes -> (valid changes with old/new values, invalid ones with an error)."""
     valid, invalid = [], []
-    for pc in proposed:
+    for pc in proposed or []:
         line, field = _match_line(po, pc.get("material_ref")), _FIELD.get(pc.get("field"))
         if line is None or field is None or field == "needed_by_date":
             invalid.append({**pc, "error": "not a line of this PO" if line is None or field is None
@@ -133,6 +123,40 @@ def open_change_request(db: Session, conv: SupplierConversation, proposed: list[
         if new != old:
             valid.append({"po_item_id": line.id, "sku": line.sku, "name": line.name, "uom": line.uom,
                           "field": field, "old": old, "new": new, "reason": pc.get("reason")})
+    return valid, invalid
+
+
+def unreasonable_prices(db: Session, po: PurchaseOrder, proposed: list[dict]) -> list[dict]:
+    """Unit-price changes beyond the auto-cancel limit (or <= 0): [{sku, name, old, new, pct}] (empty = none)."""
+    valid, _ = _validate_changes(po, proposed)
+    lim = L.limits(db)
+    out = []
+    for c in valid:
+        if c["field"] != "unit_price":
+            continue
+        chk = L.check_price(db, c["old"], c["new"], lim)
+        if chk.verdict == L.CANCEL:
+            out.append({"sku": c["sku"], "name": c["name"], "old": c["old"], "new": c["new"], "pct": round(chk.pct, 1),
+                        "cancel_at": chk.cancel_at})
+    return out
+
+
+def open_change_request(db: Session, conv: SupplierConversation, proposed: list[dict], supplier_message: str,
+                        max_revision_rounds: int) -> POChangeRequest | None:
+    """Validates a supplier's revision (qty / unit price) and decides who handles it.
+
+    - Only price changes, each within the ±`price_tolerance_pct` band (up OR down): the agent approves and
+      revises the PO itself (`cr.result["auto"]`; the caller informs the manager instead of asking).
+    - Only price changes, at least one outside the band: PRICE_CHANGE with approve / negotiate / cheaper
+      supplier / cancel. (Changes beyond the auto-cancel limit are handled before this by
+      `cancel_for_unreasonable_price`; they only land here when the PO cannot be cancelled.)
+    - Anything with qty (or invalid) changes: REVISION (abort | approve_change | resource).
+    Returns None when the supplier proposed nothing concrete.
+    """
+    if not proposed:
+        return None
+    po = _get_po(db, conv.po_id)
+    valid, invalid = _validate_changes(po, proposed)
     if not valid and not invalid:
         return None
     conf = confirmation(db, po.id)
@@ -140,21 +164,22 @@ def open_change_request(db: Session, conv: SupplierConversation, proposed: list[
     can_approve = bool(valid) and not invalid and po.status == POStatus.ISSUED and not _has_receipts(po) \
         and conf.revision_round < max_revision_rounds
     price_only = can_approve and all(c["field"] == "unit_price" for c in valid)
-    within = price_only and all(L.price_ok(db, c["old"], c["new"]) for c in valid)
+    lim = L.limits(db)
+    within = price_only and all(L.check_price(db, c["old"], c["new"], lim).verdict == L.AUTO for c in valid)
     kind = "PRICE_CHANGE" if price_only and not within else "REVISION"
 
     options = [_abort_option(po.po_number)]
     if can_approve:
         after = _items_after(snap, {(c["po_item_id"], c["field"]): c["new"] for c in valid})
         options.append({"key": "approve_change",
-                        "label": "Terima harga baru" if kind == "PRICE_CHANGE" else OPTION_LABEL["approve_change"],
-                        "effect": f"{po.po_number} direvisi; supplier menerima daftar perubahannya untuk dikonfirmasi.",
+                        "label": "Accept new price" if kind == "PRICE_CHANGE" else OPTION_LABEL["approve_change"],
+                        "effect": f"{po.po_number} is revised; the supplier receives the list of changes to confirm.",
                         "items_after": after, "total_before": po.total_amount,
                         "total_after": sum(i["line_total"] for i in after)})
     if kind == "PRICE_CHANGE":
         options.append({"key": "negotiate", "label": OPTION_LABEL["negotiate"], "needs": "counter_prices",
-                        "effect": "Agent mengirim harga tandingan Anda ke supplier sebagai revisi; supplier "
-                                  "mengonfirmasi atau mengajukan ulang.",
+                        "effect": "The agent sends your counter price to the supplier as a revision; the "
+                                  "supplier confirms it or proposes again.",
                         "lines": [{"po_item_id": c["po_item_id"], "sku": c["sku"], "name": c["name"],
                                    "old": c["old"], "asked": c["new"]} for c in valid]})
     alternatives = find_alternative_suppliers(db, po)
@@ -163,11 +188,11 @@ def open_change_request(db: Session, conv: SupplierConversation, proposed: list[
             next(o["total_after"] for o in options if o["key"] == "approve_change")
         if cheaper:
             names = ", ".join(g["supplier_name"] for g in alternatives)
-            label_effect = (f"PO baru diterbitkan ke {names}; {po.po_number} dibatalkan (tetap tersimpan) dan "
-                            "supplier lama diberi tahu.")
+            label_effect = (f"A new PO is issued to {names}; {po.po_number} is cancelled (kept on record) and "
+                            "the current supplier is informed.")
             opt = _resource_option(alternatives, label_effect)
             if kind == "PRICE_CHANGE":
-                opt["label"] = "Cari supplier lebih murah"
+                opt["label"] = "Find a cheaper supplier"
             options.append(opt)
     cr = POChangeRequest(kind=kind, po_id=po.id, po_number=po.po_number, po_snapshot=snap, conversation_id=conv.id,
                          supplier_id=po.supplier_id, proposed_changes=valid, invalid_changes=invalid,
@@ -177,7 +202,7 @@ def open_change_request(db: Session, conv: SupplierConversation, proposed: list[
     conf.status = SCS.REVISION_PENDING
     conv.status = CS.REVISION_REQUESTED
     conv.outcome = {**(conv.outcome or {}), "change_request_id": cr.id}
-    if within:                                                    # di dalam batas: agent menyetujui sendiri
+    if within:                                                    # inside the ±band: the agent approves itself
         result = apply_change_request(db, cr, "approve_change", AGENT)
         cr.result = {**(cr.result or {}), "auto": True}
         cr.result["queued_conversations"] = result["queued_conversations"]
@@ -197,9 +222,11 @@ def _items_after(snap: dict, changes: dict) -> list[dict]:
 def _replacement_groups(db: Session, items: list[dict], exclude_supplier_id: int, old_prices: dict | None = None):
     """Replacement supplier per open line (`pick_replacement`, deadline-aware) grouped per supplier.
 
+    A replacement price counts as acceptable only inside the ±price band around the original price (both ways).
     Returns (groups | None when a line has no supplier, warnings, all_on_time, all_price_ok).
     """
-    late_days = int(L.limits(db)["delivery_late_days"])
+    lim = L.limits(db)
+    late_days = int(lim["delivery_late_days"])
     lines, warnings, on_time, price_ok = [], [], True, True
     today = date.today()
     for it in items:
@@ -210,17 +237,18 @@ def _replacement_groups(db: Session, items: list[dict], exclude_supplier_id: int
         limit = needed + timedelta(days=late_days) if needed else None
         link, in_time = pick_replacement(active_links(db, it["material_id"]), qty, limit, exclude_supplier_id, today)
         if link is None:
-            return None, [f"{it['sku']} {it['name']}: tidak ada supplier lain yang aktif"], False, False
+            return None, [f"{it['sku']} {it['name']}: no other active supplier"], False, False
         if not in_time:
             on_time = False
             arrival = today + timedelta(days=link["lead_time_days"])
-            warnings.append(f"{it['name']}: {link['supplier_name']} paling cepat tiba {arrival.isoformat()} "
-                            f"(tenggat {it['needed_by_date']})")
+            warnings.append(f"{it['name']}: {link['supplier_name']} arrives {arrival.isoformat()} at the earliest "
+                            f"(deadline {it['needed_by_date']})")
         old = (old_prices or {}).get(it["material_id"], it.get("unit_price"))
-        if old is not None and not L.price_ok(db, old, link["unit_price"]):
+        chk = L.check_price(db, old, link["unit_price"], lim) if old is not None else None
+        if chk is not None and chk.verdict != L.AUTO:
             price_ok = False
             warnings.append(f"{it['name']}: {link['supplier_name']} {rupiah(link['unit_price'])} vs {rupiah(old)} "
-                            f"(+{L.price_increase_pct(old, link['unit_price']):.1f}%)")
+                            f"({chk.pct:+.1f}%, outside ±{chk.tolerance:g}%)")
         lines.append((link, _line(link, {k: it[k] for k in ("material_id", "sku", "name", "uom")}, qty,
                                   it.get("needed_by_date"))))
     return (_group_by_supplier(db, lines) if lines else []), warnings, on_time, price_ok
@@ -235,16 +263,16 @@ def open_date_change(db: Session, po: PurchaseOrder, check: L.DateCheck, supplie
               "old": old, "new": check.new_date.isoformat(), "deadline": _iso(check.deadline),
               "delta_days": check.delta_days, "reason": check.describe()}
     options = [{"key": "accept_date", "label": OPTION_LABEL["accept_date"],
-                "effect": f"Tanggal kirim {po.po_number} menjadi {check.new_date.isoformat()}; PO direvisi (versi baru) "
-                          "dan supplier menerima konfirmasi."},
+                "effect": f"The delivery date of {po.po_number} becomes {check.new_date.isoformat()}; the PO is "
+                          "revised (new version) and the supplier receives a confirmation."},
                {"key": "reject_date", "label": OPTION_LABEL["reject_date"],
-                "effect": "Supplier diberi tahu tanggal tersebut tidak dapat diterima"
-                          + (f" dan diminta mengirim paling lambat {_iso(check.deadline)}." if check.deadline else ".")}]
+                "effect": "The supplier is told the date cannot be accepted"
+                          + (f" and asked to deliver by {_iso(check.deadline)}." if check.deadline else ".")}]
     groups, warnings, _, _ = _replacement_groups(db, po_snapshot(po)["items"], po.supplier_id)
     if groups:
         names = ", ".join(g["supplier_name"] for g in groups)
-        options.append(_resource_option(groups, f"PO baru diterbitkan ke {names}; {po.po_number} dibatalkan dan "
-                                                "supplier lama diberi tahu.", warnings))
+        options.append(_resource_option(groups, f"A new PO is issued to {names}; {po.po_number} is cancelled and "
+                                                "the current supplier is informed.", warnings))
     if po.status == POStatus.ISSUED and not _has_receipts(po):
         options.append(_abort_option(po.po_number))
     cr = POChangeRequest(kind="DATE_CHANGE", po_id=po.id, po_number=po.po_number, po_snapshot=po_snapshot(po),
@@ -302,26 +330,49 @@ def handle_supplier_cancellation(db: Session, po: PurchaseOrder, reason: str, su
     change_request_id, warnings}. Outbound messages are sent by the caller after the commit.
     """
     if po.status not in FULFILLABLE:
-        raise AppError(409, f"{po.po_number} berstatus {po.status.value}; tidak ada yang dibatalkan")
+        raise AppError(409, f"{po.po_number} is {po.status.value}; nothing to cancel")
     if _has_receipts(po):
         return {"status": "partial", "cancelled": None}
+    return _cancel_and_resource(db, po, f"cancelled by supplier: {reason}", reason, supplier_message, actor,
+                                closed_reason="supplier_cancelled")
+
+
+def cancel_for_unreasonable_price(db: Session, po: PurchaseOrder, prices: list[dict], supplier_message: str,
+                                  actor: str = AGENT) -> dict | None:
+    """A price change so far off that it makes no sense (beyond ±`price_cancel_pct`, or <= 0): the agent cancels the
+    PO without a human and re-sources it like a supplier cancellation. None when the PO cannot be cancelled
+    (goods already received) -> the caller lets the manager decide instead."""
+    if po.status not in FULFILLABLE or _has_receipts(po):
+        return None
+    detail = "; ".join(f"{p['sku']} {rupiah(p['old'])} -> {rupiah(p['new'])} ({p['pct']:+.1f}%)" for p in prices)
+    reason = f"price change beyond ±{prices[0]['cancel_at']:g}% ({detail})"
+    result = _cancel_and_resource(db, po, f"cancelled by agent: {reason}", reason, supplier_message, actor,
+                                  closed_reason="price_unreasonable")
+    result["prices"] = prices
+    result["reason"] = reason
+    return result
+
+
+def _cancel_and_resource(db: Session, po: PurchaseOrder, cancel_note: str, reason: str, supplier_message: str,
+                         actor: str, closed_reason: str) -> dict:
+    """Cancel an issued PO (no receipts), then order a replacement within the agent's limits, or ask the manager."""
     for conv in db.scalars(select(SupplierConversation).where(SupplierConversation.po_id == po.id,
                                                               SupplierConversation.status.in_(OPEN_CONVERSATION))):
-        close_conversation(conv, CS.CLOSED, reason="supplier_cancelled")
-        note_action(db, conv.automation_action_id, supplier_outcome=f"{po.po_number} dibatalkan oleh supplier")
+        close_conversation(conv, CS.CLOSED, reason=closed_reason)
+        note_action(db, conv.automation_action_id, supplier_outcome=f"{po.po_number} cancelled ({closed_reason})")
     before = po_snapshot(po)
     conf = confirmation(db, po.id)
-    conf.status, conf.note = SCS.DECLINED, f"Dibatalkan supplier: {reason}"[:300]
-    snap = cancel_po(db, po.id, f"dibatalkan supplier: {reason}"[:200])
+    conf.status, conf.note = SCS.DECLINED, cancel_note[:300]
+    snap = cancel_po(db, po.id, cancel_note[:200])
     snap["status"] = POStatus.CANCELLED.value
     result = {"status": "needs_manager", "cancelled": before["po_number"], "new_pos": [], "queued_conversations": [],
               "change_request_id": None, "warnings": []}
     old_prices = {i["material_id"]: i["unit_price"] for i in before["items"]}
     groups, warnings, on_time, price_ok = _replacement_groups(db, before["items"], before["supplier_id"], old_prices)
     result["warnings"] = warnings
-    if groups and on_time and price_ok:                           # di dalam batas: agent memesan sendiri
+    if groups and on_time and price_ok:                           # within the limits: the agent orders itself
         for g in groups:
-            new = create_and_issue_po(db, g, actor, notes=f"Pengganti {before['po_number']} (dibatalkan supplier)")
+            new = create_and_issue_po(db, g, actor, notes=f"Replacement for {before['po_number']} ({closed_reason})")
             conv = queue_conversation(db, new, ConversationPurpose.CONFIRM_ORDER)
             result["new_pos"].append({"id": new.id, "po_number": new.po_number, "supplier_name": new.supplier_name,
                                       "total_amount": new.total_amount,
@@ -335,15 +386,16 @@ def handle_supplier_cancellation(db: Session, po: PurchaseOrder, reason: str, su
     options = []
     if groups:
         names = ", ".join(g["supplier_name"] for g in groups)
-        options.append(_resource_option(groups, f"PO baru diterbitkan ke {names} walau di luar batas agent.", warnings))
+        options.append(_resource_option(groups, f"A new PO is issued to {names} even though it is outside the "
+                                                "agent's limits.", warnings))
     options.append({"key": "continue_project", "label": OPTION_LABEL["continue_project"],
-                    "effect": "Jadwal produksi tetap; kekurangan material terlihat di MPS & Planning (run ditandai "
-                              "perlu dijalankan ulang) untuk dicarikan sumber lain secara manual.",
+                    "effect": "Production schedules stay; the material shortage shows in MPS & Planning (run marked "
+                              "for re-planning) so another source can be found manually.",
                     "schedules": schedules})
     if schedules:
         options.append({"key": "cancel_project", "label": OPTION_LABEL["cancel_project"],
-                        "effect": f"{len(schedules)} jadwal produksi yang memakai material ini dibatalkan "
-                                  "(periksa di MPS & Planning).", "schedules": schedules})
+                        "effect": f"{len(schedules)} production schedule(s) using this material are cancelled "
+                                  "(check MPS & Planning).", "schedules": schedules})
     cr = POChangeRequest(kind="CANCELLATION", po_id=po.id, po_number=before["po_number"], po_snapshot=snap,
                          conversation_id=None, supplier_id=before["supplier_id"],
                          proposed_changes=[{"po_item_id": None, "sku": before["po_number"], "name": "", "uom": None,
@@ -365,7 +417,7 @@ def _supplier_msg(result: dict, cr: POChangeRequest, text: str, revision_id: int
 
 def _resource(db: Session, cr: POChangeRequest, option: dict, actor: str, action_id, result: dict, why: str) -> None:
     for group in option["purchase_orders"]:
-        new = create_and_issue_po(db, group, actor, notes=f"Pengganti {cr.po_number} ({why})")
+        new = create_and_issue_po(db, group, actor, notes=f"Replacement for {cr.po_number} ({why})")
         new_conv = queue_conversation(db, new, ConversationPurpose.CONFIRM_ORDER, action_id)
         result["new_pos"].append({"id": new.id, "po_number": new.po_number, "supplier_name": new.supplier_name,
                                   "total_amount": new.total_amount})
@@ -377,7 +429,7 @@ def _revise(db: Session, po: PurchaseOrder, cr: POChangeRequest, conv, changes: 
     """Applies line changes (approved or negotiated) as a new PO version and asks the supplier to confirm."""
     po_service.apply_supplier_revision(db, po, [{"po_item_id": c["po_item_id"], "field": c["field"], "new": c["new"]}
                                                 for c in changes])
-    if not revisions(db, po.id):                          # PO dikirim sebelum riwayat versi ada
+    if not revisions(db, po.id):                          # PO sent before version history existed
         _add_revision(db, po, cr.po_snapshot, [], None)
     rev = _add_revision(db, po, po_snapshot(po), changes, actor, change_request_id=cr.id)
     result["revision"] = {"id": rev.id, "version": rev.version}
@@ -401,14 +453,14 @@ def _counter_changes(cr: POChangeRequest, counter_prices: dict | None) -> list[d
         if c["field"] != "unit_price":
             continue
         if c["po_item_id"] not in prices:
-            raise AppError(422, f"Isi harga nego untuk {c['sku']} {c['name']}")
+            raise AppError(422, f"Enter a counter price for {c['sku']} {c['name']}")
         price = parse_rupiah(prices[c["po_item_id"]]) if isinstance(prices[c["po_item_id"]], str) \
             else int(prices[c["po_item_id"]])
         if price < 0:
-            raise AppError(422, "Harga nego tidak boleh negatif")
+            raise AppError(422, "The counter price cannot be negative")
         out.append({**c, "new": price, "asked": c["new"]})
     if not out:
-        raise AppError(422, "Tidak ada harga yang dapat dinegosiasikan")
+        raise AppError(422, "There is no price to negotiate")
     return out
 
 
@@ -421,10 +473,10 @@ def apply_change_request(db: Session, cr: POChangeRequest, choice: str, actor: s
     """
     params = params or {}
     if cr.status not in (CRS.PENDING_MANAGER, CRS.AWAITING_MANAGER_CONFIRM):
-        raise AppError(409, f"Permintaan #{cr.id} sudah diproses ({cr.status.value})")
+        raise AppError(409, f"Request #{cr.id} was already processed ({cr.status.value})")
     option = next((o for o in cr.options if o["key"] == choice), None)
     if option is None:
-        raise AppError(422, f"Opsi '{choice}' tidak tersedia untuk permintaan #{cr.id}")
+        raise AppError(422, f"Option '{choice}' is not available for request #{cr.id}")
     po = None
     if cr.kind != "CANCELLATION":
         po = _get_po(db, cr.po_id)
@@ -444,16 +496,16 @@ def apply_change_request(db: Session, cr: POChangeRequest, choice: str, actor: s
         cr.status = CRS.CHANGE_APPROVED
     elif choice == "accept_date":
         new = cr.proposed_changes[0]["new"]
-        if conv is not None:                          # tanggal dari konfirmasi awal -> konfirmasi final
+        if conv is not None:                          # date from the first confirmation -> final confirmation
             collected = (conv.outcome or {}).get("collected") or {}
             record_supplier_confirmation(db, conv, new, collected.get("supplier_reference"))
             rev = finalize_po_revision(db, po)
-            note_action(db, action_id, supplier_outcome=f"{po.po_number} dikonfirmasi (tanggal kirim {new} disetujui manajer)")
+            note_action(db, action_id, supplier_outcome=f"{po.po_number} confirmed (delivery date {new} approved by the manager)")
         else:
             rev = revise_promised_date(db, po, new, actor, change_request_id=cr.id)
         result["revision"] = {"id": rev.id, "version": rev.version}
-        _supplier_msg(result, cr, f"Tanggal kirim {po.po_number} {new} kami terima. Terlampir PO versi {rev.version} "
-                                  "sebagai acuan.", rev.id)
+        _supplier_msg(result, cr, f"We accept {new} as the delivery date for {po.po_number}. Attached is PO version "
+                                  f"{rev.version} for your reference.", rev.id)
         cr.status = CRS.CHANGE_APPROVED
     elif choice == "reject_date":
         dl = cr.proposed_changes[0].get("deadline")
@@ -461,30 +513,31 @@ def apply_change_request(db: Session, cr: POChangeRequest, choice: str, actor: s
         if conv is not None:
             conv.status, conv.last_activity_at = CS.AWAITING_SUPPLIER, now()
             confirmation(db, po.id).status = SCS.PENDING
-            ask = f"Mohon informasikan tanggal kirim paling lambat {dl}." if dl else "Mohon informasikan tanggal kirim lain."
+            ask = f"Please let us know a delivery date no later than {dl}." if dl else \
+                "Please let us know another delivery date."
         else:
-            ask = (f"Tanggal kirim yang sudah disepakati ({old}) tetap berlaku." if old else "") + \
-                  (f" Mohon kirim paling lambat {dl}." if dl else "")
-        _supplier_msg(result, cr, f"Mohon maaf, tanggal kirim {cr.proposed_changes[0]['new']} untuk {cr.po_number} "
-                                  f"belum dapat kami terima. {ask}".strip())
+            ask = (f"The agreed delivery date ({old}) still applies." if old else "") + \
+                  (f" Please deliver by {dl}." if dl else "")
+        _supplier_msg(result, cr, f"Sorry, we cannot accept {cr.proposed_changes[0]['new']} as the delivery date for "
+                                  f"{cr.po_number}. {ask}".strip())
         cr.status = CRS.ABORTED
     elif choice == "abort":
         if conv:
             close_conversation(conv, CS.CLOSED, change_request_id=cr.id, result="aborted")
-        snap = cancel_po(db, po.id, "manajer menolak permintaan supplier")
+        snap = cancel_po(db, po.id, "manager rejected the supplier's request")
         result["notices"].append({"supplier_id": cr.supplier_id, "conversation_id": cr.conversation_id, "snapshot": snap})
-        note_action(db, action_id, supplier_outcome=f"{snap['po_number']} dibatalkan manajer setelah permintaan supplier")
+        note_action(db, action_id, supplier_outcome=f"{snap['po_number']} cancelled by the manager after the supplier's request")
         cr.status = CRS.ABORTED
     elif choice == "resource":
         _resource(db, cr, option, actor, action_id, result,
-                  "dibatalkan supplier" if cr.kind == "CANCELLATION" else "permintaan supplier tidak diterima")
-        if cr.kind != "CANCELLATION":                     # terbitkan PO pengganti DULU, baru batalkan PO lama
+                  "original PO cancelled" if cr.kind == "CANCELLATION" else "supplier request not accepted")
+        if cr.kind != "CANCELLATION":                     # issue the replacement FIRST, then cancel the old PO
             if conv:
                 close_conversation(conv, CS.CLOSED, change_request_id=cr.id, result="resourced")
-            snap = cancel_po(db, po.id, "dialihkan ke " + ", ".join(p["po_number"] for p in result["new_pos"]))
+            snap = cancel_po(db, po.id, "moved to " + ", ".join(p["po_number"] for p in result["new_pos"]))
             result["notices"].append({"supplier_id": cr.supplier_id, "conversation_id": cr.conversation_id,
                                       "snapshot": snap})
-            note_action(db, action_id, supplier_outcome=f"{snap['po_number']} dialihkan ke "
+            note_action(db, action_id, supplier_outcome=f"{snap['po_number']} moved to "
                                                         + ", ".join(p["po_number"] for p in result["new_pos"]))
         cr.status = CRS.RESOURCED
     elif choice == "continue_project":
@@ -495,7 +548,7 @@ def apply_change_request(db: Session, cr: POChangeRequest, choice: str, actor: s
         allowed = {s["id"] for s in option.get("schedules", [])}
         wanted = set(params.get("schedule_ids") or allowed) & allowed
         if not wanted:
-            raise AppError(422, "Pilih minimal satu jadwal produksi untuk dibatalkan")
+            raise AppError(422, "Select at least one production schedule to cancel")
         cancelled = []
         for sid in sorted(wanted):
             s = db.get(Schedule, sid)

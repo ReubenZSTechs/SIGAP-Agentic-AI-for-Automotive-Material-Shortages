@@ -76,15 +76,15 @@ def cr_view(db: Session, cr: POChangeRequest) -> dict:
         r["direction"] != "neutral" and r["unit"] in ("qty", "date") for r in rows) else "MEDIUM"
     if approve and approve["total_before"]:
         pct = (approve["total_after"] - approve["total_before"]) / approve["total_before"] * 100
-        if pct > C.threshold(db, "price_increase_pct"):
+        if abs(pct) > C.threshold(db, "price_tolerance_pct"):   # outside the ± price band, up or down
             risk = "HIGH"
     hub = _hub_decider(db, str(cr.id))
     decided_by = hub.actor if hub else ("Manajer via Telegram" if cr.decided_at else None)
     note = CHOICE_LABEL.get(cr.manager_choice) if cr.manager_choice else (cr.result or {}).get("error")
     summary = {
         "REVISION": f"Supplier meminta revisi {cr.po_number} (total saat ini {A.rupiah(snap['total_amount'])}).",
-        "PRICE_CHANGE": f"Supplier menaikkan harga {cr.po_number} melebihi batas kenaikan agent "
-                        f"({C.threshold(db, 'price_increase_pct')}%). Terima, ajukan harga nego, cari supplier lebih "
+        "PRICE_CHANGE": f"Supplier mengubah harga {cr.po_number} di luar pita harga agent "
+                        f"(±{C.threshold(db, 'price_tolerance_pct'):g}%). Terima, ajukan harga nego, cari supplier lebih "
                         "murah, atau batalkan PO.",
         "DATE_CHANGE": f"Tanggal kirim baru untuk {cr.po_number} di luar batas hari agent: "
                        f"{(cr.proposed_changes or [{}])[0].get('reason', '')}.",
@@ -219,7 +219,7 @@ def choose_change_request(svc, cr_id: int, choice: str, actor: str, params: dict
                 supplier_id=cr.supplier_id, kind=cr.kind, params=params or None,
                 summary=f"{CHOICE_LABEL.get(choice, choice)} untuk {cr_title(cr)}")
         db.commit()
-    svc.mirror_to_manager(f"Diputuskan via Hub oleh {actor}: {CHOICE_LABEL.get(choice, choice)} untuk {po_number}.")
+    svc.mirror_to_manager(f"Decided via the Hub by {actor}: {CHOICE_LABEL.get(choice, choice)} for {po_number}.")
     result = svc.manager_graph.invoke({"kind": "button", "data": f"cr:{cr_id}:{choice}", "actor": f"{actor} via Hub",
                                        "params": params or None})
     if result.get("error"):

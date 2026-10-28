@@ -1,5 +1,5 @@
 """Thread percakapan per supplier: gabungan `supplier_messages`, draf `hub_outbox`, dan kejadian audit Hub."""
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select, union
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppError
@@ -29,20 +29,61 @@ def _supplier(db: Session, supplier_id: int) -> Supplier:
     return sup
 
 
+# ------------------------------------ batched lookups ------------------------------------
+# Hub pages list many suppliers. Every lookup below is ONE query for all suppliers (never one per supplier):
+# on SAP BTP the database (Supabase) is ~140 ms away, so per-supplier queries made pages take ~1 minute.
+RECENT = 60
+
+
+def recent_messages(db: Session, supplier_ids, limit: int = RECENT) -> dict[int, list]:
+    """Last `limit` IN/OUT messages per supplier (oldest first), in one window-function query."""
+    ids = list(supplier_ids)
+    if not ids:
+        return {}
+    rn = func.row_number().over(partition_by=SupplierMessage.supplier_id, order_by=SupplierMessage.id.desc()).label("rn")
+    inner = (select(SupplierMessage.id, SupplierMessage.supplier_id, SupplierMessage.direction,
+                    SupplierMessage.created_at, SupplierMessage.error, SupplierMessage.text,
+                    SupplierMessage.telegram_message_id, SupplierMessage.agent_output, rn)
+             .where(SupplierMessage.supplier_id.in_(ids), SupplierMessage.direction.in_((MD.OUT, MD.IN)))
+             .subquery())
+    out: dict[int, list] = {i: [] for i in ids}
+    for row in db.execute(select(inner).where(inner.c.rn <= limit).order_by(inner.c.supplier_id, inner.c.id)):
+        out[row.supplier_id].append(row)
+    return out
+
+
+def _by_supplier(db: Session, model, ids) -> dict:
+    return {r.supplier_id: r for r in db.scalars(select(model).where(model.supplier_id.in_(list(ids))))} if ids else {}
+
+
+def supplier_views(db: Session, suppliers: list[Supplier], recent: dict | None = None) -> dict[int, dict]:
+    """`supplier_view` for many suppliers with 3 queries in total (links, controls, recent messages)."""
+    ids = [s.id for s in suppliers]
+    links = _by_supplier(db, SupplierTelegramLink, ids)
+    controls = _by_supplier(db, HubSupplierControl, ids)
+    recent = recent if recent is not None else recent_messages(db, ids)
+    out = {}
+    for sup in suppliers:
+        state, sandbox = C.telegram_state(links.get(sup.id), controls.get(sup.id))
+        out[sup.id] = {"id": sup.id, "code": sup.code, "name": sup.name, "contact": C.contact_name(sup),
+                       "contact_raw": sup.contact, "telegram": state, "sandbox": sandbox, "handle": None,
+                       "avg_response_min": _avg_response(recent.get(sup.id, [])),
+                       "_link": links.get(sup.id)}
+    return out
+
+
 def supplier_view(db: Session, sup: Supplier) -> dict:
-    link = db.scalar(select(SupplierTelegramLink).where(SupplierTelegramLink.supplier_id == sup.id))
-    ctl = db.scalar(select(HubSupplierControl).where(HubSupplierControl.supplier_id == sup.id))
-    state, sandbox = C.telegram_state(link, ctl)
-    return {"id": sup.id, "code": sup.code, "name": sup.name, "contact": C.contact_name(sup), "contact_raw": sup.contact,
-            "telegram": state, "sandbox": sandbox, "handle": None,
-            "avg_response_min": avg_response_minutes(db, sup.id)}
+    view = supplier_views(db, [sup])[sup.id]
+    view.pop("_link", None)
+    return view
 
 
 def avg_response_minutes(db: Session, supplier_id: int) -> int | None:
     """Rata-rata jeda OUT -> IN berikutnya (60 pesan terakhir)."""
-    rows = list(db.scalars(select(SupplierMessage).where(SupplierMessage.supplier_id == supplier_id,
-                                                         SupplierMessage.direction.in_((MD.OUT, MD.IN)))
-                           .order_by(SupplierMessage.id.desc()).limit(60)))[::-1]
+    return _avg_response(recent_messages(db, [supplier_id]).get(supplier_id, []))
+
+
+def _avg_response(rows) -> int | None:
     gaps, last_out = [], None
     for m in rows:
         if m.direction == MD.OUT:
@@ -178,13 +219,42 @@ def _size(n: int) -> str:
     return f"{n / 1048576:.1f} MB".replace(".", ",") if n > 1048576 else f"{max(1, round(n / 1024))} KB"
 
 
-def _summary(db: Session, sup: Supplier) -> dict:
-    ctl = db.scalar(select(HubSupplierControl).where(HubSupplierControl.supplier_id == sup.id))
-    msgs = _messages(db, sup.id, limit=60)
-    visible = [m for m in msgs if m.direction in (MD.IN, MD.OUT)]
-    last = visible[-1] if visible else None
-    drafts = list(db.scalars(select(HubOutbox).where(HubOutbox.supplier_id == sup.id, HubOutbox.status == OutboxStatus.DRAFT)
-                             .order_by(HubOutbox.id)))
+def _thread_ids(db: Session) -> set[int]:
+    """Suppliers that have a thread (messages, conversations, drafts or mission targets): one UNION query."""
+    q = union(select(SupplierMessage.supplier_id).where(SupplierMessage.supplier_id.isnot(None)),
+              select(SupplierConversation.supplier_id),
+              select(HubOutbox.supplier_id).where(HubOutbox.status == OutboxStatus.DRAFT),
+              select(HubMissionTarget.supplier_id))
+    return set(db.scalars(select(q.subquery().c[0])))
+
+
+def _drafts(db: Session, ids) -> dict[int, list[HubOutbox]]:
+    out: dict[int, list] = {}
+    if ids:
+        for d in db.scalars(select(HubOutbox).where(HubOutbox.supplier_id.in_(list(ids)),
+                                                    HubOutbox.status == OutboxStatus.DRAFT).order_by(HubOutbox.id)):
+            out.setdefault(d.supplier_id, []).append(d)
+    return out
+
+
+def attention_count(db: Session) -> int:
+    """Threads with unread supplier messages, drafts waiting for review or failed sends (3 grouped queries)."""
+    seen = func.coalesce(HubSupplierControl.last_seen_message_id, 0)
+    unread = set(db.scalars(select(SupplierMessage.supplier_id).distinct()
+                            .outerjoin(HubSupplierControl, HubSupplierControl.supplier_id == SupplierMessage.supplier_id)
+                            .where(SupplierMessage.direction == MD.IN, SupplierMessage.supplier_id.isnot(None),
+                                   SupplierMessage.id > seen)))
+    drafts = set(db.scalars(select(HubOutbox.supplier_id).distinct().where(HubOutbox.status == OutboxStatus.DRAFT)))
+    rn = func.row_number().over(partition_by=SupplierMessage.supplier_id, order_by=SupplierMessage.id.desc()).label("rn")
+    recent = (select(SupplierMessage.supplier_id, SupplierMessage.direction, SupplierMessage.error, rn)
+              .where(SupplierMessage.supplier_id.isnot(None), SupplierMessage.direction.in_((MD.OUT, MD.IN))).subquery())
+    failed = set(db.scalars(select(recent.c.supplier_id).distinct().where(
+        recent.c.rn <= RECENT, recent.c.direction == MD.OUT, recent.c.error.isnot(None))))
+    return len(unread | drafts | failed)
+
+
+def _summary(sup: Supplier, view: dict, ctl, msgs: list, drafts: list, refs: list[str]) -> dict:
+    last = msgs[-1] if msgs else None
     seen = ctl.last_seen_message_id if ctl else 0
     last_view = None
     if drafts:
@@ -194,21 +264,31 @@ def _summary(db: Session, sup: Supplier) -> dict:
                      ("ADMIN" if (last.agent_output or {}).get("source") == "hub_admin" else "AGENT"),
                      "status": None if last.direction == MD.IN else _status(last), "text": last.text}
     times = [m.created_at for m in msgs] + [d.created_at for d in drafts]
-    return {"id": sup.id, "supplier": supplier_view(db, sup), "mode": (ctl.mode if ctl else ThreadMode.AGENT).value,
+    return {"id": sup.id, "supplier": view, "mode": (ctl.mode if ctl else ThreadMode.AGENT).value,
             "unread": sum(1 for m in msgs if m.direction == MD.IN and m.id > seen),
-            "refs": [p.po_number for p in db.scalars(select(PurchaseOrder).where(
-                PurchaseOrder.supplier_id == sup.id, PurchaseOrder.status.in_(OPEN_PO)).order_by(PurchaseOrder.id).limit(3))],
-            "last": last_view, "last_at": C.iso(max(times)) if times else None,
+            "refs": refs, "last": last_view, "last_at": C.iso(max(times)) if times else None,
             "drafts": len(drafts), "failed": sum(1 for m in msgs if m.direction == MD.OUT and m.error)}
 
 
 def list_threads(db: Session) -> list[dict]:
-    ids = set(db.scalars(select(SupplierMessage.supplier_id).where(SupplierMessage.supplier_id.isnot(None)).distinct()))
-    ids |= set(db.scalars(select(SupplierConversation.supplier_id).distinct()))
-    ids |= set(db.scalars(select(HubOutbox.supplier_id).where(HubOutbox.status == OutboxStatus.DRAFT).distinct()))
-    ids |= set(db.scalars(select(HubMissionTarget.supplier_id).distinct()))
-    rows = [_summary(db, db.get(Supplier, i)) for i in ids if db.get(Supplier, i) is not None]
-    db.commit()
+    """All supplier threads with a constant number of queries (~7), whatever the number of suppliers."""
+    ids = _thread_ids(db)
+    suppliers = list(db.scalars(select(Supplier).where(Supplier.id.in_(list(ids))))) if ids else []
+    recent = recent_messages(db, ids)
+    views = supplier_views(db, suppliers, recent)
+    controls = _by_supplier(db, HubSupplierControl, ids)
+    drafts = _drafts(db, ids)
+    refs: dict[int, list[str]] = {}
+    if ids:
+        for sid, number in db.execute(select(PurchaseOrder.supplier_id, PurchaseOrder.po_number).where(
+                PurchaseOrder.supplier_id.in_(list(ids)), PurchaseOrder.status.in_(OPEN_PO)).order_by(PurchaseOrder.id)):
+            if len(refs.setdefault(sid, [])) < 3:
+                refs[sid].append(number)
+    rows = []
+    for sup in suppliers:
+        view = {k: v for k, v in views[sup.id].items() if k != "_link"}
+        rows.append(_summary(sup, view, controls.get(sup.id), recent.get(sup.id, []), drafts.get(sup.id, []),
+                             refs.get(sup.id, [])))
     return sorted(rows, key=lambda r: r["last_at"] or "", reverse=True)
 
 

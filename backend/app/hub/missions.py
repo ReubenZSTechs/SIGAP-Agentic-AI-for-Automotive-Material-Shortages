@@ -10,7 +10,7 @@ import logging
 from datetime import timedelta
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.chatbot.tracing import trace_scope
 from app.core.exceptions import AppError
@@ -41,30 +41,40 @@ PO_SUPPLIER_ONLY = (SC.DELIVERY_CONFIRM, SC.PO_CONFIRM, SC.PO_CANCEL)
 TITLE = {SC.PRICE_QUOTE: "Penawaran harga", SC.STOCK_CHECK: "Cek stok", SC.DELIVERY_CONFIRM: "Konfirmasi jadwal kirim",
          SC.PO_CONFIRM: "Konfirmasi PO", SC.PO_CANCEL: "Pembatalan PO"}
 # Pesan pembuka & pengingat (dulu template yang bisa diedit di Pengaturan). Variabel diisi `compose()`.
+# Telegram messages are always English (placeholders keep their original keys).
 MISSION_MESSAGES = {
-    "PRICE_QUOTE": "Selamat {waktu} {kontak}, kami dari {perusahaan} membutuhkan penawaran {item}. Mohon info harga "
-                   "per satuan dan lead time sebelum {tenggat}. Terima kasih.",
-    "STOCK_CHECK": "Selamat {waktu} {kontak}, apakah tersedia {item}? Mohon konfirmasi qty yang sanggup dan tanggal "
-                   "siapnya sebelum {tenggat}.",
-    "DELIVERY_CONFIRM": "Selamat {waktu} {kontak}, mohon konfirmasi jadwal pengiriman {po}. Apakah masih sesuai "
-                        "rencana? Kami tunggu kabarnya sebelum {tenggat}.",
-    "REMINDER": "Selamat {waktu} {kontak}, mengingatkan permintaan kami terkait {item}. Kami tunggu kabarnya sebelum "
-                "{tenggat}. Terima kasih.",
+    "PRICE_QUOTE": "Good {waktu} {kontak}, this is {perusahaan}. We would like a quotation for {item}. Please share "
+                   "your unit price and lead time before {tenggat}. Thank you.",
+    "STOCK_CHECK": "Good {waktu} {kontak}, do you have {item} available? Please confirm the quantity you can supply "
+                   "and when it is ready, before {tenggat}.",
+    "DELIVERY_CONFIRM": "Good {waktu} {kontak}, please confirm the delivery schedule for {po}. Is it still on plan? "
+                        "We look forward to your reply before {tenggat}.",
+    "REMINDER": "Good {waktu} {kontak}, a friendly reminder about our request regarding {item}. We look forward to "
+                "your reply before {tenggat}. Thank you.",
 }
-DAYS = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
-MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
+TITLE_EN = {SC.PRICE_QUOTE: "Price quote", SC.STOCK_CHECK: "Stock check", SC.DELIVERY_CONFIRM: "Delivery confirmation",
+            SC.PO_CONFIRM: "PO confirmation", SC.PO_CANCEL: "PO cancellation"}
+DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
 def deadline_text(dt) -> str:
     local = dt.replace(tzinfo=C.ZoneInfo("UTC")).astimezone(C.TZ)
-    return f"{DAYS[local.weekday()]}, {local.day} {MONTHS[local.month - 1]} pukul {local.strftime('%H.%M')}"
+    return f"{DAYS[local.weekday()]}, {local.day} {MONTHS[local.month - 1]} at {local.strftime('%H:%M')}"
+
+
+def _en_title(m: HubMission) -> str:
+    return f"{TITLE_EN.get(m.scenario, m.scenario.value)} · {_items_label(m)}"
 
 
 # ------------------------------------------- options -------------------------------------------
-def _supplier_brief(db: Session, sup: Supplier) -> dict:
-    link = db.scalar(select(SupplierTelegramLink).where(SupplierTelegramLink.supplier_id == sup.id))
-    from app.models import HubSupplierControl
-    ctl = db.scalar(select(HubSupplierControl).where(HubSupplierControl.supplier_id == sup.id))
+def _supplier_brief(db: Session, sup: Supplier, ctx: "_ViewContext | None" = None) -> dict:
+    if ctx is not None:
+        link, ctl = ctx.links.get(sup.id), ctx.controls.get(sup.id)
+    else:
+        from app.models import HubSupplierControl
+        link = db.scalar(select(SupplierTelegramLink).where(SupplierTelegramLink.supplier_id == sup.id))
+        ctl = db.scalar(select(HubSupplierControl).where(HubSupplierControl.supplier_id == sup.id))
     state, sandbox = C.telegram_state(link, ctl)
     return {"id": sup.id, "code": sup.code, "name": sup.name, "contact": C.contact_name(sup), "telegram": state,
             "sandbox": sandbox, "is_active": sup.is_active}
@@ -165,27 +175,83 @@ def mission_brief(m: HubMission) -> dict:
     return {"id": m.id, "number": m.id, "title": m.title, "status": m.status.value, "replied": replied, "total": len(m.targets)}
 
 
-def _waiting_reason(db: Session, m: HubMission, t: HubMissionTarget, has_draft: bool) -> str | None:
+class _ViewContext:
+    """Everything `mission_view` needs for a page of missions, loaded in a fixed number of queries (no per-mission
+    or per-target round trips; the database can be ~140 ms away on SAP BTP)."""
+
+    def __init__(self, db: Session, missions: list[HubMission]):
+        from app.hub.approvals import cr_brief
+        from app.models import HubSupplierControl, POChangeRequest, PORevision
+        targets = [t for m in missions for t in m.targets]
+        tids = [t.id for t in targets]
+        sids = {t.supplier_id for t in targets}
+        mids = [m.id for m in missions]
+        po_ids = {m.po_id for m in missions if m.po_id and m.scenario in PO_SCENARIOS}
+        conv_ids = {t.conversation_id for t in targets if t.conversation_id}
+        self.drafts = set(db.scalars(select(HubOutbox.mission_target_id).where(
+            HubOutbox.status == OutboxStatus.DRAFT, HubOutbox.mission_target_id.in_(tids)))) if tids else set()
+        self.props: dict[int, list] = {}
+        for p in (db.scalars(select(HubProposal).where(HubProposal.mission_id.in_(mids)).order_by(HubProposal.id))
+                  if mids else []):
+            self.props.setdefault(p.mission_id, []).append(p)
+        self.links = {r.supplier_id: r for r in db.scalars(select(SupplierTelegramLink).where(
+            SupplierTelegramLink.supplier_id.in_(sids)))} if sids else {}
+        self.controls = {r.supplier_id: r for r in db.scalars(select(HubSupplierControl).where(
+            HubSupplierControl.supplier_id.in_(sids)))} if sids else {}
+        self.convs = {c.id: c for c in db.scalars(select(SupplierConversation).where(
+            SupplierConversation.id.in_(conv_ids)))} if conv_ids else {}
+        self.crs: dict[int, list] = {}
+        for c in (db.scalars(select(POChangeRequest).where(POChangeRequest.po_id.in_(po_ids))
+                            .order_by(POChangeRequest.id.desc())) if po_ids else []):
+            if len(self.crs.setdefault(c.po_id, [])) < 6:
+                self.crs[c.po_id].append(cr_brief(c))
+        self.revs: dict[int, list] = {}
+        for r in (db.scalars(select(PORevision).where(PORevision.po_id.in_(po_ids)).order_by(PORevision.version))
+                  if po_ids else []):
+            self.revs.setdefault(r.po_id, []).append({"version": r.version, "status": r.status.value})
+        waiting = [t for m in missions for t in m.targets
+                   if m.status == MissionStatus.ACTIVE and t.state in (TS.QUEUED, TS.PAUSED)]
+        self.paused = self.working = None
+        self.open_po, self.busy = set(), {}
+        if waiting:
+            self.paused = C.is_paused(db)
+            self.working = C.within_working_hours(db)
+            wsids = {t.supplier_id for t in waiting}
+            self.open_po = set(db.scalars(select(SupplierConversation.supplier_id).where(
+                SupplierConversation.supplier_id.in_(wsids), SupplierConversation.status.in_(A.OPEN_CONVERSATION))))
+            for sid, tid in db.execute(select(HubMissionTarget.supplier_id, HubMissionTarget.id).join(HubMission).where(
+                    HubMissionTarget.supplier_id.in_(wsids), HubMissionTarget.state == TS.SENT,
+                    HubMission.status == MissionStatus.ACTIVE)):
+                self.busy.setdefault(sid, set()).add(tid)
+
+
+def _load_missions(db: Session, query) -> list[HubMission]:
+    return list(db.scalars(query.options(selectinload(HubMission.targets).selectinload(HubMissionTarget.supplier))))
+
+
+def _waiting_reason(db: Session, m: HubMission, t: HubMissionTarget, has_draft: bool,
+                    ctx: _ViewContext | None = None) -> str | None:
     """Kenapa target belum terkirim (ditampilkan di tabel misi)."""
     if m.status != MissionStatus.ACTIVE or t.state not in (TS.QUEUED, TS.PAUSED) or has_draft:
         return None
     if m.scenario in PO_SCENARIOS:
         return po_missions.waiting_reason(db, t)
-    if C.is_paused(db):
+    ctx = ctx or _ViewContext(db, [m])
+    if ctx.paused:
         return "Agent dijeda"
-    if C.has_open_po_conversation(db, t.supplier_id):
+    if t.supplier_id in ctx.open_po:
         return "Menunggu percakapan PO selesai"
     if (t.result or {}).get("not_linked"):
         return "Telegram belum terhubung"
-    if _busy_with_other_mission(db, t):
+    if ctx.busy.get(t.supplier_id, set()) - {t.id}:
         return "Menunggu misi lain dengan supplier ini"
-    return None if C.within_working_hours(db) else "Di luar jam kerja"
+    return None if ctx.working else "Di luar jam kerja"
 
 
-def mission_view(db: Session, m: HubMission) -> dict:
-    drafts = {d.mission_target_id for d in db.scalars(select(HubOutbox).where(
-        HubOutbox.status == OutboxStatus.DRAFT, HubOutbox.mission_target_id.in_([t.id for t in m.targets] or [-1])))}
-    props = list(db.scalars(select(HubProposal).where(HubProposal.mission_id == m.id).order_by(HubProposal.id)))
+def mission_view(db: Session, m: HubMission, ctx: _ViewContext | None = None) -> dict:
+    ctx = ctx or _ViewContext(db, [m])
+    drafts = {tid for tid in ctx.drafts if tid in {t.id for t in m.targets}}
+    props = ctx.props.get(m.id, [])
     first = props[0] if props else None
     items = m.items or []
     return {
@@ -196,9 +262,10 @@ def mission_view(db: Session, m: HubMission) -> dict:
         "autonomy": m.autonomy, "created_by": m.created_by, "created_at": C.iso(m.created_at), "summary": m.summary,
         "replied": sum(1 for t in m.targets if t.state == TS.REPLIED), "total": len(m.targets),
         "agent_po": m.scenario in PO_SCENARIOS, "automation_action_id": m.automation_action_id,
-        "conversation": _conversation_brief(db, m),
-        "targets": [{"supplier_id": t.supplier_id, "supplier": _supplier_brief(db, t.supplier), "thread_id": t.supplier_id,
-                     "state": t.state.value, "waiting": _waiting_reason(db, m, t, t.id in drafts), "sent_at": C.iso(t.sent_at), "replied_at": C.iso(t.replied_at),
+        "conversation": _conversation_brief(db, m, ctx),
+        "targets": [{"supplier_id": t.supplier_id, "supplier": _supplier_brief(db, t.supplier, ctx), "thread_id": t.supplier_id,
+                     "state": t.state.value, "waiting": _waiting_reason(db, m, t, t.id in drafts, ctx),
+                     "sent_at": C.iso(t.sent_at), "replied_at": C.iso(t.replied_at),
                      "reminded_at": C.iso(t.reminded_at), "result": target_summary(m, t), "draft": t.id in drafts}
                     for t in m.targets],
         "approval": {"id": f"hp-{first.id}", "title": first.title, "status": first.status.value} if first else None,
@@ -206,17 +273,14 @@ def mission_view(db: Session, m: HubMission) -> dict:
     }
 
 
-def _conversation_brief(db: Session, m: HubMission) -> dict | None:
+def _conversation_brief(db: Session, m: HubMission, ctx: _ViewContext) -> dict | None:
     """Misi PO: percakapan agent PO terkini, revisi PO, dan keputusan manajer yang terkait."""
     if m.scenario not in PO_SCENARIOS:
         return None
-    from app.hub.approvals import cr_brief
-    from app.models import POChangeRequest
     t = m.targets[0] if m.targets else None
-    conv = db.get(SupplierConversation, t.conversation_id) if t and t.conversation_id else None
-    crs = [cr_brief(c) for c in db.scalars(select(POChangeRequest).where(POChangeRequest.po_id == m.po_id)
-                                           .order_by(POChangeRequest.id.desc()).limit(6))] if m.po_id else []
-    revs = [{"version": r.version, "status": r.status.value} for r in A.revisions(db, m.po_id)] if m.po_id else []
+    conv = ctx.convs.get(t.conversation_id) if t and t.conversation_id else None
+    crs = ctx.crs.get(m.po_id, []) if m.po_id else []
+    revs = ctx.revs.get(m.po_id, []) if m.po_id else []
     return {"id": conv.id if conv else None, "purpose": conv.purpose.value if conv else None,
             "status": conv.status.value if conv else None, "approvals": crs, "revisions": revs}
 
@@ -230,7 +294,9 @@ def _sync(db: Session) -> None:
 
 def list_missions(db: Session) -> list[dict]:
     _sync(db)
-    return [mission_view(db, m) for m in db.scalars(select(HubMission).order_by(HubMission.id.desc()).limit(200))]
+    missions = _load_missions(db, select(HubMission).order_by(HubMission.id.desc()).limit(200))
+    ctx = _ViewContext(db, missions)
+    return [mission_view(db, m, ctx) for m in missions]
 
 
 def get_mission(db: Session, mission_id: int) -> dict:
@@ -346,9 +412,9 @@ def _item_values(m: HubMission) -> dict:
         return {"item": m.topic, "qty": "", "satuan": ""}
     if len(m.items) == 1:
         it = m.items[0]
-        qty = f" sebanyak {A.fmt_qty(it['qty'])} {it['uom']}" if it.get("qty") else ""
+        qty = f" ({A.fmt_qty(it['qty'])} {it['uom']})" if it.get("qty") else ""
         return {"item": f"{it['name']}{qty}", "qty": A.fmt_qty(it["qty"]) if it.get("qty") else "", "satuan": it["uom"]}
-    return {"item": "item-item berikut", "qty": "", "satuan": ""}
+    return {"item": "the items below", "qty": "", "satuan": ""}
 
 
 def compose(m: HubMission, sup: Supplier, template: str | None = None) -> str:
@@ -360,9 +426,9 @@ def compose(m: HubMission, sup: Supplier, template: str | None = None) -> str:
         return f"{text}\n\nRef: {m.po_snapshot['po_number']}"
     if m.scenario in (SC.PRICE_QUOTE, SC.STOCK_CHECK) and (len(m.items) > 1 or m.po_snapshot):
         lines = [f"{n}. {it['sku']} {it['name']} — {A.fmt_qty(it['qty'])} {it['uom']}"
-                 + (f" · dibutuhkan {it['needed_by']}" if it.get("needed_by") else "")
+                 + (f" · needed by {it['needed_by']}" if it.get("needed_by") else "")
                  for n, it in enumerate(m.items, 1)]
-        return text + "\n\nDaftar item:\n" + "\n".join(lines)
+        return text + "\n\nItems:\n" + "\n".join(lines)
     return text
 
 
@@ -422,7 +488,7 @@ def _tick(svc) -> dict:
                         continue
                     sup = db.get(Supplier, t.supplier_id)
                     text = compose(m, sup) if t.state == TS.QUEUED else \
-                        "Melanjutkan permintaan kami sebelumnya:\n\n" + compose(m, sup)
+                        "Following up on our earlier request:\n\n" + compose(m, sup)
                     how = _queue_or_send(svc, db, m, t, text, "mission", m.autonomy == "REVIEW",
                                          'Misi diatur "Draf dulu"', sends)
                     if how == "sent":
@@ -437,8 +503,8 @@ def _tick(svc) -> dict:
                     elif t.sent_at < now - timedelta(hours=escalate_h):
                         t.state = TS.NO_REPLY
                         counts["no_reply"] += 1
-                        notices.append(f"Misi #{m.id} ({m.title}): {db.get(Supplier, t.supplier_id).name} belum membalas "
-                                       f"setelah {int(escalate_h)} jam. Tandai eskalasi dari Hub bila perlu.")
+                        notices.append(f"Mission #{m.id} ({_en_title(m)}): {db.get(Supplier, t.supplier_id).name} has not "
+                                       f"replied after {int(escalate_h)} hours. Mark an escalation in the Hub if needed.")
                     elif can_send and t.reminded_at is None and t.sent_at < now - timedelta(hours=remind_h):
                         sup = db.get(Supplier, t.supplier_id)
                         text = compose(m, sup, MISSION_MESSAGES["REMINDER"])
@@ -516,18 +582,18 @@ def escalate(svc, mission_id: int, supplier_id: int, actor: str) -> None:
             raise AppError(404, "Supplier tidak ada di misi ini")
         sup = db.get(Supplier, supplier_id)
         t.state = TS.ESCALATED
-        text = (f"Selamat {C.greeting()} {C.contact_name(sup)}, permintaan kami terkait {_item_values(m)['item']} belum "
-                f"mendapat balasan. Mohon konfirmasi hari ini agar kami bisa menyesuaikan rencana produksi. Terima kasih.")
+        text = (f"Good {C.greeting()} {C.contact_name(sup)}, we have not yet received a reply to our request regarding "
+                f"{_item_values(m)['item']}. Please confirm today so we can adjust our production plan. Thank you.")
         db.add(HubOutbox(supplier_id=supplier_id, mission_target_id=t.id, kind="escalation", text=text,
                          review_reason="Eskalasi selalu perlu review"))
         C.audit(db, actor, "escalate", "supplier", supplier_id, mission=m.id, supplier_id=supplier_id,
                 summary=f"Eskalasi Misi #{m.id}: {sup.name} belum membalas")
         if all(x.state in TERMINAL for x in m.targets):
             summarize(db, m)
-        name, title = sup.name, m.title
+        name, title = sup.name, _en_title(m)
         db.commit()
-    svc.deliver([svc.manager_send(f"Eskalasi Misi #{mission_id} ({title}): {name} belum membalas. Ditandai oleh {actor} "
-                                  "via Hub; draf pesan eskalasi menunggu review.")])
+    svc.deliver([svc.manager_send(f"Escalation for mission #{mission_id} ({title}): {name} has not replied. Marked by "
+                                  f"{actor} via the Hub; the escalation draft is waiting for review.")])
 
 
 def close(mission_id: int, actor: str) -> None:
@@ -647,7 +713,7 @@ def summarize(db: Session, m: HubMission) -> None:
     declined = [t for t in m.targets if (t.result or {}).get("decision") == "declined"]
     head = f"{len(replied)} dari {len(m.targets)} supplier menjawab" + (f", {len(declined)} menolak" if declined else "") + "."
     evidence = [e for e in (_evidence(db, m, t) for t in replied) if e]
-    pct_high = C.threshold(db, "price_increase_pct")
+    pct_high = C.threshold(db, "price_tolerance_pct")
 
     if m.scenario == SC.PRICE_QUOTE:
         rows, best = [], None
@@ -667,7 +733,7 @@ def summarize(db: Session, m: HubMission) -> None:
                     best = (t.supplier.name, it["price_per_unit"], item["name"])
         if rows:
             changes = [(r["after"] - r["before"]) / r["before"] * 100 for r in rows if r["before"]]
-            risk = "HIGH" if any(c > pct_high for c in changes) else \
+            risk = "HIGH" if any(abs(c) > pct_high for c in changes) else \
                 "MEDIUM" if any(r["before"] is None or r["after"] > r["before"] for r in rows) else "LOW"
             _proposal(db, m, ProposalType.PRICE_UPDATE, f"Update harga {_items_label(m)}", rows, evidence, risk,
                       f"Agent meminta penawaran ke {len(m.targets)} supplier (Misi #{m.id}). {head} "

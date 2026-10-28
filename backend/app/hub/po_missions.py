@@ -12,6 +12,7 @@ Progres misi diturunkan dari status percakapan (`sync`), tidak disimpan dua kali
 from datetime import timedelta
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import Session
 
 from app.hub.audit_log import AGENT_ACTOR, agent as audit_agent
@@ -25,7 +26,8 @@ SCENARIO_OF = {ConversationPurpose.CONFIRM_ORDER: SC.PO_CONFIRM, ConversationPur
                ConversationPurpose.CANCEL_ORDER: SC.PO_CANCEL}
 TITLE = {SC.PO_CONFIRM: "Konfirmasi PO {po}", SC.PO_CANCEL: "Pembatalan PO {po}"}
 AGENT_MESSAGE = "(pesan disusun agent PO)"
-CLOSED_REASON = {"supplier_cancelled": "PO dibatalkan oleh supplier.", "aborted": "PO dibatalkan manajer.",
+CLOSED_REASON = {"supplier_cancelled": "PO dibatalkan oleh supplier.",
+                 "price_unreasonable": "PO dibatalkan agent: harga dari supplier tidak wajar (di luar batas pembatalan).", "aborted": "PO dibatalkan manajer.",
                  "resourced": "PO dialihkan ke supplier lain.", "po_changed": "PO berubah / tidak berlaku lagi.",
                  "po_deleted_before_dispatch": "PO dihapus sebelum dikirim.",
                  "superseded_by": "Diganti permintaan pembatalan PO."}
@@ -90,12 +92,23 @@ def _finish(db: Session, m: HubMission, status: MissionStatus, summary: str) -> 
 
 
 def sync(db: Session) -> int:
-    """Mirror PO conversation states into their missions. Returns the number of missions changed."""
+    """Mirror PO conversation states into their missions. Returns the number of missions changed.
+
+    Runs on every mission page load and worker tick, so it loads missions, targets, conversations and open
+    change requests in 4 queries in total (no per-mission round trips)."""
     changed = 0
-    for m in db.scalars(select(HubMission).where(HubMission.status == MissionStatus.ACTIVE,
-                                                 HubMission.scenario.in_(PO_SCENARIOS))):
+    missions = list(db.scalars(select(HubMission).options(selectinload(HubMission.targets))
+                               .where(HubMission.status == MissionStatus.ACTIVE, HubMission.scenario.in_(PO_SCENARIOS))))
+    conv_ids = {t.conversation_id for m in missions for t in m.targets if t.conversation_id}
+    convs = {c.id: c for c in db.scalars(select(SupplierConversation).where(SupplierConversation.id.in_(conv_ids)))} \
+        if conv_ids else {}
+    open_crs = {cr.conversation_id: cr for cr in db.scalars(select(POChangeRequest).where(
+        POChangeRequest.conversation_id.in_(conv_ids),
+        POChangeRequest.status.in_((ChangeRequestStatus.PENDING_MANAGER, ChangeRequestStatus.AWAITING_MANAGER_CONFIRM))))} \
+        if conv_ids else {}
+    for m in missions:
         for t in m.targets:
-            conv = db.get(SupplierConversation, t.conversation_id) if t.conversation_id else None
+            conv = convs.get(t.conversation_id) if t.conversation_id else None
             if conv is None:
                 continue
             before = (t.state, m.status)
@@ -108,9 +121,9 @@ def sync(db: Session) -> int:
                     m.summary = f"Supplier sudah setuju; agent menunggu data konfirmasi {po_number} yang belum lengkap."
                 else:
                     m.summary = f"Pesan terkirim; menunggu balasan supplier untuk {po_number}."
-            elif conv.status == CS.REVISION_REQUESTED or _open_cr(db, conv):
+            elif conv.status == CS.REVISION_REQUESTED or conv.id in open_crs:
                 t.state = TS.WAITING_MANAGER
-                cr = _open_cr(db, conv)
+                cr = open_crs.get(conv.id)
                 m.summary = (f"Supplier meminta perubahan {po_number}; menunggu keputusan manajer"
                              + (f" (Persetujuan cr-{cr.id})." if cr else "."))
             elif conv.status == CS.CONFIRMED:
@@ -135,7 +148,8 @@ def sync(db: Session) -> int:
                 reason = outcome.get("result") or outcome.get("reason") or ("superseded_by" if outcome.get("superseded_by") else None)
                 if reason == "change_approved":
                     continue                           # REVISION_CONFIRM berikutnya menempel di target ini
-                t.state = TS.ESCALATED if reason not in ("supplier_cancelled", "aborted", "resourced") else TS.REPLIED
+                t.state = TS.ESCALATED if reason not in ("supplier_cancelled", "price_unreasonable", "aborted",
+                                                         "resourced") else TS.REPLIED
                 _finish(db, m, MissionStatus.CANCELLED if reason != "resourced" else MissionStatus.DONE,
                         CLOSED_REASON.get(reason, f"Percakapan {po_number} ditutup ({reason or '-'})."))
             changed += before != (t.state, m.status)

@@ -84,7 +84,7 @@ def clarify(question="Material yang mana?", options=None) -> dict:
     return {"question_text": question, "options": options or []}
 
 
-OUTREACH = {"message_text": "Halo, mohon konfirmasi PO berikut.", "language": "id"}
+OUTREACH = {"message_text": "Hello, please confirm the PO below.", "language": "en"}
 
 
 SOON = (date.today() + timedelta(days=7)).isoformat()      # tanggal kirim valid untuk konfirmasi lengkap
@@ -106,7 +106,7 @@ def triage(po_number=None, intent="other", text="Baik.", promised=None, reason=N
             "reason": reason}
 
 
-ESCALATION = {"message_text": "Supplier perlu ditindaklanjuti.", "urgency": "normal",
+ESCALATION = {"message_text": "The supplier needs follow-up.", "urgency": "normal",
               "recommended_option": "none", "rationale": "test"}
 
 

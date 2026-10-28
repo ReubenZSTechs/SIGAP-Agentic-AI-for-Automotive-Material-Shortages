@@ -1,5 +1,6 @@
 """Bagian bersama Hub: kebijakan & batas otonomi agent, audit, status Telegram per supplier, akses layanan chat."""
 import copy
+import re
 import logging
 import threading
 from datetime import datetime, timedelta  # noqa: F401  (timedelta dipakai modul lain via C.)
@@ -38,9 +39,12 @@ DEFAULT_POLICIES = {
     # Batas keputusan otomatis agent (di luar batas -> manajer memutuskan):
     #   delivery_early_days / delivery_late_days: tanggal kirim baru dari supplier boleh sekian hari lebih awal /
     #     lebih lambat dari tenggat (needed-by paling awal di PO) tanpa persetujuan manajer.
-    #   price_increase_pct: kenaikan harga satuan (revisi supplier atau supplier pengganti) maksimal sekian persen.
-    "thresholds": {"delivery_early_days": 7, "delivery_late_days": 0, "price_increase_pct": 5,
-                   "reminder_after_hours": 4, "escalate_after_hours": 24},
+    #   price_tolerance_pct: harga satuan baru (revisi supplier atau supplier pengganti) boleh berubah ±X% dari harga
+    #     PO; di dalam pita agent menyetujui & merevisi PO, di luar pita manajer memutuskan.
+    #   price_cancel_pct: perubahan harga melebihi ±Y% (atau harga <= 0) tidak masuk akal -> PO dibatalkan otomatis
+    #     lalu dicarikan supplier pengganti.
+    "thresholds": {"delivery_early_days": 7, "delivery_late_days": 0, "price_tolerance_pct": 10,
+                   "price_cancel_pct": 100, "reminder_after_hours": 4, "escalate_after_hours": 24},
     "working_hours": {"days": [1, 2, 3, 4, 5], "start": "08:00", "end": "17:00", "queue_outside": False},
 }
 
@@ -71,13 +75,14 @@ def short_local(dt: datetime) -> str:
 
 def greeting(now: datetime | None = None) -> str:
     h = (now or datetime.now(TZ)).astimezone(TZ).hour
-    return "pagi" if h < 11 else "siang" if h < 15 else "sore" if h < 18 else "malam"
+    return "morning" if h < 12 else "afternoon" if h < 18 else "evening"           # Telegram texts are English
 
 
 def contact_name(sup: Supplier) -> str:
-    """Bagian pertama kolom kontak (mis. "Pak Hendra, 0812..." -> "Pak Hendra"), atau sapaan umum."""
-    first = (sup.contact or "").split(",")[0].strip()
-    return first or "Bapak/Ibu"
+    """First part of the contact field ("Hendra Wijaya | +62 … | mail" or "Pak Hendra, 0812…" -> the name),
+    or a generic salutation."""
+    first = re.split(r"[,|]", sup.contact or "")[0].strip()
+    return first or "Sir/Madam"
 
 
 def fill(template: str, values: dict) -> str:
@@ -114,7 +119,10 @@ def _with_defaults(p: dict) -> dict:
             s["outbound"] = stored[s["key"]].get("outbound", s["outbound"])
         if s["key"] in stored and s["expiry_hours"] is not None:
             s["expiry_hours"] = stored[s["key"]].get("expiry_hours") or s["expiry_hours"]
-    out["thresholds"].update({k: v for k, v in (p.get("thresholds") or {}).items() if k in out["thresholds"]})
+    stored_th = dict(p.get("thresholds") or {})
+    if "price_tolerance_pct" not in stored_th and "price_increase_pct" in stored_th:   # kunci lama (batas naik saja)
+        stored_th["price_tolerance_pct"] = stored_th["price_increase_pct"]
+    out["thresholds"].update({k: v for k, v in stored_th.items() if k in out["thresholds"]})
     out["working_hours"].update(p.get("working_hours") or {})
     return out
 
@@ -173,9 +181,13 @@ def validate_policies(p: dict) -> dict:
             raise AppError(422, f"Ambang {k} wajib angka ≥ 0")
         if k in ("delivery_early_days", "delivery_late_days") and (v > 365 or v != int(v)):
             raise AppError(422, f"Batas hari {k} harus bilangan bulat 0–365")
-        if k == "price_increase_pct" and v > 100:
-            raise AppError(422, "Batas kenaikan harga maksimal 100%")
+        if k == "price_tolerance_pct" and v > 100:
+            raise AppError(422, "Batas toleransi harga maksimal 100%")
+        if k == "price_cancel_pct" and v > 1000:
+            raise AppError(422, "Batas pembatalan otomatis maksimal 1000%")
         out["thresholds"][k] = v
+    if out["thresholds"]["price_cancel_pct"] <= out["thresholds"]["price_tolerance_pct"]:
+        raise AppError(422, "Batas pembatalan otomatis harus lebih besar dari toleransi harga")
     if out["thresholds"]["escalate_after_hours"] <= out["thresholds"]["reminder_after_hours"]:
         raise AppError(422, "Eskalasi harus lebih lama dari pengingat")
     wh = p.get("working_hours", {})

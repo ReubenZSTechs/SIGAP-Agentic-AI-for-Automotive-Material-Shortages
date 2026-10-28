@@ -3,11 +3,11 @@ import logging
 from fastapi import APIRouter, Depends, Response, status as http_status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
-from sqlalchemy.orm import Session, undefer
+from sqlalchemy.orm import Session, selectinload, undefer
 
 from app.api.deps import get_db
 from app.core.exceptions import AppError
-from app.models import PORevision, PurchaseOrder
+from app.models import POItem, PORevision, PurchaseOrder
 from app.models.enums import PORevisionStatus, POSource, POStatus
 from app.schemas.purchase_order import (ApproveRequest, GoodsReceiptOut, GoodsReceiptRequest,
                                         ManualPOCreate, ManualPOUpdate, POStatusUpdate,
@@ -29,7 +29,9 @@ def _get_po(db: Session, po_id: int) -> PurchaseOrder:
 def list_purchase_orders(status: POStatus | None = None, supplier_id: int | None = None,
                          planning_run_id: int | None = None, source: POSource | None = None,
                          db: Session = Depends(get_db)):
-    stmt = select(PurchaseOrder).order_by(PurchaseOrder.id)
+    # supplier + items + materials in 3 extra queries in total, not per PO (each round trip is ~140 ms on SAP BTP)
+    stmt = select(PurchaseOrder).order_by(PurchaseOrder.id).options(
+        selectinload(PurchaseOrder.supplier), selectinload(PurchaseOrder.items).selectinload(POItem.material))
     if status is not None:
         stmt = stmt.where(PurchaseOrder.status == status)
     if supplier_id is not None:

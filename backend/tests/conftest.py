@@ -62,6 +62,7 @@ TEST_URL = _resolve_test_url()
 # Paksa aplikasi memakai DB test (env var menimpa .env). Harus sebelum import app.*
 os.environ["DATABASE_URL"] = TEST_URL
 os.environ["APP_ENV"] = "development"         # pagar Supabase selalu aktif saat test
+os.environ["AGENT_TRACE_ASYNC"] = "false"    # jejak agent ditulis langsung, deterministik
 os.environ["TELEGRAM_MODE"] = "sandbox"      # tes tidak pernah memakai bot Telegram sungguhan
 os.environ.pop("TELEGRAM_MANAGER_CHAT_ID", None)
 

@@ -75,7 +75,7 @@ def test_start_token_links_chat_and_unknown_chats_are_ignored(seeded):
     svc, _ = H.supplier_service(SCRIPT)
     cid = H.start(svc, po_id)
     assert H.conversation(cid).status.value == "QUEUED"        # supplier belum tertaut
-    assert "belum terhubung" in H.messages("MANAGER_OUT")[0].text
+    assert "not connected to Telegram" in H.messages("MANAGER_OUT")[0].text
     assert svc.handle_inbound(555, "halo")["reason"] == "unknown_chat"
     with SessionLocal() as db:
         from app.supplier_chat.service import ensure_link
@@ -187,30 +187,30 @@ def test_confirmation_without_date_asks_for_it_then_sends_one_final_pdf(seeded):
     svc.handle_inbound(chat, "Bisa")
     conv = H.conversation(cid)
     assert conv.status.value == "AWAITING_SUPPLIER" and conv.outcome["confirmed_pending"] is True
-    assert "Mohon informasikan tanggal pengiriman" in H.messages("OUT", chat)[-1].text
+    assert "Please let us know the delivery date" in H.messages("OUT", chat)[-1].text
     assert transport.documents == [] and H.confirmation_status(po_id) == "PENDING"
 
     svc.handle_inbound(chat, "Tanggal pengirimannya nanti")
     payload = __import__("json").loads([c for c in fake.calls if c["agent"] == "SupplierReplyOutput"][-1]["messages"][-1]["content"])
-    assert payload["already_confirmed"] is True and payload["still_needed"] == ["tanggal pengiriman"]
+    assert payload["already_confirmed"] is True and payload["still_needed"] == ["the delivery date"]
     assert H.confirmation_status(po_id) == "CONFIRMED" and len(transport.documents) == 1
     final = H.revisions(po_id)[-1]
     assert final.status.value == "FINAL" and final.snapshot["promised_delivery_date"] == F.SOON
 
     svc.handle_inbound(chat, "Sudah sesuai")                              # setelah final: hanya terima kasih
     assert len(transport.documents) == 1 and len(H.conversations()) == 1
-    assert H.messages("OUT", chat)[-1].text == f"Terima kasih, {number} sudah tercatat terkonfirmasi."
+    assert H.messages("OUT", chat)[-1].text == f"Thank you, {number} is already recorded as confirmed."
 
     later = (date.today() + timedelta(days=9)).isoformat()
     fake.script["SupplierInboundTriageOutput"] = [F.triage(number, "delivery_change", "Siap.", promised=later)]
     svc.handle_inbound(chat, "Ternyata baru bisa kirim tanggal itu")     # PO tanpa needed-by: dalam batas agent
-    assert H.messages("OUT", chat)[-1].text.startswith(f"Terima kasih. Tanggal kirim {number} kami perbarui menjadi {later}.")
+    assert H.messages("OUT", chat)[-1].text.startswith(f"Thank you. We have updated the delivery date of {number} to {later}.")
     with SessionLocal() as db:
         assert A.confirmation(db, po_id).promised_delivery_date.isoformat() == later
     rev = H.revisions(po_id)[-1]
     assert rev.snapshot["promised_delivery_date"] == later and rev.status.value == "FINAL" and rev.version == 2
     assert len(transport.documents) == 2                                   # PDF versi baru ikut terkirim
-    assert "dalam batas agent" in H.messages("MANAGER_OUT")[-1].text
+    assert "within the agent's limits" in H.messages("MANAGER_OUT")[-1].text
 
 
 def test_required_fields_are_configurable(seeded):
@@ -221,7 +221,7 @@ def test_required_fields_are_configurable(seeded):
     chat = H.link(svc, seeded, "SUP-KRT")
     H.start(svc, po_id)
     svc.handle_inbound(chat, "Siap, kirim minggu depan")
-    assert H.confirmation_status(po_id) == "PENDING" and "nomor referensi" in H.messages("OUT", chat)[-1].text
+    assert H.confirmation_status(po_id) == "PENDING" and "reference number" in H.messages("OUT", chat)[-1].text
     svc.handle_inbound(chat, "No SO-9")
     assert H.confirmation_status(po_id) == "CONFIRMED" and H.revisions(po_id)[-1].snapshot["supplier_reference"] == "SO-9"
 

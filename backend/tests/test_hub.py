@@ -77,16 +77,18 @@ def test_status_and_policies_with_agent_limits(client, seeded):
     assert {s["key"] for s in pol["scenarios"]} >= {"PRICE_QUOTE", "DELIVERY_CONFIRM", "ESCALATION"}
     assert "DOC_REQUEST" not in {s["key"] for s in pol["scenarios"]}
     assert pol["thresholds"]["delivery_early_days"] == 7 and pol["thresholds"]["delivery_late_days"] == 0
-    assert pol["thresholds"]["price_increase_pct"] == 5 and "invoice_tolerance_rp" not in pol["thresholds"]
+    assert pol["thresholds"]["price_tolerance_pct"] == 10 and pol["thresholds"]["price_cancel_pct"] == 100 and "invoice_tolerance_rp" not in pol["thresholds"]
     assert pol["po_agent"]["max_revision_rounds"] == 2
     pol["scenarios"][1]["outbound"] = "REVIEW"
-    pol["thresholds"].update(delivery_early_days=3, delivery_late_days=2, price_increase_pct=7.5)
+    pol["thresholds"].update(delivery_early_days=3, delivery_late_days=2, price_tolerance_pct=7.5)
     saved = client.put(f"{API}/policies", json={**pol, **WHO}).json()
     assert saved["scenarios"][1]["outbound"] == "REVIEW" and saved["thresholds"]["delivery_late_days"] == 2
     bad = {**pol, **WHO, "thresholds": {**pol["thresholds"], "escalate_after_hours": 1}}
     assert client.put(f"{API}/policies", json=bad).status_code == 422
-    bad = {**pol, **WHO, "thresholds": {**pol["thresholds"], "price_increase_pct": 150}}
+    bad = {**pol, **WHO, "thresholds": {**pol["thresholds"], "price_tolerance_pct": 150}}
     assert client.put(f"{API}/policies", json=bad).status_code == 422
+    bad = {**pol, **WHO, "thresholds": {**pol["thresholds"], "price_tolerance_pct": 20, "price_cancel_pct": 20}}
+    assert client.put(f"{API}/policies", json=bad).status_code == 422          # batas batal harus > toleransi
     bad = {**pol, **WHO, "thresholds": {**pol["thresholds"], "delivery_early_days": 1.5}}
     assert client.put(f"{API}/policies", json=bad).status_code == 422
     assert client.get(f"{API}/templates").status_code == 404                  # template pesan dihapus
@@ -130,13 +132,13 @@ def test_po_revision_listed_and_decided_from_hub(hub, seeded):
     assert r.status_code == 200, r.text
     assert H.po(po_id).items[0].qty_ordered == 40
     assert H.change_requests()[0].status.value == "CHANGE_APPROVED"
-    assert any("Rina: Setujui perubahan" in m.text for m in H.messages("MANAGER_IN"))
+    assert any("Rina: Approve change" in m.text for m in H.messages("MANAGER_IN"))
     with SessionLocal() as db:
         assert db.get(PurchaseOrder, po_id).decided_by != "Rina via Hub"     # approve_change tidak membuat PO baru
     again = client.post(f"{API}/approvals/cr-{cr.id}/choose", json={**WHO, "choice": "abort"})
     assert again.status_code == 409
     done = client.get(f"{API}/approvals/cr-{cr.id}").json()
-    assert done["status"] == "APPROVED" and done["decided_by"] == "Rina" and done["decision_note"] == "Setujui perubahan"
+    assert done["status"] == "APPROVED" and done["decided_by"] == "Rina" and done["decision_note"] == "Approve change"
 
 
 def test_resource_from_hub_uses_hub_actor(hub, seeded):
@@ -167,7 +169,7 @@ def test_price_mission_end_to_end_updates_master_price(hub, seeded):
     m = r.json()
     assert [t["state"] for t in m["targets"]] == ["SENT", "SENT"] and m["step"] == 3
     opening = H.messages("OUT", mtr)[-1]
-    assert "sebanyak 50" in opening.text and opening.agent_output["source"] == "hub_mission"
+    assert "(50 " in opening.text and opening.agent_output["source"] == "hub_mission"
     assert "Rp" not in opening.text                                          # tidak membocorkan harga kita
 
     assert svc.handle_inbound(mtr, "Bisa 41rb per buah, 4 hari")["target_state"] == "REPLIED"

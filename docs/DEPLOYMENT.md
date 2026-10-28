@@ -46,3 +46,15 @@ The Postgres volume is named `db-data-pg17`. The volume of the old Postgres 16 s
 
 - Never commit credentials. `backend/.env`, `deploy/vars.yml` and the root `.env` are git-ignored; `backend/.env.example` and `deploy/vars.example.yml` contain placeholders only.
 - An earlier version of `backend/.env.example` contained a real Supabase password and SAP AI Core client secret. They remain in the git history: **rotate both** (Supabase → Database → Reset password; SAP BTP → AI Core service key → recreate) and update `deploy/vars.yml` / `backend/.env`.
+
+## Performance on SAP BTP
+
+Every SQL statement is a network round trip from Cloud Foundry (`ap10`, Sydney) to Supabase. Measured between Sydney and a Supabase project in Seoul (`ap-northeast-2`) that is about **140 ms per statement**, so a page that runs one query per supplier gets slow fast (36 suppliers × 5 queries ≈ 25 s).
+
+What the code does about it:
+- **Fixed query count per page.** Hub status, suppliers (Telegram links), conversations, missions, approvals, purchase orders and the activity log load related rows in batches (`IN (…)`, window functions, `selectinload`), never per row. `backend/tests/test_query_budget.py` fails if a list endpoint's query count grows with the number of rows.
+- **No overlapping polls.** The frontend skips a poll while the previous request is still running; the global Hub badge polls every 30 s.
+- **Tracing off the request path.** `agent_runs` / `tool_runs` are written by a background thread (`AGENT_TRACE_ASYNC=true`, the default).
+- **Transaction pooler safe.** The chatbot checkpointer never uses server-side prepared statements (`prepare_threshold=None`).
+
+What only the cloud setup can fix: the per-statement distance. Create the Supabase project in **`ap-southeast-2` (Sydney)**, the same region as CF `ap10`. That brings a round trip down to a few ms. Supabase cannot move an existing project between regions, so this means a new project plus a dump/restore (`pg_dump` → `psql`) and a new `database_url` in `deploy/vars.yml`.

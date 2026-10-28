@@ -142,10 +142,13 @@ class Verdict:
         return self.category in ALERT
 
     def reply(self, text: str) -> str:
-        return REPLIES[self.category][language(text)]
+        return REPLIES[self.category][REPLY_LANGUAGE]       # Telegram replies are always English
 
     def as_dict(self) -> dict:
         return {"category": self.category, "rule": self.rule, "layer": self.layer}
+
+
+REPLY_LANGUAGE = "en"
 
 
 def language(text: str) -> str:
@@ -205,4 +208,4 @@ def check_outbound(db: Session, supplier_id: int, text: str) -> str | None:
 def safe_reply(db: Session, supplier_id: int, text: str, supplier_text: str = "") -> tuple[str, str | None]:
     """(teks yang boleh dikirim, alasan blokir atau None)."""
     reason = check_outbound(db, supplier_id, text)
-    return (REPLIES["unsafe_reply"][language(supplier_text or text)], reason) if reason else (text, None)
+    return (REPLIES["unsafe_reply"][REPLY_LANGUAGE], reason) if reason else (text, None)

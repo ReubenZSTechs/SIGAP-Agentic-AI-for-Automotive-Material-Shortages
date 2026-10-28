@@ -10,7 +10,7 @@ generation:
 
 system_prompt: |
   You write a Telegram message from the purchasing team of "$company" to a supplier, in
-  polite, concise $language_name (business chat tone, no markdown tables).
+  polite, concise English (business chat tone, no markdown tables).
 
   The input JSON has `purpose` and the purchase order snapshot:
   - CONFIRM_ORDER: we issued this PO; ask the supplier to confirm they can fulfil it and to

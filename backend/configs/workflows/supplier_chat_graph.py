@@ -10,6 +10,7 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.core.exceptions import AppError
+from app.core.i18n import translate
 from app.database import SessionLocal
 from app.models import PurchaseOrder, Supplier, SupplierConversation
 from app.models.enums import AutomationStatus, ConversationPurpose, ConversationStatus, MessageDirection, POStatus
@@ -17,8 +18,8 @@ from configs.tools import agent_limits as L
 from configs.tools import po_actions as A
 
 CS, P = ConversationStatus, ConversationPurpose
-FINAL_CAPTION = ("{po} final telah dikonfirmasi. Terlampir PDF PO final untuk pemeriksaan Anda; "
-                 "balas di chat ini bila ada yang tidak sesuai.")
+FINAL_CAPTION = ("{po} is now confirmed and final. The final PO is attached as a PDF for your records; "
+                 "please reply in this chat if anything is not correct.")
 FULFILLABLE = (POStatus.ISSUED, POStatus.PARTIALLY_RECEIVED)
 
 
@@ -32,6 +33,7 @@ class SupplierTurn(TypedDict, total=False):
     change_request_id: int | None
     guard: dict | None
     cancellation: dict | None
+    price_cancel: dict | None
     result: dict
 
 
@@ -58,7 +60,7 @@ def build_supplier_reply_graph(svc):
             db.commit()
         ctx["messages"] = svc.messages(cid)
         return {"context": ctx, "sends": [], "escalation": None, "change_request_id": None, "guard": None,
-                "cancellation": None}
+                "cancellation": None, "price_cancel": None}
 
     def analyze(state: SupplierTurn) -> SupplierTurn:
         ctx = state["context"]
@@ -89,14 +91,24 @@ def build_supplier_reply_graph(svc):
         if purpose != P.CANCEL_ORDER.value and decision == "cancel_requested":
             return {"cancellation": {"reason": a.get("reason") or state["text"][:200]},
                     "result": {"decision": decision}}
+        if purpose != P.CANCEL_ORDER.value and decision == "change_requested" and a.get("proposed_changes"):
+            with SessionLocal() as db:                          # price beyond the auto-cancel limit -> cancel PO
+                conv = db.get(SupplierConversation, ctx["conversation_id"])
+                po = db.get(PurchaseOrder, conv.po_id) if conv.po_id else None
+                cancellable = po is not None and po.status == POStatus.ISSUED and \
+                    not any(i.qty_received > 0 for i in po.items)          # else: manager decides (change request)
+                bad = A.unreasonable_prices(db, po, a["proposed_changes"]) if cancellable else []
+            if bad:
+                return {"price_cancel": {"prices": bad}, "result": {"decision": decision, "price_cancel": bad}}
         escalation, cr_id, result, final_rev, manager_info = None, None, {"decision": decision}, None, None
         with A.write_session() as db:
             conv = db.get(SupplierConversation, ctx["conversation_id"])
             po = db.get(PurchaseOrder, conv.po_id) if conv.po_id else None
             if po is None or po.status not in FULFILLABLE:
                 A.close_conversation(conv, CS.CLOSED, reason="po_changed")
-                reply = f"Terima kasih. {ctx['po']['po_number']} sudah tidak berlaku lagi; tim kami akan menghubungi Anda bila perlu."
-                escalation = {"situation": "po_changed", "detail": f"Status PO saat ini: {po.status.value if po else 'dihapus'}"}
+                reply = (f"Thank you. {ctx['po']['po_number']} is no longer valid; our team will contact you if "
+                         "needed.")
+                escalation = {"situation": "po_changed", "detail": f"Current PO status: {po.status.value if po else 'deleted'}"}
             elif purpose in (P.CONFIRM_ORDER.value, P.REVISION_CONFIRM.value):
                 proposed = a.get("proposed_changes") or []
                 if decision == "change_requested":                  # tanggal kirim tanpa tanggal kebutuhan = janji
@@ -123,8 +135,8 @@ def build_supplier_reply_graph(svc):
                             conv.outcome = {**conv.outcome, "confirmed_pending": True}
                             cr = A.open_date_change(db, po, check, state["text"], conv)
                             cr_id = cr.id
-                            reply = (f"Terima kasih atas konfirmasinya. Tanggal kirim {promised} untuk {po.po_number} "
-                                     "sedang kami konfirmasi ke manajer; kami akan segera mengabari.")
+                            reply = (f"Thank you for confirming. We are checking the delivery date {promised} for "
+                                     f"{po.po_number} with our manager and will get back to you shortly.")
                             result["date_change"] = check.describe()
                             audit_agent(db, "escalate_date", "change_request", cr.id,
                                         f"Tanggal kirim {po.po_number} di luar batas agent: {check.describe()}",
@@ -152,11 +164,11 @@ def build_supplier_reply_graph(svc):
                     cr = A.open_change_request(db, conv, proposed, state["text"], cfg.get("max_revision_rounds", 2))
                     if cr is not None and (cr.result or {}).get("auto"):     # harga di dalam batas: agent setuju
                         lines = "; ".join(A.describe_change(c) for c in cr.proposed_changes)
-                        reply = (f"Terima kasih. Perubahan harga {po.po_number} kami terima ({lines}). Revisi PO "
-                                 "segera kami kirim untuk Anda konfirmasi.")
-                        manager_info = (f"ℹ️ {ctx['supplier_name']} mengubah harga {po.po_number}: {lines}. Masih dalam "
-                                        f"batas kenaikan harga agent ({L.limits(db)['price_increase_pct']}%), jadi agent "
-                                        "menyetujuinya; revisi dikirim ke supplier untuk dikonfirmasi.")
+                        reply = (f"Thank you. We accept the price change for {po.po_number} ({lines}). We will send "
+                                 "the revised PO for your confirmation shortly.")
+                        manager_info = (f"ℹ️ {ctx['supplier_name']} changed the price on {po.po_number}: {lines}. It is "
+                                        f"within the agent's ±{L.limits(db)['price_tolerance_pct']:g}% price band, so the "
+                                        "agent approved it and sent the revised PO to the supplier to confirm.")
                         result["auto_price_change"] = cr.id
                         audit_agent(db, "auto_accept_price", "change_request", cr.id,
                                     f"Perubahan harga {po.po_number} disetujui agent: {lines}"[:300],
@@ -167,8 +179,8 @@ def build_supplier_reply_graph(svc):
                                     f"Permintaan {cr.kind.lower().replace('_', ' ')} {po.po_number} diteruskan ke manajer",
                                     supplier_id=po.supplier_id, po_number=po.po_number, kind=cr.kind)
                     else:
-                        reply = (f"{reply}\nMohon sebutkan perubahan yang Anda minta secara spesifik "
-                                 "(qty, harga satuan, atau tanggal kirim per item).")
+                        reply = (f"{reply}\nPlease state the exact change you need (quantity, unit price or "
+                                 "delivery date per item).")
             elif decision == "confirmed":                       # CANCEL_ORDER disetujui supplier
                 try:
                     A.close_conversation(conv, CS.CANCEL_CONFIRMED, reason=a["reason"])
@@ -178,13 +190,13 @@ def build_supplier_reply_graph(svc):
                     result["cancelled_po"] = snap["po_number"]
                 except AppError as e:
                     A.close_conversation(conv, CS.ESCALATED, reason=e.detail)
-                    escalation = {"situation": "po_changed", "detail": e.detail}
+                    escalation = {"situation": "po_changed", "detail": translate(e.detail, "en")}
             elif decision in ("declined", "change_requested"):  # supplier menolak pembatalan
                 A.record_supplier_decline(db, conv, a["reason"])
                 A.note_action(db, conv.automation_action_id, AutomationStatus.FAILED,
                               supplier_outcome=f"Supplier menolak pembatalan {po.po_number}; diteruskan ke manajer")
                 escalation = {"situation": "cancel_refused",
-                              "detail": "Mohon hubungi supplier untuk membicarakan pembatalan bila masih diperlukan."}
+                              "detail": "Please contact the supplier to discuss the cancellation if it is still needed."}
 
             open_states = (CS.AWAITING_SUPPLIER,)
             if escalation is None and cr_id is None and conv.status in open_states \
@@ -216,6 +228,12 @@ def build_supplier_reply_graph(svc):
                                          state["text"], state["analysis"], ctx["conversation_id"])
         return {"result": {**state["result"], **out, "conversation_status": "CLOSED", "delivered": True}}
 
+    def price_cancel(state: SupplierTurn) -> SupplierTurn:
+        ctx = state["context"]
+        out = svc._price_cancellation(ctx["supplier_id"], ctx["chat_id"], ctx["po"], state["price_cancel"]["prices"],
+                                      state["text"], state["analysis"], ctx["conversation_id"])
+        return {"result": {**state["result"], **out, "conversation_status": "CLOSED", "delivered": True}}
+
     def escalate(state: SupplierTurn) -> SupplierTurn:
         ctx, esc = state["context"], state["escalation"]
         msgs = ctx["messages"]
@@ -240,6 +258,8 @@ def build_supplier_reply_graph(svc):
             return "guard_block"
         if state.get("cancellation"):
             return "cancellation"
+        if state.get("price_cancel"):
+            return "price_cancel"
         if state.get("change_request_id"):
             return "present_revision"
         return "escalate" if state.get("escalation") else "deliver"
@@ -247,15 +267,16 @@ def build_supplier_reply_graph(svc):
     g = StateGraph(SupplierTurn)
     for name, fn in [("load_context", load_context), ("analyze", analyze), ("apply_decision", apply_decision),
                      ("escalate", escalate), ("present_revision", present_revision), ("guard_block", guard_block),
-                     ("cancellation", cancellation), ("deliver", deliver)]:
+                     ("cancellation", cancellation), ("price_cancel", price_cancel), ("deliver", deliver)]:
         g.add_node(name, fn)
     g.add_edge(START, "load_context")
     g.add_edge("load_context", "analyze")
     g.add_edge("analyze", "apply_decision")
     g.add_conditional_edges("apply_decision", after_apply,
-                            ["present_revision", "escalate", "guard_block", "cancellation", "deliver"])
+                            ["present_revision", "escalate", "guard_block", "cancellation", "price_cancel", "deliver"])
     g.add_edge("guard_block", "deliver")
     g.add_edge("cancellation", "deliver")
+    g.add_edge("price_cancel", "deliver")
     g.add_edge("escalate", "deliver")
     g.add_edge("present_revision", "deliver")
     g.add_edge("deliver", END)

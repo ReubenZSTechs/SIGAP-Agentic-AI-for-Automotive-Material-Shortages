@@ -19,6 +19,8 @@ async def lifespan(_: FastAPI):
     Base.metadata.create_all(engine)         # MVP: tanpa Alembic
     db_migrate.apply(engine)                 # kolom baru pada tabel lama (mis. Supabase produksi)
     yield
+    from app.chatbot import tracing
+    tracing.flush()                          # jejak agent yang masih antre ditulis sebelum berhenti
 
 
 app = FastAPI(

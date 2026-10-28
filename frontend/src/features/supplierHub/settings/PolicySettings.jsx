@@ -23,14 +23,17 @@ const LIMITS = [
     hint: 'Supplier mengirim lebih cepat dari tanggal kebutuhan (needed-by) paling awal di PO.' },
   { key: 'delivery_late_days', label: 'Tanggal kirim boleh terlambat dari tenggat hingga', unit: 'hari', max: 365, int: true,
     hint: '0 = setiap keterlambatan melewati tenggat dikonfirmasi ke manajer.' },
-  { key: 'price_increase_pct', label: 'Kenaikan harga satuan yang boleh diterima agent hingga', unit: '%', max: 100,
-    hint: 'Berlaku untuk revisi harga supplier dan supplier pengganti saat PO dibatalkan. Penurunan harga selalu diterima.' },
+  { key: 'price_tolerance_pct', label: 'Harga satuan boleh berubah (naik atau turun) hingga ±', unit: '%', max: 100,
+    hint: 'Contoh 10%: harga Rp100.000 -> Rp90.000–110.000 disetujui agent dan PO direvisi otomatis; di luar itu ke manajer. Berlaku juga untuk supplier pengganti.' },
+  { key: 'price_cancel_pct', label: 'Batalkan PO otomatis bila harga berubah lebih dari ±', unit: '%', max: 1000,
+    hint: 'Perubahan tidak masuk akal (mis. >100% atau harga 0): agent membatalkan PO tanpa persetujuan, memberi tahu manajer, lalu mencari supplier pengganti.' },
 ];
 
 function validate(p) {
   if (p.scenarios.some((s) => s.expiry_hours != null && !(s.expiry_hours >= 1 && s.expiry_hours <= 168))) return 'Batas keputusan harus 1–168 jam';
   if ([...THRESHOLDS, ...LIMITS].some((item) => !(p.thresholds[item.key] >= 0) || p.thresholds[item.key] === '')) return 'Semua ambang wajib diisi dengan angka';
-  if (LIMITS.some((l) => p.thresholds[l.key] > l.max)) return 'Batas hari maksimal 365, kenaikan harga maksimal 100%';
+  if (LIMITS.some((l) => p.thresholds[l.key] > l.max)) return 'Batas hari maksimal 365, toleransi harga maksimal 100%, batas pembatalan maksimal 1000%';
+  if (p.thresholds.price_cancel_pct <= p.thresholds.price_tolerance_pct) return 'Batas pembatalan otomatis harus lebih besar dari toleransi harga';
   if (LIMITS.some((l) => l.int && !Number.isInteger(p.thresholds[l.key]))) return 'Batas hari harus bilangan bulat';
   if (p.thresholds.escalate_after_hours <= p.thresholds.reminder_after_hours) return 'Eskalasi harus lebih lama dari pengingat';
   if (p.working_hours.days.length === 0) return 'Pilih minimal satu hari kerja';
@@ -73,7 +76,7 @@ export default function PolicySettings() {
         <p className="mb-4 text-sm text-slate-600">
           {t('Saat supplier mengubah tanggal kirim, menaikkan harga, atau membatalkan PO, agent bertindak sendiri selama masih di dalam batas ini dan memberi tahu manajer. Di luar batas, agent meminta keputusan manajer (Persetujuan & Chat Manajer).')}
         </p>
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {LIMITS.map((item) => (
             <div key={item.key} className="rounded-lg border border-slate-200 p-3">
               <label htmlFor={item.key} className="block text-sm font-medium text-slate-800">{t(item.label)}</label>

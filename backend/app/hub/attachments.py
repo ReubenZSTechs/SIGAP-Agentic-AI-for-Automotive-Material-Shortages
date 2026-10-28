@@ -58,7 +58,7 @@ def store(svc, supplier_id: int, chat_id: int | None, caption: str, files: list[
             ids.append(d.id)
         db.commit()
     if chat_id is not None:
-        svc.deliver([{"chat_id": chat_id, "text": f"Terima kasih, {names} sudah kami terima.",
+        svc.deliver([{"chat_id": chat_id, "text": f"Thank you, we have received {names}.",
                       "direction": MD.OUT, "supplier_id": supplier_id,
                       "agent_output": {"source": "hub_template", "kind": "document_ack"}}])
     return {"handled": True, "documents": ids}

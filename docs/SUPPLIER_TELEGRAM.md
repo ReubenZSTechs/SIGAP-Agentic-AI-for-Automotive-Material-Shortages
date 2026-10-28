@@ -9,7 +9,7 @@ A background agent talks to suppliers on **Telegram** about purchase orders. It 
 | The supplier asks to **revise** a PO (qty, price, delivery date), during a chat or in a new chat later | sends the manager the options **abort / approve change / re-source** (Telegram buttons **and** the Hub) | manager approves → PO updated, a new PO version is saved, and the supplier gets **only the changes** to confirm; re-source → new PO to another supplier |
 | No response, unclear answers, a refusal | sends reminders, then escalates to the manager with the full context | — |
 
-Everything the bot sends to suppliers and to the manager is mirrored in the frontend **Hub Supplier** (`/supplier-hub`): supplier threads under *Percakapan*, the manager chat under *Chat Manajer*, and revision decisions under *Persetujuan*. A decision taken in Telegram shows up in the Hub, and a decision taken in the Hub removes the stale buttons in Telegram (section 9).
+Everything the bot sends to suppliers and to the manager (and the PO PDF) is **always in English**; suppliers may write in Indonesian and the agents understand it. It is mirrored in the frontend **Hub Supplier** (`/supplier-hub`): supplier threads under *Percakapan*, the manager chat under *Chat Manajer*, and revision decisions under *Persetujuan*. A decision taken in Telegram shows up in the Hub, and a decision taken in the Hub removes the stale buttons in Telegram (section 9).
 
 ---
 
@@ -215,22 +215,26 @@ The triage agent may not claim to have recorded anything. Every confirmation tex
 
 ## 6a. Agent decision limits: dates, prices, cancellations
 
-The manager sets three limits in *Hub Supplier → Pengaturan → Aturan otonomi → Batas keputusan otomatis agent* (`hub_settings.policies.thresholds`, read by `configs/tools/agent_limits.py`):
+The manager sets four limits in *Hub Supplier → Pengaturan → Aturan otonomi → Batas keputusan otomatis agent* (`hub_settings.policies.thresholds`, read by `configs/tools/agent_limits.py`):
 
 | Limit | Default | Meaning |
 |:--|--:|:--|
 | `delivery_early_days` | 7 | a new delivery date may be up to N days **before** the deadline |
 | `delivery_late_days` | 0 | … and up to N days **after** the deadline |
-| `price_increase_pct` | 5 | a unit price may rise by up to N % (decreases are always fine) |
+| `price_tolerance_pct` | 10 | a unit price may move by up to ±N % in **either** direction (10 % on Rp100,000 → Rp90,000–110,000 is accepted by the agent) |
+| `price_cancel_pct` | 100 | a price change beyond ±N %, or a price ≤ 0, makes no sense: the agent **cancels the PO without the manager** and re-sources (must be larger than the tolerance) |
+
+Settings saved with the old key `price_increase_pct` are read as `price_tolerance_pct`.
 
 The **deadline** of a PO is the earliest needed-by date of its open lines (no needed-by date → any date is accepted).
 
 | Supplier request | Inside the limits (agent decides) | Outside (POChangeRequest for the manager) |
 |:--|:--|:--|
 | New delivery date (`DATE_CHANGE`) | promised date updated + new FINAL PO version (`revise_promised_date`) + PDF; manager informed | `accept_date` · `reject_date` · `resource` (other supplier that arrives in time) · `abort` |
-| Price increase (`PRICE_CHANGE`) | revision approved by the agent (`cr.result.auto`), REVISION_CONFIRM sent; manager informed | `approve_change` (accept new price) · `negotiate` (manager's counter price per line → sent as a revision) · `resource` (cheaper supplier) · `abort` |
+| Price change (`PRICE_CHANGE`), inside ±tolerance | revision approved by the agent (`cr.result.auto`), REVISION_CONFIRM sent; manager informed | `approve_change` (accept new price) · `negotiate` (manager's counter price per line → sent as a revision) · `resource` (cheaper supplier) · `abort` |
+| Price change beyond ±cancel limit or ≤ 0 (`auto_cancel_price`) | PO cancelled at once (only an ISSUED PO without goods receipts; otherwise it is a normal `PRICE_CHANGE`), the supplier is told, then re-sourced exactly like a supplier cancellation | — |
 | qty change (`REVISION`) | — always the manager | `abort` · `approve_change` · `resource` |
-| Cancellation (`CANCELLATION`) | PO cancelled automatically; replacement via `pick_replacement` (on time = today + lead time ≤ deadline + late days, cheapest first). On time **and** price within the limit → new PO issued + PO mission, manager informed | PO already cancelled; `resource` (replacement anyway, with the lateness / price warnings) · `continue_project` (keep the MPS schedules, planning marked stale) · `cancel_project` (cancel the PLANNED schedules that use the material, selectable in the Hub card) |
+| Cancellation (`CANCELLATION`) | PO cancelled automatically; replacement via `pick_replacement` (on time = today + lead time ≤ deadline + late days, cheapest first). On time **and** the replacement price within ±tolerance of the cancelled price (cheaper counts too) → new PO issued + PO mission, manager informed | PO already cancelled; `resource` (replacement anyway, with the lateness / price warnings) · `continue_project` (keep the MPS schedules, planning marked stale) · `cancel_project` (cancel the PLANNED schedules that use the material, selectable in the Hub card) |
 
 A cancellation of a PO that already has goods receipts is not executed automatically: the supplier is told the team will follow up and the manager gets an escalation (`supplier_cancel_partial`).
 
@@ -252,7 +256,7 @@ Every PO conversation is tracked as a mission in *Hub Supplier → Misi* (`app/h
 2. **LLM second layer**: triage intent `data_request` and `guard_flag` on the reply and mission agents go through the same refusal.
 3. **Output check** (`check_outbound`): an LLM reply that names another supplier, a PO of another supplier, or a stock figure is replaced with a neutral reply.
 
-Refusals are fixed texts per category (Indonesian or English, by the supplier's language). Every block is logged (`supplier_messages.agent_output.guardrail`, activity `guardrail_block`); attack-like categories also alert the manager, at most once per supplier per hour.
+Refusals are fixed English texts per category (suppliers may still write Indonesian; detection covers both). Every block is logged (`supplier_messages.agent_output.guardrail`, activity `guardrail_block`); attack-like categories also alert the manager, at most once per supplier per hour.
 
 ## Agents
 

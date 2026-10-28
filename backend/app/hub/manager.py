@@ -103,7 +103,7 @@ def press_button(svc, data: str, actor: str) -> dict:
                                agent_output={"source": "hub", "author": actor, "button": data}))
         C.audit(db, actor, "cancel_choice", "change_request", cr_id)
         db.commit()
-    svc.mirror_to_manager(f"💬 {actor} via Hub: Tidak, batalkan pilihan untuk revisi #{cr_id}.")
+    svc.mirror_to_manager(f"💬 {actor} via Hub: No, cancel the choice for request #{cr_id}.")
     return svc.manager_graph.invoke({"kind": "button", "data": data, "actor": f"{actor} via Hub"})
 
 

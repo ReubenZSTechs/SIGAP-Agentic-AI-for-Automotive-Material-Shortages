@@ -40,12 +40,12 @@ export default function MissionList({ missions, onOpen, emptyText }) {
                 </span>
               </span>
               <span>
-                <span className="mb-1 block text-xs text-slate-600"><b className="tabular-nums text-slate-900">{m.replied}</b> dari {m.total} membalas</span>
+                <span className="mb-1 block text-xs text-slate-600"><b className="tabular-nums text-slate-900">{m.replied}</b> {t('dari {total} membalas', { total: m.total })}</span>
                 <Progress value={m.replied} total={m.total} />
               </span>
               <span className="text-xs text-slate-500 sm:text-right">
-                <span className="block">Tenggat {dayTime(m.deadline)}</span>
-                {active && <span className={`inline-flex items-center gap-1 ${soon ? 'font-semibold text-amber-700' : ''}`}><Icon name="clock" className="h-3 w-3" />Sisa {timeLeft(m.deadline)}</span>}
+                <span className="block">{t('Tenggat {when}', { when: dayTime(m.deadline) })}</span>
+                {active && <span className={`inline-flex items-center gap-1 ${soon ? 'font-semibold text-amber-700' : ''}`}><Icon name="clock" className="h-3 w-3" />{t('Sisa {time}', { time: timeLeft(m.deadline) })}</span>}
               </span>
             </button>
           </li>

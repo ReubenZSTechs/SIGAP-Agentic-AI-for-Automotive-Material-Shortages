@@ -42,7 +42,7 @@ export default function DecisionModal({ open, mode, item, detail, onClose, onSub
         {detail && <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{detail}</p>}
         <FormField label={t('Nama approver')}><Input value={name} onChange={(e) => setName(e.target.value)} /></FormField>
         {c.note && <FormField label={t(c.label)}><Textarea value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} /></FormField>}
-        {err && <p role="alert" className="text-xs font-medium text-red-600">{err}</p>}
+        {err && <p role="alert" className="text-xs font-medium text-red-600">{t(err)}</p>}
       </div>
     </Modal>
   );

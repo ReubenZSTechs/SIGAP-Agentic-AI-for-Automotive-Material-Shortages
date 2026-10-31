@@ -2,17 +2,17 @@
 from tests.test_flow_e2e import API, _schedule_two_days
 
 
-def test_cors_preflight_allows_vite_origin(client):
+def test_cors_preflight_allows_any_origin(client):
+    # CORS_ORIGINS="*" (default): the frontend can be served from any host (Vite, SAP BTP route, ...)
     r = client.options(f"{API}/materials", headers={
         "Origin": "http://localhost:5173",
         "Access-Control-Request-Method": "POST",
         "Access-Control-Request-Headers": "content-type"})
     assert r.status_code == 200
-    assert r.headers["access-control-allow-origin"] == "http://localhost:5173"
-    r = client.get(f"{API}/materials", headers={"Origin": "http://localhost:5173"})
-    assert r.headers["access-control-allow-origin"] == "http://localhost:5173"
-    r = client.get(f"{API}/materials", headers={"Origin": "http://evil.example"})
-    assert "access-control-allow-origin" not in r.headers
+    assert r.headers["access-control-allow-origin"] == "*"
+    for origin in ("http://localhost:5173", "https://mrp-frontend-suppliers.cfapps.ap10.hana.ondemand.com"):
+        r = client.get(f"{API}/materials", headers={"Origin": origin})
+        assert r.headers["access-control-allow-origin"] == "*"
 
 
 def test_bom_tree_nodes_carry_bom_item_id(client, seeded):

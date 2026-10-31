@@ -28,7 +28,7 @@ function QtyInput({ line, minQty, locked, onCommit }) {
                className={`w-24 rounded border px-2 py-1 text-right ${err ? 'border-red-400' : 'border-slate-300'}`} />
         <span>{line.uom}</span>
       </div>
-      {err && <span className="mt-1 text-xs text-red-600">{err}</span>}
+      {err && <span className="mt-1 text-xs text-red-600">{t(err)}</span>}
     </div>
   );
 }
@@ -57,7 +57,7 @@ export default function SourcingCard({ item, locked, onSelect, onClear }) {
 
       {options.length === 0 ? (
         <p className="px-4 py-3 text-sm text-red-600">
-          Belum ada supplier untuk material ini. Tambahkan di <Link className="underline" to="/materials">{t('Master Material')}</Link>.
+          {t('Belum ada supplier untuk material ini. Tambahkan di')} <Link className="underline" to="/materials">{t('Master Material')}</Link>.
         </p>
       ) : (
         <table className="w-full text-sm">

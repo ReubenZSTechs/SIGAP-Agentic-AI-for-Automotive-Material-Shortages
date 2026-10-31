@@ -58,7 +58,7 @@ export default function HubManagerChat() {
           <Icon name="send" className="h-4 w-4 text-slate-500" />
           <span className="font-semibold text-slate-900">{t('Chat manajer')}</span>
           <span className="text-slate-500">· {data.mode === 'sandbox' ? 'sandbox' : t('tersinkron dengan Telegram')}</span>
-          {data.pending > 0 && <span className="ml-auto text-xs font-medium text-amber-700">{data.pending} revisi menunggu keputusan</span>}
+          {data.pending > 0 && <span className="ml-auto text-xs font-medium text-amber-700">{t('{n} revisi menunggu keputusan', { n: data.pending })}</span>}
         </div>
         <div ref={scroller} className="h-[calc(100dvh-24rem)] min-h-[22rem] overflow-y-auto bg-slate-50/70 px-3 py-3 sm:px-5" aria-live="polite" aria-label={t('Isi chat manajer')}>
           {data.messages.length === 0 && <p className="py-10 text-center text-sm text-slate-500">{t('Belum ada pesan untuk manajer.')}</p>}

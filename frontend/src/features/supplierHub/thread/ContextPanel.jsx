@@ -52,8 +52,8 @@ export default function ContextPanel({ thread }) {
         <Block title={t('Terkait')}>
           {c.missions.map((m) => (
             <Link key={m.id} to={`/supplier-hub/missions/${m.id}`} className={linkCls}>
-              <span className="flex items-center justify-between gap-2"><span className="font-medium text-slate-800">Misi #{m.number}</span><StateBadge meta={MISSION_STATUS[m.status]} /></span>
-              <span className="block text-xs text-slate-500">{t(m.title)} · {m.replied}/{m.total} balas</span>
+              <span className="flex items-center justify-between gap-2"><span className="font-medium text-slate-800">{t('Misi #{n}', { n: m.number })}</span><StateBadge meta={MISSION_STATUS[m.status]} /></span>
+              <span className="block text-xs text-slate-500">{t(m.title)} · {t('{replied}/{total} balas', { replied: m.replied, total: m.total })}</span>
             </Link>
           ))}
         </Block>
@@ -63,7 +63,7 @@ export default function ContextPanel({ thread }) {
         {c.approvals.length === 0 ? <p className="text-sm text-slate-500">{t('Belum ada ajuan.')}</p> : c.approvals.map((a) => (
           <Link key={a.id} to={`/supplier-hub?item=${a.id}`} className={linkCls}>
             <span className="block font-medium text-slate-800">{t(a.title)}</span>
-            <span className="flex items-center gap-2 text-xs text-slate-500">{typeMeta(a.type).label} · <StateBadge meta={DECISION[a.status] ?? DECISION.PENDING} /></span>
+            <span className="flex items-center gap-2 text-xs text-slate-500">{t(typeMeta(a.type).label)} · <StateBadge meta={DECISION[a.status] ?? DECISION.PENDING} /></span>
           </Link>
         ))}
       </Block>

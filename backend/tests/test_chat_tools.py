@@ -91,11 +91,33 @@ def test_resolve_materials_is_fuzzy(db, seeded):
 def test_every_curated_tool_runs_on_seed(tool, client, seeded):
     _schedule_two_days(client, seeded["BIKE"])
     args = {"get_material_suppliers": {"material": "Ban Luar Karet"}, "find_materials": {"query": "ban"},
-            "get_bom": {"product": "Sepeda Gunung", "qty": 50},
+            "get_bom": {"product": "Sepeda Gunung", "qty": 50}, "get_product_suppliers": {"product": "Sepeda Gunung"},
             "estimate_production_profit": {"product": "Sepeda Gunung", "qty": 10}}.get(tool, {})
     ev = run_curated(tool, args, "", "E1", 200)
     assert ev["error"] is None
     assert ev["row_count"] > 0 or tool in ("get_open_purchase_orders", "get_po_supplier_status")   # seed tanpa PO
+
+
+def test_product_suppliers_tool_lists_each_supplier_once_without_materials(seeded):
+    # The bike needs 15 purchased materials from 10 suppliers: more than one plan's 4 tool calls could fetch
+    # material by material (that path ended in a retrieval error).
+    ev = run_curated("get_product_suppliers", {"product": "Sepeda Gunung"}, "", "E1", 200)
+    assert ev["error"] is None and ev["row_count"] == 10 == ev["meta"]["supplier_count"]
+    assert ev["meta"]["purchased_material_count"] == 15 and ev["meta"]["materials_without_supplier"] == []
+    assert "material_name" not in ev["columns"] and "supplier_name" in ev["columns"]
+    names = [r["supplier_name"] for r in ev["rows"]]
+    assert names == sorted(names) and len(set(names)) == len(names)
+    asn = next(r for r in ev["rows"] if r["supplier_code"] == "SUP-ASN")
+    assert asn["material_count"] == 6
+
+
+def test_product_suppliers_tool_with_materials_and_unknown_product(seeded):
+    ev = run_curated("get_product_suppliers", {"product": "FG-BIKE-01", "include_materials": True}, "", "E1", 200)
+    assert ev["row_count"] == 19 and "material_name" in ev["columns"]
+    assert {r["supplier_code"] for r in ev["rows"] if r["material_name"] == "Pedal Sepeda"} == {"SUP-MTR", "SUP-MKM",
+                                                                                                "SUP-IND"}
+    missing = run_curated("get_product_suppliers", {"product": "Motor Listrik"}, "", "E2", 200)
+    assert missing["row_count"] == 0 and missing["meta"]["available_products"] == ["Sepeda Gunung"]
 
 
 def test_bom_tool_scales_quantities(seeded):

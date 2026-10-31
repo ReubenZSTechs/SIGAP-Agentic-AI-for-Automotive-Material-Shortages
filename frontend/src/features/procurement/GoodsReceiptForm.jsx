@@ -52,7 +52,7 @@ export default function GoodsReceiptForm({ po, onDone }) {
               <td className="text-right">{formatQty(remaining(i))}</td>
               <td className="text-right">
                 <input type="number" min={0} max={remaining(i)} step="any" value={qty[i.id]}
-                       aria-label={`Terima ${i.name}`} disabled={remaining(i) === 0}
+                       aria-label={t('Terima {name}', { name: i.name })} disabled={remaining(i) === 0}
                        onChange={(e) => setQty({ ...qty, [i.id]: e.target.value })}
                        className="w-24 rounded border border-slate-300 px-2 py-1 text-right disabled:bg-slate-100" />
               </td>

@@ -33,7 +33,7 @@ function RefLink({ row }) {
   const cls = 'font-medium text-primary-700 hover:underline';
   if (row.ref_type === 'change_request') return <Link className={cls} to={`/supplier-hub?item=cr-${row.ref_id}`}>{t('Ajuan')} cr-{row.ref_id}</Link>;
   if (row.ref_type === 'proposal') return <Link className={cls} to={`/supplier-hub?item=hp-${row.ref_id}`}>{t('Ajuan')} hp-{row.ref_id}</Link>;
-  if (row.ref_type === 'mission') return <Link className={cls} to={`/supplier-hub/missions/${row.ref_id}`}>Misi #{row.ref_id}</Link>;
+  if (row.ref_type === 'mission') return <Link className={cls} to={`/supplier-hub/missions/${row.ref_id}`}>{t('Misi #{n}', { n: row.ref_id })}</Link>;
   if (row.po_id) return <Link className={`${cls} font-mono`} to={`/purchase-orders/${row.po_id}`}>{row.po_number}</Link>;
   if (row.po_number) return <span className="font-mono">{row.po_number}</span>;
   if (row.ref_type === 'supplier' && row.supplier?.id) return <Link className={cls} to={`/supplier-hub/conversations/${row.supplier.id}`}>{t('Thread')}</Link>;

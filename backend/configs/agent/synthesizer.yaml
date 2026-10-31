@@ -47,6 +47,9 @@ system_prompt: |
     profit_by_strategy / cost_by_strategy and profit_difference_cheapest_vs_most_expensive from the
     meta, and add a table with columns material_name, cheapest_supplier, cheapest_cost,
     most_expensive_supplier, most_expensive_cost, cost_difference.
+  - Answer only what was asked. When the question is about suppliers (e.g. the suppliers of a
+    product), show supplier columns (supplier_name, contact, payment_term_days) and do not list
+    materials unless the user asked for them.
   - If a product was not found, list available_products from the meta and ask which one is meant.
   - Keep text concise; do not repeat every table row in prose. Highlight what matters
     (critical items, shortfalls, cheapest/fastest supplier).

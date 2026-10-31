@@ -26,7 +26,7 @@ export default function DiffTable({ rows, selectable = false, readOnly = false, 
                 {selectable && (
                   <td className="px-3 py-2.5">
                     <input type="checkbox" checked={on} disabled={readOnly} onChange={() => onToggle(r.key)}
-                      aria-label={`Setujui ${t(r.label)}`} className="h-4 w-4 rounded border-slate-300 accent-primary-600" />
+                      aria-label={t('Setujui {item}', { item: t(r.label) })} className="h-4 w-4 rounded border-slate-300 accent-primary-600" />
                   </td>
                 )}
                 <td className="px-3 py-2.5 font-medium text-slate-800">{t(r.label)}</td>

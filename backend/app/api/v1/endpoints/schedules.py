@@ -2,7 +2,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_db
 from app.models import Schedule
@@ -25,7 +25,9 @@ def create_schedule(body: ScheduleCreate, db: Session = Depends(get_db)):
 def list_schedules(date_from: date | None = None, date_to: date | None = None,
                    status: ScheduleStatus | None = None, production_line_id: int | None = None,
                    db: Session = Depends(get_db)):
-    stmt = select(Schedule).order_by(Schedule.production_date, Schedule.id)
+    # produk & line dimuat sekaligus (bukan 2 query per jadwal; tiap round trip ~140-200 ms di SAP BTP)
+    stmt = select(Schedule).order_by(Schedule.production_date, Schedule.id).options(
+        selectinload(Schedule.product), selectinload(Schedule.line))
     if date_from is not None:
         stmt = stmt.where(Schedule.production_date >= date_from)
     if date_to is not None:

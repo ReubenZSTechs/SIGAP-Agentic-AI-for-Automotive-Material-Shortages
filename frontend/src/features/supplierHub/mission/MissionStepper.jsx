@@ -29,7 +29,7 @@ export default function MissionStepper({ mission: m }) {
                   state === 'done' ? 'bg-primary-600 text-white' : state === 'current' ? 'bg-white text-primary-700 ring-2 ring-primary-600' : 'bg-slate-100 text-slate-500'}`}>
                   {state === 'done' ? <Icon name="check" className="h-3 w-3" /> : n}
                 </span>
-                <span className={`hidden truncate text-sm font-semibold sm:inline ${state === 'todo' ? 'text-slate-500' : 'text-slate-900'}`}>{label}</span>
+                <span className={`hidden truncate text-sm font-semibold sm:inline ${state === 'todo' ? 'text-slate-500' : 'text-slate-900'}`}>{t(label)}</span>
               </span>
               <span className={`mt-0.5 hidden truncate pl-6.5 text-xs sm:block ${state === 'current' ? 'font-medium text-primary-700' : 'text-slate-500'}`}>{sub(i)}</span>
             </li>

@@ -64,6 +64,7 @@ os.environ["DATABASE_URL"] = TEST_URL
 os.environ["APP_ENV"] = "development"         # pagar Supabase selalu aktif saat test
 os.environ["AGENT_TRACE_ASYNC"] = "false"    # jejak agent ditulis langsung, deterministik
 os.environ["TELEGRAM_MODE"] = "sandbox"      # tes tidak pernah memakai bot Telegram sungguhan
+os.environ["CORS_ORIGINS"] = "*"             # default produksi (semua origin), lepas dari backend/.env developer
 os.environ.pop("TELEGRAM_MANAGER_CHAT_ID", None)
 
 from fastapi.testclient import TestClient          # noqa: E402

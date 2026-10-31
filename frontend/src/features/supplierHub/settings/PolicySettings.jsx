@@ -68,7 +68,7 @@ export default function PolicySettings() {
         <AutonomyMatrix rows={draft.scenarios} onChange={(scenarios) => setDraft((d) => ({ ...d, scenarios }))} />
         <p className="flex items-start gap-2 border-t border-slate-200 px-4 py-3 text-xs text-slate-500">
           <Icon name="info" className="mt-0.5 h-3.5 w-3.5" />
-          Otomatis: pesan pembuka langsung dikirim dan tercatat di riwayat. Draf dulu: pesan muncul di thread berlabel belum dikirim. Kartu yang melewati batas keputusan menjadi Kedaluwarsa.
+          {t('Otomatis: pesan pembuka langsung dikirim dan tercatat di riwayat. Draf dulu: pesan muncul di thread berlabel belum dikirim. Kartu yang melewati batas keputusan menjadi Kedaluwarsa.')}
         </p>
       </Card>
 
@@ -122,7 +122,7 @@ export default function PolicySettings() {
                 const on = draft.working_hours.days.includes(n);
                 return (
                   <button key={n} type="button" aria-pressed={on} onClick={() => toggleDay(n)}
-                    className={`h-9 w-11 rounded-lg text-sm font-medium ring-1 ring-inset transition-colors ${on ? 'bg-primary-600 text-white ring-primary-600' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}>{label}</button>
+                    className={`h-9 w-11 rounded-lg text-sm font-medium ring-1 ring-inset transition-colors ${on ? 'bg-primary-600 text-white ring-primary-600' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}>{t(label)}</button>
                 );
               })}
             </div>
@@ -140,11 +140,11 @@ export default function PolicySettings() {
       </div>
 
       <Card title={t('Agent PO (konfirmasi & revisi PO)')}>
-        <p className="text-sm text-slate-600">{t('Batas keputusan otomatis di atas berlaku untuk agent PO. Pengingat dan putaran revisi memakai pengaturan di')} <code className="font-mono text-xs">{t('backend/configs/models.yaml')}</code>; nilainya ditampilkan di sini sebagai referensi.</p>
+        <p className="text-sm text-slate-600">{t('Batas keputusan otomatis di atas berlaku untuk agent PO. Pengingat dan putaran revisi memakai pengaturan di')} <code className="font-mono text-xs">{t('backend/configs/models.yaml')}</code>{t('; nilainya ditampilkan di sini sebagai referensi.')}</p>
         <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
           {[['reminder_after_hours', 'Pengingat', 'jam'], ['escalate_after_hours', 'Eskalasi', 'jam'], ['change_request_ttl_hours', 'Batas opsi revisi', 'jam'],
             ['max_turns', 'Balasan tak jelas maks.', 'kali'], ['max_revision_rounds', 'Putaran revisi maks.', 'kali']].map(([k, label, unit]) => (
-            <div key={k}><dt className="text-xs text-slate-500">{label}</dt><dd className="font-semibold tabular-nums text-slate-900">{data.po_agent?.[k] ?? '—'} {unit}</dd></div>
+            <div key={k}><dt className="text-xs text-slate-500">{t(label)}</dt><dd className="font-semibold tabular-nums text-slate-900">{data.po_agent?.[k] ?? '—'} {t(unit)}</dd></div>
           ))}
         </dl>
       </Card>

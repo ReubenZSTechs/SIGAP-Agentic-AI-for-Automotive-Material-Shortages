@@ -95,7 +95,7 @@ export default function MessageBubble({ m, supplier, busy, onOpenApproval, onOpe
         </div>
 
         <div className={`mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-500 ${mine ? 'justify-end' : ''}`}>
-          {draft ? <span className="font-semibold text-primary-700">Draf, belum dikirim{m.review_reason ? ` · ${m.review_reason}` : ''}</span> : <Status m={m} />}
+          {draft ? <span className="font-semibold text-primary-700">{t('Draf, belum dikirim')}{m.review_reason ? ` · ${t(m.review_reason)}` : ''}</span> : <Status m={m} />}
           <span className="tabular-nums">{clock(m.at)}</span>
         </div>
         {m.status === 'FAILED' && (

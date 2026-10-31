@@ -70,7 +70,7 @@ export default function MaterialFormModal({ open, material, onClose, onSaved }) 
         </p>
         {isEdit && (
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={form.is_active} onChange={set('is_active')} /> Aktif
+            <input type="checkbox" checked={form.is_active} onChange={set('is_active')} /> {t('Aktif')}
           </label>
         )}
       </div>

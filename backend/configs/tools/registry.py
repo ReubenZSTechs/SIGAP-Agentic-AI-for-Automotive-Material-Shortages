@@ -45,6 +45,13 @@ TOOL_CATALOG: dict[str, tuple[str, str]] = {
                                    "profit, margin, production cost and supplier-choice comparisons."),
     "get_bom": ("product, qty?", "Multi-level bill of materials of a finished product or sub-part, with "
                                  "required quantity of every component for qty units."),
+    "get_product_suppliers": ("product, include_materials?",
+                              "Suppliers of a finished product or sub-part: every active supplier of the purchased "
+                              "materials in its multi-level BOM, ONE row per supplier (supplier_name, contact, "
+                              "payment_term_days, material_count), however many materials/suppliers. Use for "
+                              "'who supplies product X' / 'suppliers of product X'. include_materials=true only "
+                              "when the user also asks WHICH materials each supplier provides (then one row per "
+                              "supplier and material with unit_price, lead_time_days)."),
     "get_production_schedules": ("date_from?, date_to?, schedule_status?",
                                  "Production batches (MPS): product, line, date, target qty, status."),
     "get_po_supplier_status": ("query?, supplier?",

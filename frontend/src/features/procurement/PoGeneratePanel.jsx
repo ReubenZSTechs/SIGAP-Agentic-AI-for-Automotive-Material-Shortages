@@ -91,7 +91,7 @@ export default function PoGeneratePanel() {
         </Card>
       ))}
       <div className="flex flex-wrap items-center justify-end gap-4">
-        {missing > 0 && <span className="text-sm text-amber-700">{missing} material belum dipilih supplier</span>}
+        {missing > 0 && <span className="text-sm text-amber-700">{t('{n} material belum dipilih supplier', { n: missing })}</span>}
         <span className="text-sm">{t('Total')} <b>{formatRupiah(grandTotal)}</b></span>
         {run.is_stale && <span className="text-sm text-amber-700">{t('Run basi — jalankan ulang planning di halaman MPS')}</span>}
         <Button loading={generating} disabled={missing > 0 || run.is_stale} onClick={confirm}><Icon name="check" /> Konfirmasi & Buat PO</Button>

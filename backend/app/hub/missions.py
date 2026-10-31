@@ -24,6 +24,7 @@ from app.hub import common as C
 from app.hub import po_missions
 from app.services import master_service
 from configs.tools import po_actions as A
+from configs.tools.po_sourcing import active_links_bulk
 
 log = logging.getLogger(__name__)
 MD, TS, SC = MessageDirection, TargetState, MissionScenario
@@ -80,19 +81,35 @@ def _supplier_brief(db: Session, sup: Supplier, ctx: "_ViewContext | None" = Non
             "sandbox": sandbox, "is_active": sup.is_active}
 
 
+class _SupplierContext:
+    """Telegram link + Hub control rows of many suppliers, for `_supplier_brief` without per-supplier queries."""
+
+    def __init__(self, db: Session, supplier_ids):
+        from app.models import HubSupplierControl
+        sids = list(set(supplier_ids))
+        self.links = {r.supplier_id: r for r in db.scalars(select(SupplierTelegramLink).where(
+            SupplierTelegramLink.supplier_id.in_(sids)))} if sids else {}
+        self.controls = {r.supplier_id: r for r in db.scalars(select(HubSupplierControl).where(
+            HubSupplierControl.supplier_id.in_(sids)))} if sids else {}
+
+
 def mission_options(db: Session) -> dict:
-    materials = []
-    for m in db.scalars(select(Material).where(Material.category == ItemCategory.PURCHASED, Material.is_active)
-                        .order_by(Material.sku)):
-        links = [l for l in master_service.list_links(db, m.id) if l["is_active"]]
-        materials.append({"id": m.id, "sku": m.sku, "name": m.name, "uom": m.uom,
-                          "suppliers": [{"supplier_id": l["supplier_id"], "unit_price": l["unit_price"],
-                                         "lead_time_days": l["lead_time_days"]} for l in links]})
+    """Wizard data in a fixed number of queries (was ~3 per material + 2 per supplier: >60 s on SAP BTP)."""
+    mats = list(db.scalars(select(Material).where(Material.category == ItemCategory.PURCHASED, Material.is_active)
+                           .order_by(Material.sku)))
+    links = master_service.list_links_bulk(db, [m.id for m in mats])
+    materials = [{"id": m.id, "sku": m.sku, "name": m.name, "uom": m.uom,
+                  "suppliers": [{"supplier_id": l["supplier_id"], "unit_price": l["unit_price"],
+                                 "lead_time_days": l["lead_time_days"]} for l in links.get(m.id, []) if l["is_active"]]}
+                 for m in mats]
     pos = [{"id": p.id, "po_number": p.po_number, "status": p.status.value, "supplier_name": p.supplier.name,
             "total_amount": p.total_amount}
            for p in db.scalars(select(PurchaseOrder).where(PurchaseOrder.status != POStatus.CANCELLED)
+                               .options(selectinload(PurchaseOrder.supplier))
                                .order_by(PurchaseOrder.id.desc()).limit(60))]
-    suppliers = [_supplier_brief(db, s) for s in db.scalars(select(Supplier).order_by(Supplier.name))]
+    sups = list(db.scalars(select(Supplier).order_by(Supplier.name)))
+    ctx = _SupplierContext(db, [s.id for s in sups])
+    suppliers = [_supplier_brief(db, s, ctx) for s in sups]
     db.commit()
     return {"materials": materials, "suppliers": suppliers, "pos": pos}
 
@@ -104,13 +121,16 @@ def po_options(db: Session, po_id: int) -> dict:
         raise AppError(404, "Purchase Order tidak ditemukan")
     snap = A.po_snapshot(po)
     alts: dict[int, set] = {}
+    links = active_links_bulk(db, [it.material_id for it in po.items])
     for it in po.items:
-        for l in A.active_links(db, it.material_id):
+        for l in links.get(it.material_id, []):
             if l["supplier_id"] != po.supplier_id:
                 alts.setdefault(l["supplier_id"], set()).add(it.sku)
-    suppliers = [{**_supplier_brief(db, po.supplier), "role": "PO", "skus": [i.sku for i in po.items]}]
+    sups = {s.id: s for s in db.scalars(select(Supplier).where(Supplier.id.in_([po.supplier_id, *alts])))}
+    ctx = _SupplierContext(db, sups)
+    suppliers = [{**_supplier_brief(db, po.supplier, ctx), "role": "PO", "skus": [i.sku for i in po.items]}]
     for sid, skus in sorted(alts.items()):
-        suppliers.append({**_supplier_brief(db, db.get(Supplier, sid)), "role": "ALT", "skus": sorted(skus)})
+        suppliers.append({**_supplier_brief(db, sups[sid], ctx), "role": "ALT", "skus": sorted(skus)})
     open_conv = C.has_open_po_conversation(db, po.supplier_id)
     this_po = db.scalar(select(SupplierConversation.id).where(SupplierConversation.po_id == po.id,
                                                               SupplierConversation.status.in_(A.OPEN_CONVERSATION)))

@@ -26,7 +26,7 @@ The Postgres volume is named `db-data-pg17`. The volume of the old Postgres 16 s
 1. **Credentials.** Copy `deploy/vars.example.yml` to `deploy/vars.yml` (git-ignored) and fill in:
    - `database_url`: Supabase → *Connect* → **Transaction pooler** (`…pooler.supabase.com:6543/postgres`). The app only uses transaction-scoped settings (`SET TRANSACTION READ ONLY`, `SET LOCAL statement_timeout`) and psycopg2 does not use server-side prepared statements, so the transaction pooler is safe.
    - `backend_host` / `frontend_host`: fixed route hostnames on `cfapps.ap10.hana.ondemand.com` (defaults `mrp-backend-suppliers` / `mrp-frontend-suppliers`; change them if another team already uses them).
-   - `cors_origins`: exactly the frontend URL, `https://<frontend_host>.cfapps.ap10.hana.ondemand.com` (no trailing slash; comma-separate several). The backend only accepts browser requests from these origins.
+   - `cors_origins`: `"*"` (default) accepts browser requests from any origin; the API uses no cookies, so this is safe. To restrict it, list the frontend URL(s), e.g. `https://<frontend_host>.cfapps.ap10.hana.ondemand.com` (no trailing slash; comma-separate several).
    - `aicore_*`: SAP AI Core keybroker values.
    - `telegram_*`: bot token, bot username, manager chat id, `telegram_mode: telegram`.
 2. **Push.**

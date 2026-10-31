@@ -525,7 +525,7 @@ export default function AgenticMrpPage() {
 
       {(inv.error || pos.error) && (
         <p className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {(inv.error ?? pos.error).message} — pastikan backend berjalan di http://localhost:8000.
+          {(inv.error ?? pos.error).message} — {t('pastikan backend berjalan dan dapat dijangkau.')}
         </p>
       )}
 

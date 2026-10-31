@@ -76,7 +76,7 @@ export default function ThreadView({ id }) {
         <div className="min-w-0">
           <h2 className="truncate text-base font-bold text-slate-900">{thread.supplier.name}</h2>
           <p className="flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
-            <span className="inline-flex items-center gap-1"><Icon name="send" className="h-3 w-3" /> Telegram {TELEGRAM[thread.supplier.telegram].label.toLowerCase()}{thread.supplier.sandbox ? ' (sandbox)' : ''}</span>
+            <span className="inline-flex items-center gap-1"><Icon name="send" className="h-3 w-3" /> {t('Telegram {state}', { state: t(TELEGRAM[thread.supplier.telegram].label).toLowerCase() })}{thread.supplier.sandbox ? ' (sandbox)' : ''}</span>
             {thread.context.pos.slice(0, 2).map((p) => <span key={p.id} className="font-mono">{p.po_number}</span>)}
           </p>
         </div>

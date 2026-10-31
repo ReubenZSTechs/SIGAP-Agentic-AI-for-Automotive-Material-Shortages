@@ -23,7 +23,7 @@ uvicorn app.main:app --reload
 - `APP_ENV=development` (default) menolak `DATABASE_URL` Supabase; Supabase hanya untuk `APP_ENV=production` (lihat `docs/DEPLOYMENT.md`).
 - Chatbot memakai `DATABASE_URL` yang sama (transaksi `READ ONLY` + `statement_timeout` 10 detik); tidak ada database/role chat terpisah.
 - `--demo-schedules` menambah jadwal Senin 30 + Selasa 20 unit pada Senin terdekat dari hari ini. Tanpa flag ini, buat jadwal sendiri via `POST /api/v1/schedules` atau lewat UI.
-- **CORS**: origin yang diizinkan diatur lewat `CORS_ORIGINS` di `.env` (default `http://localhost:5173,http://127.0.0.1:5173` = Vite dev server). Frontend juga bisa memakai proxy Vite sehingga CORS tidak terpakai saat development.
+- **CORS**: origin yang diizinkan diatur lewat `CORS_ORIGINS` di `.env` (default `*` = semua origin; API tanpa cookie). Frontend juga bisa memakai proxy Vite sehingga CORS tidak terpakai saat development.
 - `python -m scripts.seed --reset` menghapus & mengisi ulang database.
 
 ## Demo cepat (Phase 2 → 5)

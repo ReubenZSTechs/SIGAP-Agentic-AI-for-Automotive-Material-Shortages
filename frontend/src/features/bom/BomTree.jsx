@@ -37,9 +37,9 @@ export default function BomTree({ productId }) {
     <Card padded={false}>
       <div className="p-3">
         <p className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
-          <CategoryBadge category="FINISHED" /> produk jual
-          <CategoryBadge category="SUB_PART" /> dirakit internal (bisa punya komponen)
-          <CategoryBadge category="PURCHASED" /> dibeli dari supplier
+          <CategoryBadge category="FINISHED" /> {t('produk jual')}
+          <CategoryBadge category="SUB_PART" /> {t('dirakit internal (bisa punya komponen)')}
+          <CategoryBadge category="PURCHASED" /> {t('dibeli dari supplier')}
           <span className="inline-flex flex-wrap items-center gap-1">{t('Arahkan kursor ke baris untuk')} <Icon name="plus" className="h-3.5 w-3.5" /> {t('tambah komponen,')} <Icon name="edit" className="h-3.5 w-3.5" /> {t('ubah,')} <Icon name="trash" className="h-3.5 w-3.5" /> {t('hapus.')}</span>
         </p>
         {tree.children.length === 0 && (

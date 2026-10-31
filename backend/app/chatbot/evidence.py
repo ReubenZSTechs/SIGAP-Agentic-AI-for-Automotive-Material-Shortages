@@ -86,7 +86,7 @@ _LABELS = {
            "is_active": "Aktif", "specification": "Spesifikasi", "supplier_count": "Jumlah Supplier",
            "cheapest_supplier": "Supplier Termurah", "cheapest_cost": "Biaya Termurah",
            "most_expensive_supplier": "Supplier Termahal", "most_expensive_cost": "Biaya Termahal",
-           "cost_difference": "Selisih Biaya"},
+           "cost_difference": "Selisih Biaya", "material_count": "Jumlah Material", "contact": "Kontak"},
     "en": {"sku": "SKU", "name": "Name", "material_name": "Material", "supplier_name": "Supplier",
            "required_qty": "Required Qty", "order_qty": "Order Qty", "unit_price": "Unit Price", "cost": "Cost",
            "total_cost": "Total Cost", "difference_vs_cheapest": "Diff. vs Cheapest", "arrival_date": "Arrival",
@@ -95,7 +95,15 @@ _LABELS = {
            "most_expensive_cost": "Most Expensive Cost", "cost_difference": "Cost Difference",
            "payment_term_days": "Payment Term (days)", "is_preferred": "Preferred", "uom": "Unit",
            "on_hand": "On Hand", "available": "Available", "safety_stock": "Safety Stock", "status": "Status",
-           "parent_name": "Parent", "selling_price": "Selling Price", "bom_item_count": "BOM Items"},
+           "parent_name": "Parent", "selling_price": "Selling Price", "bom_item_count": "BOM Items",
+           "material_sku": "SKU", "category": "Category", "allocated": "Allocated", "on_order": "On Order",
+           "shortfall": "Shortfall", "supplier_code": "Supplier Code", "moq": "MOQ", "is_cheapest": "Cheapest",
+           "is_fastest": "Fastest", "po_number": "PO No.", "po_status": "PO Status", "qty_ordered": "Qty Ordered",
+           "qty_received": "Qty Received", "qty_remaining": "Remaining", "line_total": "Line Total",
+           "product_name": "Product", "production_date": "Production Date", "target_qty": "Target",
+           "batch_code": "Batch", "gross_requirement": "Gross Requirement", "qty_per_parent": "Qty per Parent",
+           "level": "Level", "is_active": "Active", "specification": "Specification",
+           "supplier_count": "Supplier Count", "material_count": "Materials", "contact": "Contact"},
 }
 
 

@@ -21,7 +21,7 @@ export default function FilePreview({ url, kind, name, tall = false }) {
   }
   return (
     <a href={url} download={name} className="flex items-center justify-center gap-2 rounded-lg bg-slate-50 py-12 text-sm font-medium text-primary-700 hover:underline">
-      <Icon name="download" /> Unduh {name}
+      <Icon name="download" /> {t('Unduh {name}', { name })}
     </a>
   );
 }

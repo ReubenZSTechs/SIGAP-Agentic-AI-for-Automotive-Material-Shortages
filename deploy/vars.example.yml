@@ -2,9 +2,9 @@
 # # Route tetap SAP BTP (ganti bila hostname sudah dipakai tim lain; samakan cors_origins)
 backend_host: "mrp-backend-suppliers"
 frontend_host: "mrp-frontend-suppliers"
-database_url: Supabase -> Connect -> Transaction pooler (port 6543). Tabel dibuat/dimigrasi otomatis saat startup.
+# Supabase -> Connect -> Transaction pooler (port 6543). Tabel dibuat/dimigrasi otomatis saat startup.
 database_url: "postgresql://postgres.<project-ref>:<PASSWORD>@aws-0-<region>.pooler.supabase.com:6543/postgres"
-cors_origins: "https://mrp-frontend-suppliers.cfapps.ap10.hana.ondemand.com"   # = https://<frontend_host>.cfapps.ap10.hana.ondemand.com
+cors_origins: "*"   # semua origin; atau persempit ke https://<frontend_host>.cfapps.ap10.hana.ondemand.com
 aicore_auth_url: "https://<subdomain>.authentication.<region>.hana.ondemand.com/oauth/token"
 aicore_client_id: "<clientid>"
 aicore_client_secret: "<clientsecret>"

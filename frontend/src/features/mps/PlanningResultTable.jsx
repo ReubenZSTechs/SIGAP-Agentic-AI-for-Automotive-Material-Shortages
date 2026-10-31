@@ -24,7 +24,7 @@ export default function PlanningResultTable({ lines, onNext }) {
     { key: 'available', header: 'Tersedia', align: 'right', render: (l) => (
       <div>
         <span className={l.available < 0 ? 'font-medium text-red-600' : ''}>{formatQty(l.available)}</span>
-        {l.on_order > 0 && <div className="text-xs text-slate-500">+{formatQty(l.on_order)} dipesan</div>}
+        {l.on_order > 0 && <div className="text-xs text-slate-500">{t('+{qty} dipesan', { qty: formatQty(l.on_order) })}</div>}
       </div>
     ) },
     { key: 'safety_stock', header: 'Safety', align: 'right', render: (l) => formatQty(l.safety_stock) },

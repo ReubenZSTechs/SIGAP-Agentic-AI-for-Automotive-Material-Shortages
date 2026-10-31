@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_db
 from app.core.exceptions import AppError
-from app.models import PlanningLine, PlanningRun
+from app.models import Material, MaterialSupplier, PlanningLine, PlanningRun
 from app.models.enums import SourcingStrategy, StockStatus
 from app.schemas.planning import (AutoSelectRequest, AutoSelectResult, PlanningLineOut,
                                   PlanningRunCreate, PlanningRunDetail, PlanningRunSummary,
@@ -15,8 +15,8 @@ from app.services import planning_service, po_service, sourcing_service
 router = APIRouter()
 
 
-def _get_run(db: Session, run_id: int) -> PlanningRun:
-    run = db.get(PlanningRun, run_id)
+def _get_run(db: Session, run_id: int, *options) -> PlanningRun:
+    run = db.get(PlanningRun, run_id, options=options)
     if run is None:
         raise AppError(404, "Planning run tidak ditemukan")
     return run
@@ -55,7 +55,8 @@ def get_run(run_id: int, db: Session = Depends(get_db)):
 
 @router.get("/runs/{run_id}/lines", response_model=list[PlanningLineOut])
 def get_run_lines(run_id: int, status: StockStatus | None = None, db: Session = Depends(get_db)):
-    run = _get_run(db, run_id)
+    run = _get_run(db, run_id, selectinload(PlanningRun.lines).selectinload(PlanningLine.material),
+                   selectinload(PlanningRun.lines).selectinload(PlanningLine.selected_supplier))
     lines = [l for l in run.lines if status is None or l.status == status]
     return planning_service.sorted_lines(lines)
 
@@ -65,7 +66,8 @@ def get_run_lines(run_id: int, status: StockStatus | None = None, db: Session = 
 def get_sourcing(run_id: int, strategy: SourcingStrategy = SourcingStrategy.CHEAPEST,
                  respect_moq: bool = True, max_lead_days: int | None = Query(None, ge=0),
                  db: Session = Depends(get_db)):
-    run = _get_run(db, run_id)
+    run = _get_run(db, run_id, selectinload(PlanningRun.lines).selectinload(PlanningLine.material)
+                   .selectinload(Material.supplier_links).selectinload(MaterialSupplier.supplier))
     out = []
     for line in planning_service.sorted_lines([l for l in run.lines if l.shortfall > 0]):
         options = sourcing_service.recommend(db, line, strategy, respect_moq, max_lead_days)

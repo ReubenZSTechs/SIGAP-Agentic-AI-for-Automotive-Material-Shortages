@@ -35,8 +35,8 @@ export default function ThreadList({ threads, onOpen, emptyText }) {
                 </span>
                 {(thread.drafts > 0 || thread.failed > 0 || thread.refs.length > 0) && (
                   <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                    {thread.drafts > 0 && <span className="inline-flex items-center gap-1 font-medium text-primary-700"><Icon name="edit" className="h-3 w-3" />{thread.drafts} draf perlu review</span>}
-                    {thread.failed > 0 && <span className="inline-flex items-center gap-1 font-medium text-red-700"><Icon name="alert" className="h-3 w-3" />{thread.failed} gagal terkirim</span>}
+                    {thread.drafts > 0 && <span className="inline-flex items-center gap-1 font-medium text-primary-700"><Icon name="edit" className="h-3 w-3" />{t('{n} draf perlu review', { n: thread.drafts })}</span>}
+                    {thread.failed > 0 && <span className="inline-flex items-center gap-1 font-medium text-red-700"><Icon name="alert" className="h-3 w-3" />{t('{n} gagal terkirim', { n: thread.failed })}</span>}
                     {thread.refs.map((r) => <span key={r} className="font-mono text-slate-500">{r}</span>)}
                   </span>
                 )}

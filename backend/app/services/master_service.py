@@ -1,6 +1,6 @@
 """CRUD Master Material, Supplier, dan relasi Material-Supplier (Phase 0)."""
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import AppError
 from app.models import (BOMItem, Inventory, Material, MaterialSupplier, PlanningLine,
@@ -217,15 +217,29 @@ def _link_out(l: MaterialSupplier, min_price: int | None, min_lead: int | None) 
     }
 
 
-def list_links(db: Session, material_id: int) -> list[dict]:
-    get_material(db, material_id)
-    links = list(db.scalars(select(MaterialSupplier)
-                            .where(MaterialSupplier.material_id == material_id)
-                            .order_by(MaterialSupplier.unit_price)))
+def _links_out(links: list[MaterialSupplier]) -> list[dict]:
     active = [l for l in links if l.is_active]
     min_price = min((l.unit_price for l in active), default=None)
     min_lead = min((l.lead_time_days for l in active), default=None)
     return [_link_out(l, min_price, min_lead) for l in links]
+
+
+def list_links(db: Session, material_id: int) -> list[dict]:
+    get_material(db, material_id)
+    return list_links_bulk(db, [material_id]).get(material_id, [])
+
+
+def list_links_bulk(db: Session, material_ids) -> dict[int, list[dict]]:
+    """`list_links` for many materials in 2 queries (links + their suppliers), not 3 per material."""
+    ids = list(set(material_ids))
+    if not ids:
+        return {}
+    grouped: dict[int, list[MaterialSupplier]] = {}
+    for l in db.scalars(select(MaterialSupplier).where(MaterialSupplier.material_id.in_(ids))
+                        .options(selectinload(MaterialSupplier.supplier))
+                        .order_by(MaterialSupplier.unit_price, MaterialSupplier.id)):
+        grouped.setdefault(l.material_id, []).append(l)
+    return {mid: _links_out(links) for mid, links in grouped.items()}
 
 
 def _find_link(db: Session, material_id: int, supplier_id: int) -> MaterialSupplier:

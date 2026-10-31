@@ -20,7 +20,7 @@ export default function AutonomyMatrix({ rows, onChange }) {
         <tbody className="divide-y divide-slate-100">
           {rows.map((r) => (
             <tr key={r.key}>
-              <td className="px-4 py-3 font-medium text-slate-800">{t(r.label)}{r.note && <span className="block text-xs font-normal text-slate-500">{r.note}</span>}</td>
+              <td className="px-4 py-3 font-medium text-slate-800">{t(r.label)}{r.note && <span className="block text-xs font-normal text-slate-500">{t(r.note)}</span>}</td>
               <td className="px-4 py-3">
                 {r.locked ? (
                   <span className="inline-flex items-center gap-1.5 text-xs text-slate-600" title={r.note ?? undefined}>
@@ -33,7 +33,7 @@ export default function AutonomyMatrix({ rows, onChange }) {
               </td>
               <td className="px-4 py-3">
                 {r.data ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs text-slate-700"><Icon name="shield" className="h-4 w-4 text-primary-600" /> {r.data}: selalu persetujuan</span>
+                  <span className="inline-flex items-center gap-1.5 text-xs text-slate-700"><Icon name="shield" className="h-4 w-4 text-primary-600" /> {t('{data}: selalu persetujuan', { data: t(r.data) })}</span>
                 ) : <span className="text-xs text-slate-400">{t('Tidak mengubah data')}</span>}
               </td>
               <td className="px-4 py-3">

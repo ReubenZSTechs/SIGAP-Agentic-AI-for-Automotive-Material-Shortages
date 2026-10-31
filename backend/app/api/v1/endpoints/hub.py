@@ -4,12 +4,12 @@ Dibangun di atas agent Telegram supplier (`/supplier-chat`) tanpa mengubah endpo
 """
 import threading
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Response
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import TranslatedRoute, get_db
 from app.config import settings
 from app.core.exceptions import AppError
 from app.database import SessionLocal
@@ -24,7 +24,7 @@ from app.supplier_chat.service import SupplierChatService, deep_link, ensure_lin
 from app.supplier_chat.transport import sandbox_chat_id
 from configs.tools import po_actions as A
 
-router = APIRouter()
+router = APIRouter(route_class=TranslatedRoute)       # teks tampilan Hub ikut bahasa pengguna
 
 
 def svc() -> SupplierChatService:
@@ -229,10 +229,12 @@ def list_missions(db: Session = Depends(get_db)):
 
 
 @router.post("/missions", status_code=201)
-def create_mission(body: MissionIn, db: Session = Depends(get_db), service: SupplierChatService = Depends(svc)):
+def create_mission(body: MissionIn, background: BackgroundTasks, db: Session = Depends(get_db),
+                   service: SupplierChatService = Depends(svc)):
     m = missions.create_mission(db, body.model_dump())
-    missions.tick(service)                       # kirim langsung bila supplier siap (tanpa menunggu worker)
-    db.expire_all()
+    # Kirim setelah respons terkirim (tanpa menunggu worker): pengiriman Telegram ke banyak supplier tidak boleh
+    # menahan respons, karena di SAP BTP itu bisa melewati timeout frontend ("tidak dapat terhubung ke server").
+    background.add_task(_safe_tick, service)
     return jsonable_encoder(missions.get_mission(db, m.id))
 
 

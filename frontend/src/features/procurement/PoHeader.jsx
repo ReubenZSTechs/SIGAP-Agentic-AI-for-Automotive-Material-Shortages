@@ -56,7 +56,7 @@ export default function PoHeader({ po, onChanged }) {
           <p className="mt-1 text-sm text-slate-600">
             {po.supplier_name} · {t('Termin')} {po.payment_term_days > 0 ? `Net ${po.payment_term_days}` : t('tunai')} · {t('Tgl PO')} {formatDate(po.po_date)}
           </p>
-          {po.notes && <p className="mt-1 text-sm text-slate-500">Catatan: {po.notes}</p>}
+          {po.notes && <p className="mt-1 text-sm text-slate-500">{t('Catatan:')} {po.notes}</p>}
         </div>
         <div className="text-right">
           <div className="text-xs text-slate-500">{t('Total')}</div>
@@ -66,7 +66,7 @@ export default function PoHeader({ po, onChanged }) {
 
       {manual && (po.submitted_at || po.decided_at) && (
         <ul className="mt-3 space-y-0.5 border-t border-slate-100 pt-3 text-sm text-slate-600">
-          {po.submitted_at && <li>Dikirim untuk approval: {formatDateTime(po.submitted_at)}</li>}
+          {po.submitted_at && <li>{t('Dikirim untuk approval:')} {formatDateTime(po.submitted_at)}</li>}
           {po.decided_at && po.status !== 'REJECTED' && <li>{t('Disetujui oleh')} <b>{po.decided_by}</b> · {formatDateTime(po.decided_at)}</li>}
         </ul>
       )}

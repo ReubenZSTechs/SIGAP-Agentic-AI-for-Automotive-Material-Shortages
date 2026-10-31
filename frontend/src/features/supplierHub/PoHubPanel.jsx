@@ -85,7 +85,7 @@ export default function PoHubPanel({ po, onChanged }) {
                 {data.missions.map((m) => (
                   <li key={m.id}>
                     <Link to={`/supplier-hub/missions/${m.id}`} className="flex flex-wrap items-center gap-2 font-medium text-primary-700 hover:underline">
-                      Misi #{m.number} · {t(SCENARIO[m.scenario]?.label)} <StateBadge meta={MISSION_STATUS[m.status]} />
+                      {t('Misi #{n}', { n: m.number })} · {t(SCENARIO[m.scenario]?.label)} <StateBadge meta={MISSION_STATUS[m.status]} />
                     </Link>
                     {m.summary && <p className="text-xs text-slate-500">{m.summary}</p>}
                   </li>

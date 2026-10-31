@@ -11,7 +11,7 @@ from app.models import (Material, MaterialSupplier, PlanningRun, POChangeRequest
 from app.models.enums import ItemCategory, ScheduleStatus, StockStatus
 from app.services import bom_service, inventory_service, master_service, planning_service
 from configs.tools import costing
-from configs.tools.po_sourcing import active_links
+from configs.tools.po_sourcing import active_links, active_links_bulk
 
 ToolOutput = tuple[list[dict], dict]
 
@@ -238,6 +238,46 @@ def get_bom(db: Session, product: str | None = None, qty: float | None = None, *
     return rows, meta
 
 
+def get_product_suppliers(db: Session, product: str | None = None, include_materials: bool | None = None,
+                          **_) -> ToolOutput:
+    """Suppliers of a product: every active supplier of the purchased materials in its multi-level BOM.
+
+    Default: one row per distinct supplier (no material rows), so products with many materials and suppliers
+    fit in one call. With `include_materials`: one row per supplier and material (price, lead time, preferred).
+    """
+    matches = resolve_materials(db, product or "", (ItemCategory.FINISHED, ItemCategory.SUB_PART))
+    meta = _match_meta(product or "", matches)
+    if not matches:
+        meta["available_products"] = [m.name for m in db.scalars(
+            select(Material).where(Material.category == ItemCategory.FINISHED, Material.is_active))]
+        return [], meta
+    root = matches[0]
+    if len(matches) > 1:
+        meta["note"] = f"'{product}' matched {len(matches)} items; showing {root.sku}."
+    needs = bom_service.explode(db, root.id, 1)
+    names = dict(db.execute(select(Material.id, Material.name).where(Material.id.in_(list(needs)))).all()) if needs else {}
+    links = active_links_bulk(db, needs)
+    suppliers = {s.id: s for s in db.scalars(select(Supplier).where(
+        Supplier.id.in_({l["supplier_id"] for rows in links.values() for l in rows})))} if links else {}
+    if include_materials:
+        rows = [{"supplier_name": l["supplier_name"], "supplier_code": l["supplier_code"],
+                 "material_name": names[mid], "unit_price": l["unit_price"], "lead_time_days": l["lead_time_days"],
+                 "moq": l["moq"], "is_preferred": l["is_preferred"]}
+                for mid, rows_ in links.items() for l in rows_]
+        rows.sort(key=lambda r: (r["supplier_name"], r["material_name"]))
+    else:
+        count: dict[int, int] = {}
+        for rows_ in links.values():
+            for l in rows_:
+                count[l["supplier_id"]] = count.get(l["supplier_id"], 0) + 1
+        rows = sorted(({"supplier_name": s.name, "supplier_code": s.code, "contact": s.contact,
+                        "payment_term_days": s.payment_term_days, "material_count": count[sid]}
+                       for sid, s in suppliers.items()), key=lambda r: r["supplier_name"])
+    meta.update(product=f"{root.sku} {root.name}", supplier_count=len(suppliers), purchased_material_count=len(needs),
+                materials_without_supplier=sorted(names[mid] for mid in needs if mid not in links))
+    return rows, meta
+
+
 def get_production_schedules(db: Session, date_from: str | None = None, date_to: str | None = None,
                              schedule_status: str | None = None, **_) -> ToolOutput:
     """Production schedule batches, optionally filtered by date range and status."""
@@ -322,6 +362,7 @@ CURATED = {
     "get_open_purchase_orders": get_open_purchase_orders,
     "get_latest_planning_run": get_latest_planning_run,
     "get_bom": get_bom,
+    "get_product_suppliers": get_product_suppliers,
     "list_products": list_products,
     "estimate_production_profit": estimate_production_profit,
     "get_production_schedules": get_production_schedules,

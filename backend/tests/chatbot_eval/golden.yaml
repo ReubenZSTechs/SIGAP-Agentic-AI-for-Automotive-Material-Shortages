@@ -18,6 +18,8 @@
   expect_contains: [Rangka Sepeda, Roda Set]
 - question: Jadwal produksi apa saja yang masih PLANNED?
   expect_contains: [Sepeda Gunung]
+- question: Who are the suppliers of Sepeda Gunung?
+  expect_contains: [PT Aksesori Sepeda Nusantara, CV Cat Prima, PT Busa & Vinyl Sejahtera, PT Karet Nusantara]
 - question: Supplier mana yang memasok material paling banyak?
   expect_contains: [PT Aksesori Sepeda Nusantara]
 - question: What is the payment term of CV Cipta Logam?

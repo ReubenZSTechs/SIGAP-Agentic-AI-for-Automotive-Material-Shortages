@@ -9,4 +9,4 @@ backend/.env
 .env
 # Kredensial deploy SAP BTP (Supabase, AI Core, Telegram)
 deploy/vars.yml
-.DS_Store
+.DS_Store.claude/

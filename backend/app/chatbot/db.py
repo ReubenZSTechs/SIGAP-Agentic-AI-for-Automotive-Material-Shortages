@@ -22,12 +22,14 @@ DEFAULT_STATEMENT_TIMEOUT_MS = 10_000
 @lru_cache(maxsize=1)
 def chat_engine() -> Engine:
     """Engine on `DATABASE_URL` whose transactions are READ ONLY and time-limited. Built once."""
-    engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True, pool_recycle=1800, pool_size=3, max_overflow=2)
+    from app.database import KEEPALIVE
+    engine = create_engine(settings.DATABASE_URL, pool_recycle=1800, pool_size=3, max_overflow=2,
+                           connect_args=KEEPALIVE)
 
     @event.listens_for(engine, "begin")
     def _read_only(conn):
-        conn.exec_driver_sql("SET TRANSACTION READ ONLY")
-        conn.exec_driver_sql(f"SET LOCAL statement_timeout = {DEFAULT_STATEMENT_TIMEOUT_MS}")
+        # satu round trip untuk kedua SET (setiap round trip ~140-200 ms dari SAP BTP)
+        conn.exec_driver_sql(f"SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = {DEFAULT_STATEMENT_TIMEOUT_MS}")
 
     return engine
 

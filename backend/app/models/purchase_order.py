@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, ForeignKey, Enum, String, DateTime, CheckConstraint, func
+from sqlalchemy import BigInteger, Date, ForeignKey, Enum, String, DateTime, CheckConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -16,7 +16,7 @@ class PurchaseOrder(Base):
     planning_run_id: Mapped[int | None] = mapped_column(ForeignKey("planning_runs.id"))
     status: Mapped[POStatus] = mapped_column(
         Enum(POStatus, native_enum=False, length=20), default=POStatus.DRAFT)
-    total_amount: Mapped[int] = mapped_column(default=0)
+    total_amount: Mapped[int] = mapped_column(BigInteger, default=0)   # Rp (BIGINT: total > 2,1 miliar)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     source: Mapped[POSource] = mapped_column(
         Enum(POSource, native_enum=False, length=10), default=POSource.PLANNING)
@@ -52,8 +52,8 @@ class POItem(Base):
     material_id: Mapped[int] = mapped_column(ForeignKey("materials.id"))
     planning_line_id: Mapped[int | None] = mapped_column(ForeignKey("planning_lines.id"))
     qty_ordered: Mapped[float]
-    unit_price: Mapped[int]
-    line_total: Mapped[int]
+    unit_price: Mapped[int] = mapped_column(BigInteger)
+    line_total: Mapped[int] = mapped_column(BigInteger)
     qty_received: Mapped[float] = mapped_column(default=0.0)
     needed_by_date: Mapped[date | None] = mapped_column(Date, default=None)
 

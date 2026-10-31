@@ -6,6 +6,7 @@ produksi) ditambahkan di sini dengan `ADD COLUMN IF NOT EXISTS`, jadi aman dijal
 import logging
 
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.engine import Engine
 
 log = logging.getLogger(__name__)
@@ -29,8 +30,47 @@ STATEMENTS = [
 ]
 
 
+# Kolom Rupiah yang dulu INTEGER (maks. 2.147.483.647): pesanan > 2,1 miliar gagal dengan DataError.
+MONEY_COLUMNS = [("material_suppliers", "unit_price"), ("materials", "selling_price"), ("planning_lines", "unit_price"),
+                 ("po_items", "unit_price"), ("po_items", "line_total"), ("purchase_orders", "total_amount")]
+_LOCK_KEY = 7_301_001          # pg_advisory_xact_lock: dua instance tidak pernah memigrasi bersamaan
+
+
+def widen_money_columns(conn) -> list[str]:
+    """INTEGER -> BIGINT for the Rupiah columns that are still INTEGER (no-op once done). Returns what changed.
+
+    Lossless (every value is kept). View chatbot memakai kolom ini dan Postgres menolak ALTER TYPE pada kolom yang
+    dipakai view, jadi view di-drop lalu dibuat ulang dengan definisi yang sama, dalam transaksi yang sama.
+    """
+    narrow = [(t, c) for t, c in MONEY_COLUMNS if conn.execute(text(
+        "SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() "
+        "AND table_name = :t AND column_name = :c"), {"t": t, "c": c}).scalar() == "integer"]
+    if not narrow:
+        return []
+    from app.chatbot import semantic_views
+    savepoint = conn.begin_nested()
+    try:
+        # ALTER menunggu transaksi lain (mis. worker) yang sedang membaca tabel: jangan menggantung startup;
+        # bila terkunci, coba lagi pada startup berikutnya.
+        conn.execute(text("SET LOCAL lock_timeout = '5s'"))
+        semantic_views.drop_views(conn)
+        for table, column in narrow:
+            conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE BIGINT"))
+        semantic_views.create_views(conn)
+        savepoint.commit()
+    except OperationalError:
+        savepoint.rollback()
+        log.warning("db_migrate: tables busy, BIGINT widening postponed to the next startup")
+        return []
+    return [f"{t}.{c}" for t, c in narrow]
+
+
 def apply(engine: Engine) -> None:
     with engine.begin() as conn:
+        conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _LOCK_KEY})
         for sql in STATEMENTS:
             conn.execute(text(sql))
+        widened = widen_money_columns(conn)
     log.info("db_migrate: %d statements applied", len(STATEMENTS))
+    if widened:
+        log.warning("db_migrate: widened to BIGINT: %s", ", ".join(widened))

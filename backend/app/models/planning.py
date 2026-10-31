@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, ForeignKey, UniqueConstraint, Enum, Date, DateTime, func
+from sqlalchemy import BigInteger, Boolean, ForeignKey, UniqueConstraint, Enum, Date, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -45,7 +45,7 @@ class PlanningLine(Base):
     # --- pilihan user (Smart Sourcing) ---
     selected_supplier_id: Mapped[int | None] = mapped_column(ForeignKey("suppliers.id"))
     order_qty: Mapped[float | None]
-    unit_price: Mapped[int | None]                            # snapshot harga saat dipilih
+    unit_price: Mapped[int | None] = mapped_column(BigInteger)   # snapshot harga saat dipilih
     lead_time_days: Mapped[int | None]
 
     run: Mapped["PlanningRun"] = relationship(back_populates="lines")

@@ -143,7 +143,7 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
     <Modal open={open} onClose={onClose} size="lg" title={t('Misi baru')}
       footer={(
         <>
-          {err && <p role="alert" className="mr-auto self-center text-xs font-medium text-red-600">{err}</p>}
+          {err && <p role="alert" className="mr-auto self-center text-xs font-medium text-red-600">{t(err)}</p>}
           <Button variant="secondary" onClick={step === 0 ? onClose : () => { setErr(''); setStep(step - 1); }}>{step === 0 ? 'Batal' : 'Kembali'}</Button>
           {step < 2 ? <Button onClick={next}>{t('Lanjut')}</Button> : <Button loading={busy} onClick={submit}><Icon name="send" /> {t('Mulai misi')}</Button>}
         </>
@@ -200,7 +200,7 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
                 <>
                   {sc.needsItem && (
                     <fieldset>
-                      <legend className="mb-1.5 text-sm font-medium text-slate-700">Item dari {poData.po.po_number}</legend>
+                      <legend className="mb-1.5 text-sm font-medium text-slate-700">{t('Item dari {po}', { po: poData.po.po_number })}</legend>
                       <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
                         {poData.items.map((it) => (
                           <li key={it.material_id}>
@@ -242,7 +242,7 @@ export default function MissionWizard({ open, poId, onClose, onCreated }) {
                     ))}
                   </ul>
                 )}
-                <p className="mt-1.5 text-xs text-slate-500">Supplier yang belum terhubung Telegram tetap bisa dipilih; pesannya menunggu sampai supplier terhubung.</p>
+                <p className="mt-1.5 text-xs text-slate-500">{t('Supplier yang belum terhubung Telegram tetap bisa dipilih; pesannya menunggu sampai supplier terhubung.')}</p>
               </fieldset>
             </div>
           )}

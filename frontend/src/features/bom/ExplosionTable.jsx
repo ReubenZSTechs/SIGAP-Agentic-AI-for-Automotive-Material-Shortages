@@ -38,7 +38,7 @@ export default function ExplosionTable({ productId }) {
         <Button loading={loading} onClick={compute}>{t('Hitung')}</Button>
       </div>
       {error && (
-        <p className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{error}</p>
+        <p className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{t(error)}</p>
       )}
       {rows && <DataTable columns={columns} rows={rows} rowKey="material_id" />}
     </Card>

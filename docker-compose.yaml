@@ -33,7 +33,7 @@ services:
       APP_ENV: development
       DATABASE_URL: postgresql://mrp:mrp@db:5432/mrp
       TEST_DATABASE_URL: postgresql://mrp:mrp@db:5432/mrp_test
-      CORS_ORIGINS: http://localhost:8080,http://localhost:5173
+      CORS_ORIGINS: "*"
       SEED_DEMO: "true"
     ports:
       - "8000:8000"
@@ -55,7 +55,7 @@ services:
     environment:
       APP_ENV: development
       DATABASE_URL: postgresql://mrp:mrp@db:5432/mrp
-      CORS_ORIGINS: http://localhost:8080
+      CORS_ORIGINS: "*"
     command: ["python", "-m", "app.supplier_chat.worker"]
     restart: unless-stopped
 
@@ -69,7 +69,7 @@ services:
     environment:
       APP_ENV: development
       DATABASE_URL: postgresql://mrp:mrp@db:5432/mrp
-      CORS_ORIGINS: http://localhost:8080
+      CORS_ORIGINS: "*"
       SIGAP_API_URL: http://backend:8000/api/v1
     command: ["sh", "-c", "pip install -q -r requirements-streamlit.txt && streamlit run streamlit_app/agent_hub.py --server.address 0.0.0.0 --server.port 8501 --server.headless true"]
     ports:

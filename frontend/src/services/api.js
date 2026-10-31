@@ -18,7 +18,10 @@ api.interceptors.response.use(
   (res) => res.data,
   (err) => {
     let message;
-    if (!err.response) {
+    if (err.code === 'ECONNABORTED') {
+      // Timeout axios: server terjangkau tetapi lambat. Bedakan dari jaringan/CORS agar tidak salah diagnosis.
+      message = t('Server terlalu lama merespons. Coba lagi sebentar lagi.');
+    } else if (!err.response) {
       message = t('Tidak dapat terhubung ke server');
     } else {
       const d = err.response.data?.detail;

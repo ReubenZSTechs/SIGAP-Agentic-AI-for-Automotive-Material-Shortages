@@ -34,6 +34,7 @@
               "list_products",
               "estimate_production_profit",
               "get_bom",
+              "get_product_suppliers",
               "get_production_schedules",
               "get_po_supplier_status",
               "query_database"
@@ -60,7 +61,8 @@
               "date_to",
               "schedule_status",
               "strategy",
-              "question"
+              "question",
+              "include_materials"
             ],
             "properties": {
               "category": {
@@ -173,6 +175,13 @@
                   "null"
                 ],
                 "description": "Self-contained data question for query_database."
+              },
+              "include_materials": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "get_product_suppliers only: true when the user asks which materials each supplier provides."
               }
             }
           }

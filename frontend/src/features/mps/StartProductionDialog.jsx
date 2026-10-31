@@ -39,15 +39,15 @@ export default function StartProductionDialog({ open, schedule, materials, onClo
       {shortages ? (
         <div>
           <p className="mb-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
-            <Icon name="alert" className="mt-0.5 h-4 w-4" /> Stok fisik tidak cukup — produksi belum dimulai dan tidak ada stok yang berubah.
+            <Icon name="alert" className="mt-0.5 h-4 w-4" /> {t('Stok fisik tidak cukup — produksi belum dimulai dan tidak ada stok yang berubah.')}
           </p>
           <table className="w-full text-sm">
             <tbody>
               {shortages.map((s) => (
                 <tr key={s.material_id} className="border-b border-slate-100">
                   <td className="py-1.5">{s.sku} · {s.name}</td>
-                  <td className="py-1.5 text-right">butuh {formatQty(s.required)}, fisik {formatQty(s.on_hand)},
-                    <b className="text-red-600"> kurang {formatQty(s.short_by)} {s.uom}</b></td>
+                  <td className="py-1.5 text-right">{t('butuh {need}, fisik {have},', { need: formatQty(s.required), have: formatQty(s.on_hand) })}
+                    <b className="text-red-600"> {t('kurang {qty} {uom}', { qty: formatQty(s.short_by), uom: s.uom })}</b></td>
                 </tr>
               ))}
             </tbody>
@@ -56,7 +56,7 @@ export default function StartProductionDialog({ open, schedule, materials, onClo
       ) : !materials ? <Spinner /> : (
         <div>
           <p className="mb-3 text-sm text-slate-600">
-            Material akan keluar dari stok fisik sekarang dan <b>{t('tidak dapat dibatalkan')}</b>.
+            {t('Material akan keluar dari stok fisik sekarang dan')} <b>{t('tidak dapat dibatalkan')}</b>.
           </p>
           <div className="max-h-72 overflow-y-auto">
             <table className="w-full text-sm">
@@ -76,7 +76,7 @@ export default function StartProductionDialog({ open, schedule, materials, onClo
             </table>
           </div>
           <p className="mt-3 text-xs text-slate-500">
-            <Icon name="check" className="mr-1 inline h-3.5 w-3.5 text-green-600" />{t('Stok')} <i>{t('tersedia')}</i> tidak berubah: stok fisik dan stok terkunci turun sebesar kebutuhan batch.
+            <Icon name="check" className="mr-1 inline h-3.5 w-3.5 text-green-600" />{t('Stok')} <i>{t('tersedia')}</i> {t('tidak berubah: stok fisik dan stok terkunci turun sebesar kebutuhan batch.')}
           </p>
         </div>
       )}

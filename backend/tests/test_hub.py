@@ -166,7 +166,8 @@ def test_price_mission_end_to_end_updates_master_price(hub, seeded):
             "supplier_ids": [seeded["suppliers"]["SUP-MTR"], seeded["suppliers"]["SUP-MKM"]], "deadline": deadline()}
     r = client.post(f"{API}/missions", json=body)
     assert r.status_code == 201, r.text
-    m = r.json()
+    assert [t["state"] for t in r.json()["targets"]] == ["QUEUED", "QUEUED"]   # dikirim setelah respons
+    m = client.get(f"{API}/missions/{r.json()['id']}").json()
     assert [t["state"] for t in m["targets"]] == ["SENT", "SENT"] and m["step"] == 3
     opening = H.messages("OUT", mtr)[-1]
     assert "(50 " in opening.text and opening.agent_output["source"] == "hub_mission"
@@ -289,9 +290,10 @@ def test_review_autonomy_drafts_then_admin_sends(hub, seeded):
     client, make = hub
     make({})
     chat = link(client, seeded, "SUP-MTR")
-    m = client.post(f"{API}/missions", json={**WHO, "scenario": "PRICE_QUOTE", "autonomy": "REVIEW", "deadline": deadline(),
-                                             "items": [{"material_id": seeded["materials"]["RM-PDL-01"], "qty": 5}],
-                                             "supplier_ids": [seeded["suppliers"]["SUP-MTR"]]}).json()
+    created = client.post(f"{API}/missions", json={**WHO, "scenario": "PRICE_QUOTE", "autonomy": "REVIEW", "deadline": deadline(),
+                                                   "items": [{"material_id": seeded["materials"]["RM-PDL-01"], "qty": 5}],
+                                                   "supplier_ids": [seeded["suppliers"]["SUP-MTR"]]}).json()
+    m = client.get(f"{API}/missions/{created['id']}").json()                # draf dibuat oleh tick setelah respons
     assert m["targets"][0]["state"] == "QUEUED" and m["targets"][0]["draft"] is True and m["step"] == 2
     assert H.messages("OUT", chat) == []                                    # draf belum dikirim
     thread = client.get(f"{API}/threads/{seeded['suppliers']['SUP-MTR']}").json()
@@ -444,3 +446,27 @@ def test_send_po_to_supplier_from_po_page(hub, seeded):
     assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")
     r = client.post(f"{API}/po/{po_id}/supplier-conversation", json={**WHO, "purpose": "CANCEL_ORDER"})
     assert r.status_code == 201 and H.confirmation_status(po_id) == "CANCEL_PENDING"
+
+
+# ------------------------------------------- English views -------------------------------------------
+def test_hub_views_follow_accept_language(hub, seeded):
+    client, make = hub
+    make({"MissionReplyOutput": mission_reply("answered", [quote("RM-RUB-01", 34000, 2)])})
+    link(client, seeded, "SUP-KRT")
+    body = {**WHO, "scenario": "PRICE_QUOTE", "items": [{"material_id": seeded["materials"]["RM-RUB-01"], "qty": 50}],
+            "supplier_ids": [seeded["suppliers"]["SUP-KRT"]], "deadline": deadline()}
+    m = client.post(f"{API}/missions", json=body, headers={"Accept-Language": "en"})
+    assert m.status_code == 201, m.text
+    mid, en = m.json()["id"], m.json()
+    assert en["title"].startswith("Price quote ") and en["summary"] == "Waiting for its turn to be sent to the supplier."
+    sent = client.get(f"{API}/missions/{mid}").json()                       # tanpa header: Bahasa Indonesia
+    assert sent["title"].startswith("Penawaran harga ") and sent["targets"][0]["state"] == "SENT"   # tick di latar sudah jalan
+    reply = "Harga 34.000 per buah, kirim 2 hari"
+    client.post(f"{API}/threads/{seeded['suppliers']['SUP-KRT']}/sandbox-reply", json={"text": reply})
+    thread = client.get(f"{API}/threads/{seeded['suppliers']['SUP-KRT']}", headers={"Accept-Language": "en"}).json()
+    assert reply in [x.get("text") for x in thread["messages"]]             # kata-kata supplier tidak diterjemahkan
+    assert {r["label"] for r in thread["context"]["rules"]} >= {"Mission messages", "Free-text messages"}
+    audit = client.get("/api/v1/activity", headers={"Accept-Language": "en"}).json()["items"]
+    assert any(a["summary"].startswith(f"Mission #{mid} created: Price quote") for a in audit)
+    pol = client.get(f"{API}/policies", headers={"Accept-Language": "en"}).json()
+    assert "Material-supplier price" in {s["data"] for s in pol["scenarios"]}

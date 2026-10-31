@@ -54,10 +54,9 @@ class Settings(BaseSettings):
                              "SQLite tidak didukung lagi.")
         return v
 
-    # WAJIB diisi di backend/.env: origin frontend yang diizinkan, dipisah koma, mis.
-    #   CORS_ORIGINS=http://localhost:5173,https://app.contoh.com
-    # Tidak ada default: bila kosong, aplikasi berhenti dengan pesan error.
-    CORS_ORIGINS: str
+    # Origin frontend yang diizinkan, dipisah koma. Default "*" = semua origin (API tanpa cookie/kredensial,
+    # jadi aman). Persempit bila perlu, mis. CORS_ORIGINS=http://localhost:5173,https://app.contoh.com
+    CORS_ORIGINS: str = "*"
 
     @field_validator("CORS_ORIGINS")
     @classmethod
@@ -76,7 +75,8 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [o for o in self.CORS_ORIGINS.split(",") if o]
+        origins = [o for o in self.CORS_ORIGINS.split(",") if o]
+        return ["*"] if "*" in origins else origins
 
     # Chatbot (opsional): kredensial SAP AI Core. Bila kosong, endpoint /chat mengembalikan 503.
     AICORE_AUTH_URL: str | None = None

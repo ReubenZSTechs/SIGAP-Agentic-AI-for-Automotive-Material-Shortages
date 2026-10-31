@@ -18,6 +18,17 @@ def active_links(db: Session, material_id: int) -> list[dict]:
             if l["is_active"] and l["supplier_id"] in active_suppliers]
 
 
+def active_links_bulk(db: Session, material_ids) -> dict[int, list[dict]]:
+    """`active_links` for many materials in a fixed number of queries ({material_id: rows}; no key = no link)."""
+    active_suppliers = set(db.scalars(select(Supplier.id).where(Supplier.is_active)))
+    out = {}
+    for mid, links in master_service.list_links_bulk(db, material_ids).items():
+        rows = [l for l in links if l["is_active"] and l["supplier_id"] in active_suppliers]
+        if rows:
+            out[mid] = rows
+    return out
+
+
 def pick_supplier(links: list[dict], qty: float, exclude_supplier_id: int | None = None) -> dict | None:
     """Chooses the supplier link to propose for `qty` units of one material.
 

@@ -123,11 +123,11 @@ export default function ManualPoForm({ initial, saving, onSubmit }) {
                 </tr>,
                 <tr key={`i${i}`}>
                   <td colSpan={7} className="px-3 pb-2">
-                    {l && <p className="text-xs text-slate-500">Lead time {l.lead_time_days} hari (supplier ini)</p>}
+                    {l && <p className="text-xs text-slate-500">{t('Lead time {days} hari (supplier ini)', { days: l.lead_time_days })}</p>}
                     {r.material_id && supplier && !l && (
                       <p className="flex items-center gap-1 text-xs text-amber-700"><Icon name="alert" className="h-3.5 w-3.5" /> {t('Supplier belum terdaftar untuk material ini — tetap bisa dipesan.')}</p>
                     )}
-                    {st && <p className="text-xs text-slate-500">Tersedia {formatQty(st.available)} · Dipesan {formatQty(st.on_order)} · Safety {formatQty(st.safety_stock)}</p>}
+                    {st && <p className="text-xs text-slate-500">{t('Tersedia {available} · Dipesan {onOrder} · Safety {safety}', { available: formatQty(st.available), onOrder: formatQty(st.on_order), safety: formatQty(st.safety_stock) })}</p>}
                   </td>
                 </tr>,
               ];
@@ -144,7 +144,7 @@ export default function ManualPoForm({ initial, saving, onSubmit }) {
       )}
       <div className="flex justify-end gap-2">
         <Button variant="secondary" disabled={errors.length > 0} loading={saving === 'draft'} onClick={() => onSubmit(payload(), false)}>{t('Simpan Draft')}</Button>
-        <Button disabled={errors.length > 0} loading={saving === 'submit'} onClick={() => onSubmit(payload(), true)}>Simpan & Submit</Button>
+        <Button disabled={errors.length > 0} loading={saving === 'submit'} onClick={() => onSubmit(payload(), true)}>{t('Simpan & Submit')}</Button>
       </div>
     </div>
   );

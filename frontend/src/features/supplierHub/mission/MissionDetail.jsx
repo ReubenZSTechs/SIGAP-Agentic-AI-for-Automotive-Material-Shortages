@@ -88,12 +88,12 @@ export default function MissionDetail({ id }) {
               <StateBadge meta={MISSION_STATUS[m.status]} />
               <span className="text-xs text-slate-500">{t(SCENARIO[m.scenario].label)}{m.source === 'PO' ? ` · ${t('dari PO')}` : ''}</span>
             </div>
-            <h2 className="mt-1 text-xl font-bold tracking-tight text-slate-900">Misi #{m.number} · {t(m.title)}</h2>
+            <h2 className="mt-1 text-xl font-bold tracking-tight text-slate-900">{t('Misi #{n}', { n: m.number })} · {t(m.title)}</h2>
           </div>
           <div className="w-full text-sm sm:w-auto sm:text-right">
             <p className="text-slate-500">{t('Tenggat')}</p>
             <p className="font-semibold text-slate-900">{dayTime(m.deadline)}</p>
-            {active && <p className={`text-xs ${msLeft(m.deadline) < 6 * 3600e3 ? 'font-semibold text-amber-700' : 'text-slate-500'}`}>Sisa {timeLeft(m.deadline)}</p>}
+            {active && <p className={`text-xs ${msLeft(m.deadline) < 6 * 3600e3 ? 'font-semibold text-amber-700' : 'text-slate-500'}`}>{t('Sisa {time}', { time: timeLeft(m.deadline) })}</p>}
           </div>
         </div>
         <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-slate-200 pt-4 sm:grid-cols-4">
@@ -116,7 +116,7 @@ export default function MissionDetail({ id }) {
       {notLinked.length > 0 && active && (
         <div role="status" className="mt-4 flex flex-wrap items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <Icon name="alert" className="h-4 w-4 text-amber-600" />
-          <span className="flex-1">{notLinked.map((item) => item.supplier.name).join(', ')} belum terhubung ke Telegram, jadi pesan belum terkirim.</span>
+          <span className="flex-1">{t('{names} belum terhubung ke Telegram, jadi pesan belum terkirim.', { names: notLinked.map((item) => item.supplier.name).join(', ') })}</span>
           <Button size="sm" variant="secondary" onClick={() => navigate('/supplier-hub/settings?tab=telegram')}>{t('Hubungkan')}</Button>
         </div>
       )}
@@ -160,11 +160,11 @@ export default function MissionDetail({ id }) {
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary" disabled={waiting.length === 0} loading={busy === 'remind'}
                 onClick={() => run('remind', () => hubService.remindMission(id, null, me), remindCopy)}>
-                <Icon name="bell" /> Kirim pengingat ke yang belum balas ({waiting.length})
+                <Icon name="bell" /> {t('Kirim pengingat ke yang belum balas ({n})', { n: waiting.length })}
               </Button>
               <Button variant="ghost" className="text-red-600" onClick={() => setDialog('cancel')}>{t('Batalkan misi')}</Button>
             </div>
-            <Button onClick={() => setDialog('close')}>Tutup lebih awal & rangkum</Button>
+            <Button onClick={() => setDialog('close')}>{t('Tutup lebih awal & rangkum')}</Button>
           </div>
         )}
       </Card>
@@ -173,7 +173,7 @@ export default function MissionDetail({ id }) {
         : t('Pengingat dikirim langsung atau ditahan sebagai draf sesuai aturan otonomi. Eskalasi selalu berupa draf yang perlu Anda review. Misi tidak pernah mengubah PO.')}</p>
 
       <ConfirmDialog open={dialog === 'close'} variant="primary" title={t('Tutup misi lebih awal')} confirmLabel={t('Tutup & rangkum')} loading={busy === 'close'}
-        message={`${waiting.length + m.targets.filter((item) => ['QUEUED', 'PAUSED'].includes(item.state)).length} supplier yang belum membalas akan ditandai "Tanpa balasan". Agent merangkum ${m.replied} balasan yang sudah masuk lalu mengajukannya ke Inbox Persetujuan.`}
+        message={t('{n} supplier yang belum membalas akan ditandai "Tanpa balasan". Agent merangkum {replied} balasan yang sudah masuk lalu mengajukannya ke Inbox Persetujuan.', { n: waiting.length + m.targets.filter((item) => ['QUEUED', 'PAUSED'].includes(item.state)).length, replied: m.replied })}
         onCancel={() => setDialog(null)}
         onConfirm={async () => { await run('close', () => hubService.closeMission(id, me), 'Misi ditutup dan dirangkum'); setDialog(null); }} />
       <ConfirmDialog open={dialog === 'cancel'} title={t('Batalkan misi')} confirmLabel={t('Ya, batalkan')} loading={busy === 'cancel'}

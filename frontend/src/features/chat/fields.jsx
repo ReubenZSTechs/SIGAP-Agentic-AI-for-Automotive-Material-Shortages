@@ -56,7 +56,7 @@ export function Field({ form, path, label, kind = 'text', required = false, plac
         {label}{required && <span className="text-red-600"> *</span>}
       </label>
       {input}
-      {error && <p role="alert" className="mt-1 text-xs font-medium text-red-600">{error}</p>}
+      {error && <p role="alert" className="mt-1 text-xs font-medium text-red-600">{t(error)}</p>}
     </div>
   );
 }
@@ -87,7 +87,7 @@ export function ItemPicker({ form, base, idKey, newKey, options, newLabel, empty
         <option value="__new__">{newLabel}</option>
         {options.map((o) => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
       </select>
-      {error && <p role="alert" className="mt-1 text-xs font-medium text-red-600">{error}</p>}
+      {error && <p role="alert" className="mt-1 text-xs font-medium text-red-600">{t(error)}</p>}
     </div>
   );
 }

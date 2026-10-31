@@ -101,7 +101,7 @@ function Options({ item, disabled, onChoose }) {
               <p className="mt-1 text-xs text-slate-500">{t('Total')} <span className="line-through">{formatRupiah(o.total_before)}</span> <b className="text-slate-800">{formatRupiah(o.total_after)}</b></p>
             )}
             {o.purchase_orders.length > 0 && (
-              <p className="mt-1 text-xs text-slate-500">PO baru: {o.purchase_orders.map((g) => `${g.supplier_name} ${formatRupiah(g.total_amount)}${g.lead_time_days ? ` · ${g.lead_time_days} hari` : ''}`).join('; ')}</p>
+              <p className="mt-1 text-xs text-slate-500">{t('PO baru:')} {o.purchase_orders.map((g) => `${g.supplier_name} ${formatRupiah(g.total_amount)}${g.lead_time_days ? ` · ${t('{n} hari', { n: g.lead_time_days })}` : ''}`).join('; ')}</p>
             )}
             {o.warnings?.length > 0 && (
               <ul className="mt-1 space-y-0.5 text-xs text-amber-800">{o.warnings.map((w) => <li key={w} className="flex gap-1"><Icon name="alert" className="mt-0.5 h-3 w-3" />{w}</li>)}</ul>
@@ -139,7 +139,7 @@ export default function ApprovalCard({ item, onDecide }) {
     <article className="rounded-xl border border-slate-200 bg-white p-5" aria-label={t(item.title)}>
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={meta.tone}>{t(meta.label)}</Badge>
-        <Badge tone={RISK[item.risk].tone}>Risiko {RISK[item.risk].label.toLowerCase()}</Badge>
+        <Badge tone={RISK[item.risk].tone}>{t('Risiko {level}', { level: t(RISK[item.risk].label).toLowerCase() })}</Badge>
         <Badge tone={DECISION[item.status].tone}>{t(DECISION[item.status].label)}</Badge>
       </div>
       <h2 className="mt-3 text-xl font-bold tracking-tight text-slate-900">{t(item.title)}</h2>
@@ -148,7 +148,7 @@ export default function ApprovalCard({ item, onDecide }) {
         <span>Diajukan Agent {formatDateTime(item.created_at)}</span>
         {pending && (
           <span className={`inline-flex items-center gap-1 ${isUrgent(item) ? 'font-semibold text-amber-700' : ''}`}>
-            <Icon name="clock" className="h-3.5 w-3.5" /> Sisa {timeLeft(item.expires_at)}
+            <Icon name="clock" className="h-3.5 w-3.5" /> {t('Sisa {time}', { time: timeLeft(item.expires_at) })}
           </span>
         )}
       </p>
@@ -165,7 +165,7 @@ export default function ApprovalCard({ item, onDecide }) {
       {item.po_changed && (
         <div role="status" className="mt-4 flex items-start gap-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm text-slate-700">
           <Icon name="info" className="mt-0.5 h-4 w-4 text-primary-600" />
-          <span>PO berubah sejak misi dibuat. Periksa PO terbaru sebelum memutuskan; isi PO tidak diubah oleh kartu ini.</span>
+          <span>{t('PO berubah sejak misi dibuat. Periksa PO terbaru sebelum memutuskan; isi PO tidak diubah oleh kartu ini.')}</span>
         </div>
       )}
       {meta.hero && <Hero rows={rows} />}
@@ -234,14 +234,14 @@ export default function ApprovalCard({ item, onDecide }) {
               <Button variant="secondary" onClick={() => onDecide('revision', payload())}>{t('Minta revisi')}</Button>
             </div>
             <Button disabled={!canApprove} onClick={() => onDecide('approve', payload())}>
-              <Icon name="check" /> Setujui{meta.selectable ? ` (${count})` : ''}
+              <Icon name="check" /> {t('Setujui')}{meta.selectable ? ` (${count})` : ''}
             </Button>
           </div>
         </footer>
       ) : (
         <p className="mt-6 border-t border-slate-200 pt-4 text-sm text-slate-500">
-          {t(DECISION[item.status].label)}{item.decided_by ? <> oleh <b className="text-slate-700">{item.decided_by}</b></> : ''}{item.decided_at ? `, ${formatDateTime(item.decided_at)}` : ''}
-          {item.decision_note ? `. Catatan: ${item.decision_note}` : ''}
+          {t(DECISION[item.status].label)}{item.decided_by ? <> {t('oleh')} <b className="text-slate-700">{item.decided_by}</b></> : ''}{item.decided_at ? `, ${formatDateTime(item.decided_at)}` : ''}
+          {item.decision_note ? `. ${t('Catatan:')} ${item.decision_note}` : ''}
         </p>
       )}
     </article>

@@ -45,7 +45,7 @@ export default function TelegramSettings() {
             <p className="font-semibold text-slate-900">{sandbox ? t('Mode sandbox') : `@${telegram?.bot ?? t('bot belum diatur')}`}</p>
             <p className="text-sm text-slate-500">
               {sandbox ? t('Pesan hanya disimpan di database; balasan supplier disimulasikan dari Hub atau Telegram Lab.') : telegram?.live ? t('Bot Telegram aktif (worker long polling).') : t('TELEGRAM_BOT_TOKEN belum diisi.')}
-              {' · '}{connected} dari {data?.length ?? 0} supplier terhubung
+              {' · '}{t('{n} dari {total} supplier terhubung', { n: connected, total: data?.length ?? 0 })}
             </p>
           </div>
           <StateBadge meta={telegram?.connected ? { label: sandbox ? t('Sandbox aktif') : t('Bot aktif'), tone: 'green' } : { label: t('Bot belum aktif'), tone: 'red' }} />

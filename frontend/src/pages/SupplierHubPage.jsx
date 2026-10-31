@@ -68,14 +68,14 @@ export default function SupplierHubPage() {
       {tgDown && (
         <div role="alert" className="mb-4 flex flex-wrap items-center gap-2.5 rounded-xl border border-red-200 border-l-4 border-l-red-600 bg-red-50 px-4 py-3 text-sm text-red-900">
           <Icon name="alert" className="h-4 w-4 text-red-600" />
-          <span className="flex-1">Bot Telegram belum aktif (TELEGRAM_MODE=telegram tanpa token). {telegram.unsent} pesan gagal terkirim dalam 24 jam terakhir.</span>
+          <span className="flex-1">{t('Bot Telegram belum aktif (TELEGRAM_MODE=telegram tanpa token).')} {t('{n} pesan gagal terkirim dalam 24 jam terakhir.', { n: telegram.unsent })}</span>
           <Button size="sm" variant="secondary" onClick={() => navigate('/supplier-hub/settings?tab=telegram')}>{t('Periksa koneksi')}</Button>
         </div>
       )}
       {telegram && !tgDown && telegram.unsent > 0 && (
         <div role="status" className="mb-4 flex flex-wrap items-center gap-2.5 rounded-xl border border-red-200 border-l-4 border-l-red-600 bg-red-50 px-4 py-3 text-sm text-red-900">
           <Icon name="alert" className="h-4 w-4 text-red-600" />
-          <span className="flex-1">{telegram.unsent} pesan gagal terkirim dalam 24 jam terakhir. Buka thread terkait untuk mengirim ulang.</span>
+          <span className="flex-1">{t('{n} pesan gagal terkirim dalam 24 jam terakhir.', { n: telegram.unsent })} {t('Buka thread terkait untuk mengirim ulang.')}</span>
           <Button size="sm" variant="secondary" onClick={() => navigate('/supplier-hub/conversations')}>{t('Lihat percakapan')}</Button>
         </div>
       )}

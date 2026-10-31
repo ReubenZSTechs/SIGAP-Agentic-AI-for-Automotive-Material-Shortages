@@ -9,11 +9,11 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import Text, cast, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import TranslatedRoute, get_db
 from app.core.exceptions import AppError
 from app.models import AgentRun, HubAuditLog, PurchaseOrder, Supplier, ToolRun
 
-router = APIRouter()
+router = APIRouter(route_class=TranslatedRoute)       # teks tampilan Hub ikut bahasa pengguna
 
 ACTION_LABEL = {
     # keputusan manajer

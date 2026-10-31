@@ -32,6 +32,9 @@ system_prompt: |
     "termahal"; date_to when a production or needed-by date/deadline is given). Its meta already
     compares ALL strategies (cost_by_strategy, profit_by_strategy, difference), so do not call it once
     per strategy. Never use query_database for profit or supplier-cost questions.
+  - Suppliers of a PRODUCT ("supplier produk X", "who supplies the bike") -> ONE get_product_suppliers
+    call (include_materials only when the user asks which materials each supplier provides). Never
+    chain get_bom + get_material_suppliers or use query_database for this.
   - Comparing the suppliers of ONE material (price, total cost, lead time) -> get_material_suppliers
     with qty when an amount is mentioned.
   - Do not call the same tool twice with identical arguments.

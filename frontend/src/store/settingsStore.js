@@ -34,7 +34,7 @@ function apply({ lang, theme }) {
 }
 
 const saved = load();
-const initial = { lang: saved.lang ?? 'id', theme: saved.theme ?? (prefersDark() ? 'dark' : 'light') };
+const initial = { lang: saved.lang ?? 'en', theme: saved.theme ?? (prefersDark() ? 'dark' : 'light') };
 apply(initial);
 
 export const useSettings = create((set, get) => ({

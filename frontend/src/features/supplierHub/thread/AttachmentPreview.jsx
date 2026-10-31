@@ -17,7 +17,7 @@ export default function AttachmentPreview({ attachment: a, onClose }) {
       footer={(
         <>
           <a href={url} download={a.name} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-white px-3.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50">
-            <Icon name="download" /> Unduh
+            <Icon name="download" /> {t('Unduh')}
           </a>
           {a.outbound && <Button onClick={() => navigate(`/purchase-orders/${a.po_id}`)}><Icon name="file" /> {t('Buka PO')}</Button>}
         </>

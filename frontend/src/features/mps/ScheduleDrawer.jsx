@@ -88,7 +88,7 @@ export default function ScheduleDrawer({ schedule: s, onClose, onChanged, onEdit
         </table>
       )}
       <p className="mt-2 text-xs text-slate-500">
-        Status stok adalah kondisi <b>{t('global')}</b> material (semua jadwal PLANNED), bukan khusus batch ini.
+        {t('Status stok adalah kondisi')} <b>{t('global')}</b> {t('material (semua jadwal PLANNED), bukan khusus batch ini.')}
       </p>
 
       <StartProductionDialog open={dialog === 'IN_PROGRESS'} schedule={s} materials={mats.data}

@@ -28,7 +28,7 @@ function SupplierChoice({ form, base, options, hint }) {
             <option value="__new__">{t('+ Supplier baru')}</option>
             {options.map((o) => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
           </select>
-          {error && <p role="alert" className="mt-1 text-xs font-medium text-red-600">{error}</p>}
+          {error && <p role="alert" className="mt-1 text-xs font-medium text-red-600">{t(error)}</p>}
         </div>
         {linked && (
           <>

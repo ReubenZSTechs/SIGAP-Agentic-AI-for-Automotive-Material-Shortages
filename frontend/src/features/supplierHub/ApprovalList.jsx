@@ -15,7 +15,7 @@ export default function ApprovalList({ items, selectedId, onSelect, emptyText })
             <button type="button" onClick={() => onSelect(it.id)} aria-current={active ? 'true' : undefined}
               className={`block w-full border-l-[3px] px-4 py-3 text-left transition-colors ${active ? 'border-l-primary-600 bg-primary-50' : 'border-l-transparent hover:bg-slate-50'}`}>
               <span className="flex items-center gap-2 text-xs text-slate-500">
-                <span className="font-medium text-slate-700">{typeMeta(it.type).label}</span>
+                <span className="font-medium text-slate-700">{t(typeMeta(it.type).label)}</span>
                 <span className="inline-flex items-center gap-1.5"><i className={`h-2 w-2 rounded-full ${DOT[it.risk]}`} />{t(RISK[it.risk].label)}</span>
                 {it.stale && it.status === 'PENDING' && <span className="font-medium text-amber-700">{t('Basi')}</span>}
               </span>

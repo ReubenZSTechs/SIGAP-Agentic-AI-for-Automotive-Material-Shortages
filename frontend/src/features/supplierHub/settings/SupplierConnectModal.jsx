@@ -56,7 +56,7 @@ export default function SupplierConnectModal({ supplier, onClose, onConnected })
               <StateBadge meta={TELEGRAM[state]} />
             </span>
           </div>
-          {err && <p role="alert" className="text-sm text-red-600">{err}</p>}
+          {err && <p role="alert" className="text-sm text-red-600">{t(err)}</p>}
           {invite && state !== 'CONNECTED' && invite.sandbox && (
             <div className="rounded-lg bg-slate-50 px-3.5 py-3 text-sm text-slate-700">
               <p>{t('Mode')} <b>{t('sandbox')}</b>{t(': pesan hanya disimpan di database. Tautkan supplier ke chat simulasi, lalu balasannya bisa diketik di thread percakapan.')}</p>
@@ -65,7 +65,7 @@ export default function SupplierConnectModal({ supplier, onClose, onConnected })
           )}
           {invite && state !== 'CONNECTED' && !invite.sandbox && (invite.link ? (
             <>
-              <p className="text-sm text-slate-700">Kirim tautan ini ke {supplier.contact}. Setelah ia menekan <b>{t('Start')}</b> {t('di Telegram, status berubah menjadi Terhubung.')}</p>
+              <p className="text-sm text-slate-700">{t('Kirim tautan ini ke {contact}. Setelah ia menekan', { contact: supplier.contact })} <b>{t('Start')}</b> {t('di Telegram, status berubah menjadi Terhubung.')}</p>
               <div className="flex gap-2">
                 <Input readOnly value={invite.link} className="font-mono text-xs" aria-label={t('Tautan undangan')} onFocus={(e) => e.target.select()} />
                 <Button variant="secondary" onClick={copy}><Icon name="copy" /> {t('Salin')}</Button>
@@ -81,7 +81,7 @@ export default function SupplierConnectModal({ supplier, onClose, onConnected })
             <p className="rounded-lg bg-amber-50 px-3.5 py-3 text-sm text-amber-900">{t('TELEGRAM_BOT_USERNAME belum diisi di backend/.env, jadi tautan undangan belum bisa dibuat.')}</p>
           ))}
           {state === 'CONNECTED' && (
-            <p className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2.5 text-sm text-green-800"><Icon name="check" className="h-4 w-4" /> Terhubung. Agent kini bisa mengirim pesan ke {supplier.name}.</p>
+            <p className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2.5 text-sm text-green-800"><Icon name="check" className="h-4 w-4" /> {t('Terhubung. Agent kini bisa mengirim pesan ke {name}.', { name: supplier.name })}</p>
           )}
         </div>
       )}

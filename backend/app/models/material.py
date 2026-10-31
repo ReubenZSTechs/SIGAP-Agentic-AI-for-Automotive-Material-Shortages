@@ -1,4 +1,4 @@
-from sqlalchemy import String, Enum, Boolean
+from sqlalchemy import BigInteger, String, Enum, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -18,7 +18,7 @@ class Material(Base):
     category: Mapped[ItemCategory] = mapped_column(
         Enum(ItemCategory, native_enum=False, length=10),
         default=ItemCategory.PURCHASED, index=True)
-    selling_price: Mapped[int | None] = mapped_column(default=None)         # Rp; khusus FINISHED
+    selling_price: Mapped[int | None] = mapped_column(BigInteger, default=None)   # Rp; khusus FINISHED
     specification: Mapped[str | None] = mapped_column(String(500), default=None)  # khusus FINISHED
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 

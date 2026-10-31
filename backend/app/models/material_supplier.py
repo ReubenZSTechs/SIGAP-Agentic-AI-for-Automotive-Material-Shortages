@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, UniqueConstraint, CheckConstraint, Boolean
+from sqlalchemy import BigInteger, ForeignKey, UniqueConstraint, CheckConstraint, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -16,7 +16,7 @@ class MaterialSupplier(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     material_id: Mapped[int] = mapped_column(ForeignKey("materials.id"), index=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
-    unit_price: Mapped[int]  # Rupiah
+    unit_price: Mapped[int] = mapped_column(BigInteger)  # Rupiah (BIGINT: nilai > 2,1 miliar)
     lead_time_days: Mapped[int]
     moq: Mapped[float] = mapped_column(default=1.0)
     is_preferred: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -5,8 +5,13 @@ node_modules/
 dist/
 *.db
 .pytest_cache/
-backend/.env
+
+# Secrets
 .env
+backend/.env
 # Kredensial deploy SAP BTP (Supabase, AI Core, Telegram)
 deploy/vars.yml
-.DS_Store.claude/
+
+# OS / tooling
+.DS_Store
+.claude/

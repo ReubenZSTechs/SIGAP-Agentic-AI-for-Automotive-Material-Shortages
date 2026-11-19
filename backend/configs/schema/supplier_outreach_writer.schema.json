@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "supplier_outreach_writer.schema.json",
+  "title": "SupplierOutreachOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "message_text",
+    "language"
+  ],
+  "properties": {
+    "message_text": {
+      "type": "string",
+      "description": "Telegram message body to the supplier WITHOUT order figures (the system appends the PO details)."
+    },
+    "language": {
+      "type": "string",
+      "enum": [
+        "id",
+        "en"
+      ]
+    }
+  }
+}

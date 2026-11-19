@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sql_fixer.schema.json",
+  "title": "SqlFixerOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sql", "diagnosis", "give_up"],
+  "properties": {
+    "sql": {"type": ["string", "null"], "description": "Corrected SELECT statement, or null when giving up."},
+    "diagnosis": {"type": "string", "description": "What was wrong with the previous attempt."},
+    "give_up": {"type": "boolean", "description": "True when the data needed does not exist in the allowed relations."}
+  }
+}

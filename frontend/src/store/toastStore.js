@@ -1,0 +1,18 @@
+import { create } from 'zustand';
+import { tx } from '../i18n';
+
+export const useToastStore = create((set) => ({
+  toasts: [],
+  push: (message, tone = 'info') => {
+    const id = crypto.randomUUID();
+    set((s) => ({ toasts: [...s.toasts, { id, message: tx(message), tone }] }));
+    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((item) => item.id !== id) })), 4500);
+  },
+  dismiss: (id) => set((s) => ({ toasts: s.toasts.filter((item) => item.id !== id) })),
+}));
+
+export const toast = {
+  success: (m) => useToastStore.getState().push(m, 'success'),
+  error: (m) => useToastStore.getState().push(m, 'error'),
+  info: (m) => useToastStore.getState().push(m, 'info'),
+};

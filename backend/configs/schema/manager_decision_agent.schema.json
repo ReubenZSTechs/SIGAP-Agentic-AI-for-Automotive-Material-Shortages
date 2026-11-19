@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manager_decision_agent.schema.json",
+  "title": "ManagerDecisionOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "choice",
+    "change_request_id",
+    "reply_text",
+    "counter_prices"
+  ],
+  "properties": {
+    "choice": {
+      "type": "string",
+      "enum": [
+        "abort",
+        "approve_change",
+        "resource",
+        "negotiate",
+        "accept_date",
+        "reject_date",
+        "continue_project",
+        "cancel_project",
+        "unclear"
+      ]
+    },
+    "change_request_id": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Id of the pending change request the manager refers to; null if unclear."
+    },
+    "reply_text": {
+      "type": "string",
+      "description": "Short reply to the manager (asked again when the choice is unclear)."
+    },
+    "counter_prices": {
+      "type": "array",
+      "description": "Only for negotiate: the unit price the manager offers per line.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "material_ref",
+          "unit_price"
+        ],
+        "properties": {
+          "material_ref": {
+            "type": "string",
+            "description": "SKU or name of the PO line."
+          },
+          "unit_price": {
+            "type": "integer",
+            "description": "Integer Rupiah without separators."
+          }
+        }
+      }
+    }
+  }
+}

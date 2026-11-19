@@ -1,0 +1,182 @@
+# MRP & Vendor Sourcing Management — Fullstack MVP
+
+Alur bisnis end-to-end: **Master Material & Supplier → BOM → Jadwal & Stock Planning → Smart Sourcing → Purchase Order multi-vendor → Goods Receipt → Update Stok**.
+
+| Sisi | Stack | Folder |
+|:--|:--|:--|
+| Backend | Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2, PostgreSQL 17 (lokal: Docker · produksi: Supabase) | `backend/` |
+| Chatbot | LangGraph, SAP AI Core (gpt-5.4 + claude-4.6-sonnet), sqlglot | `backend/app/chatbot/` (service), `backend/configs/` (agent, schema, tools, workflows) |
+| Frontend | React 18, Vite, React Router v6, Zustand, Axios, Tailwind CSS v4 | `frontend/` |
+
+```
+.
+├── backend/            API FastAPI (+ seed data & tes) + chatbot LangGraph
+├── frontend/           SPA React (Vite)
+├── deploy/             vars SAP BTP Cloud Foundry (vars.yml di-gitignore; contoh: vars.example.yml)
+├── docker/             skrip init Postgres lokal (membuat DB test)
+├── docker-compose.yaml stack lokal: Postgres 17 + backend + worker + frontend
+├── docs/               dokumentasi fitur & deployment
+├── manifest.yml        deploy SAP BTP (backend, worker agent supplier, frontend) ke Supabase
+└── README.md
+```
+
+## Database: lokal vs produksi
+
+| Lingkungan | `APP_ENV` | Database | Dipakai oleh |
+|:--|:--|:--|:--|
+| Development | `development` (default) | Postgres 17 lokal (`docker compose`, port 5433) | `docker compose up`, `uvicorn` di host |
+| Test | `development` | DB `mrp_test` di Postgres lokal | `pytest` (DROP & CREATE semua tabel) |
+| Produksi | `production` | Supabase (transaction pooler, port 6543) | SAP BTP Cloud Foundry (`manifest.yml`) |
+
+- **Kode lokal tidak pernah menyentuh Supabase**: dengan `APP_ENV=development` aplikasi menolak start bila `DATABASE_URL` menunjuk ke `*.supabase.com`, dan `pytest` selalu menolak URL Supabase.
+- Versi mayor Postgres lokal = Supabase (17) dan skema dibuat dari model yang sama (`create_all` + migrasi kolom idempoten `app/db_migrate.py` saat startup), jadi perilaku lokal = produksi.
+- **Satu database** untuk aplikasi dan chatbot: chatbot membaca `DATABASE_URL` yang sama dalam transaksi `READ ONLY` + `statement_timeout` (tidak ada lagi `CHAT_DATABASE_URL` / role `mrp_chat_ro`).
+- Deploy ke SAP BTP + Supabase: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
+## Menjalankan dengan Docker (paling cepat untuk user testing)
+
+Prasyarat: Docker + Docker Compose v2.24+.
+
+```bash
+cp backend/.env.example backend/.env    # isi AICORE_* agar chatbot aktif (opsional)
+docker compose up --build
+```
+
+| Layanan | URL | Keterangan |
+|:--|:--|:--|
+| Frontend | <http://localhost:8080> | nginx; `/api` di-proxy ke backend (SSE tanpa buffering) |
+| Backend | <http://localhost:8000/docs> | otomatis di-seed (`--demo-schedules`) saat start pertama |
+| Postgres 17 | `localhost:5433` (user/pass `mrp`) | DB `mrp` (aplikasi + chatbot) & `mrp_test` (pytest) |
+| Supplier worker | — | agent Telegram supplier (`python -m app.supplier_chat.worker`): dispatch percakapan, misi Hub, long polling, pengingat |
+
+- `DATABASE_URL` di `backend/.env` **ditimpa** ke Postgres lokal; hanya kredensial `AICORE_*` / `TELEGRAM_*` yang dipakai dari file itu. Tanpa `AICORE_*`, aplikasi tetap jalan dan chatbot mengembalikan 503.
+- Tes backend di dalam container: `docker compose exec backend pytest -q`.
+- Reset data: `docker compose down -v` (menghapus volume DB) lalu `up` lagi. Volume bernama `db-data-pg17`; volume lama Postgres 16 (`db-data`) tidak dipakai lagi dan boleh dihapus (`docker volume rm sigap-mrp_db-data`).
+
+## Otomasi PO & Agent Telegram Supplier
+
+- **Otomasi PO** ([`docs/AUTOMATION.md`](docs/AUTOMATION.md)): dari chat Dashboard, mis. *"Buat PO 50 Ban Luar Karet"* atau *"Hapus PO 12"*. Agent mengklarifikasi sampai permintaan cocok dengan database, menampilkan **kartu konfirmasi**, lalu menjalankan CRUD PO lewat tool (`configs/tools/po_actions.py`) dan menghubungi supplier.
+- **Master data dari chat** ([`docs/MASTER_DATA_CHAT.md`](docs/MASTER_DATA_CHAT.md)): mis. *"Saya ingin membuat produk baru"*. Agent menampilkan **formulir di chat** (produk + BOM, material + supplier, atau supplier + material; item baru bisa ditambahkan langsung), memvalidasi isian, menampilkan kartu konfirmasi, lalu menyimpan semuanya dalam satu transaksi.
+- **Agent Telegram supplier** ([`docs/SUPPLIER_TELEGRAM.md`](docs/SUPPLIER_TELEGRAM.md)): loop latar belakang yang meminta konfirmasi/pembatalan PO ke supplier sampai jelas, lalu memperbarui database. Setiap percakapan PO lebih dulu tercatat sebagai **misi** di *Hub Supplier → Misi* (progres mengikuti percakapan). Rincian PO dikirim **sekali**; tiap revisi yang disetujui hanya mengirim daftar perubahannya, dan setelah supplier mengonfirmasi tanpa perubahan lagi, versi itu disimpan sebagai **FINAL** (`po_revisions`) dan PDF PO final dikirim ke supplier. Bila supplier minta **revisi**, manajer memilih opsi (batalkan PO, setujui perubahan, atau pesan ke supplier lain) di Telegram **atau** di Hub Supplier (*Persetujuan* / *Chat Manajer*); keduanya tersinkron. Semua pesan bot ↔ supplier dan bot ↔ manajer tampil di **Hub Supplier**; uji tanpa bot sungguhan dengan `TELEGRAM_MODE=sandbox` langsung dari Hub.
+  - **Batas keputusan otomatis** (*Hub Supplier → Pengaturan → Aturan otonomi*): perubahan **tanggal kirim** di dalam jendela hari lebih awal/terlambat dari tenggat dan **perubahan harga** dalam rentang ±X% (naik maupun turun) diterima agent sendiri (PO direvisi, manajer diberi tahu); di luar rentang manajer memilih opsi (terima, tolak, nego harga, supplier lain, batalkan PO). Perubahan harga yang tidak wajar (di luar ±Y%, default 100%, atau harga ≤ 0) membuat agent langsung membatalkan PO dan mencari supplier pengganti. Semua pesan Telegram dan PDF PO berbahasa Inggris.
+  - **Pembatalan dari supplier**: PO dibatalkan otomatis, lalu agent mencari supplier pengganti (harga & waktu kirim). Di dalam batas → PO baru + misi konfirmasi; terlambat/mahal → manajer memutuskan; tidak ada pengganti → manajer memilih *lanjutkan proyek* atau *batalkan proyek* (jadwal MPS terdampak).
+  - **Guardrail**: pesan supplier yang mencoba "query database" (stok kita, harga supplier lain, daftar data, SQL), prompt injection, permintaan rahasia sistem, atau mengaku manajer ditolak dengan balasan tetap **sebelum** sampai ke LLM.
+- **Riwayat Aktivitas** (menu *Agent → Riwayat Aktivitas*): semua keputusan manajer dan tindakan agent (otomatis, eskalasi, guardrail) dengan filter dan tautan ke panggilan LLM pada alur yang sama.
+
+- **Permintaan produksi multi-PO** ([`docs/AUTOMATION.md`](docs/AUTOMATION.md) §5): *"Saya membutuhkan 100 sepeda gunung, besok harus ada materialnya"* → agent mengecek BOM vs stok (PO masuk hanya dihitung bila tiba tepat waktu), menghitung kekurangan sampai batas aman, memilih supplier sesedikit mungkin (satu PO per supplier), lalu setelah dikonfirmasi membuat jadwal MPS baru dan menerbitkan semua PO sekaligus.
+- **Agent Hub (pelacakan LLM)** ([`docs/AGENT_TRACKING.md`](docs/AGENT_TRACKING.md)): setiap panggilan agent LLM (prompt, input, output, percobaan ulang, latensi, token) dicatat di `agent_runs` dan bisa ditelusuri per trace di Streamlit: `docker compose --profile tools up --build agent-hub` → <http://localhost:8501>.
+
+## Chatbot MRP (Dashboard)
+
+> Dokumentasi lengkap (arsitektur, alur, konfigurasi, API): [`docs/CHATBOT.md`](docs/CHATBOT.md).
+
+Agent di halaman Dashboard (menjawab dari data **read-only**; satu-satunya perubahan yang bisa dilakukan adalah PO, selalu setelah konfirmasi) untuk pertanyaan seperti *"ringkas stok tiap item"*, *"item mana yang critical?"*, *"supplier apa saja untuk material Pedal Sepeda?"*. Jawaban di-stream (SSE) beserta langkah progres, skor verifikasi, dan sumber datanya (tool/SQL).
+
+```
+rewrite → route ─┬─ smalltalk / di luar topik / ubah data non-PO → respond_direct → finalize
+                 ├─ po_automation → parse → resolve ─┬─ kurang jelas → clarify → finalize
+                 │                                    └─ jelas → propose → [konfirmasi] → execute → supplier (Telegram)
+                 └─ mrp_query → plan → execute_tools → synthesize → evaluate ─┬─ lolos → finalize
+                       ▲               (query_database: generate→guard→execute→fix ≤3)       │
+                       └──── konteks kurang (≤2x) ◄──┴── revisi dengan kritik (≤2x) ◄─────────┘
+```
+
+- **Tool terkurasi** memakai service yang sama dengan UI (stok, item critical, supplier per material, PO terbuka, planning terakhir, BOM, jadwal). **`query_database`** = agent text-to-SQL cadangan dengan retry, hanya boleh `SELECT` (divalidasi `sqlglot`), relasi allowlist, `LIMIT ≤ 200`, transaksi `READ ONLY` + `statement_timeout`.
+- **Semantic layer**: view `chat_*_v` (dibuat otomatis setiap `create_all`) menerapkan rumus bisnis (Tersedia, Dipesan, Defisit, status CRITICAL/WARNING/SAFE) agar SQL buatan LLM tidak salah hitung.
+- **Tabel jawaban dirender dari baris evidence asli**, bukan dari teks model.
+- **Quality gate** (konfigurasi di `backend/configs/models.yaml` → `chatbot.evaluation`): evaluator memakai model berbeda (Claude) dari generator (GPT).
+
+  | Metrik | Cara hitung | Bobot |
+  |:--|:--|--:|
+  | Faithfulness | judge per klaim: klaim didukung ÷ total klaim | 0.40 |
+  | Answer relevance | judge | 0.25 |
+  | Numeric grounding | deterministik: setiap angka di teks ada di evidence (nilai, jumlah baris, total kolom) | 0.20 |
+  | Completeness | judge: semua bagian pertanyaan terjawab & didukung data | 0.15 |
+
+  Lolos bila skor tertimbang **≥ 0.80** dan faithfulness ≥ 0.70. Bila gagal: ambil data tambahan (konteks kurang) atau revisi jawaban dengan kritik evaluator; setelah batas percobaan, draf terbaik ditampilkan dengan catatan "belum terverifikasi".
+- **Kontrak output**: setiap agent punya `configs/agent/<agent>.yaml` (prompt & parameter) dan `configs/schema/<agent>.schema.json` (JSON Schema). Output divalidasi; bila tidak valid, model diminta memperbaiki satu kali.
+- **Memori percakapan**: LangGraph `PostgresSaver` (tabel `checkpoint*`), satu `thread_id` per percakapan (tombol *Percakapan baru*).
+- **Endpoint**: `POST /api/v1/chat/stream` (SSE: `progress`… lalu `final`/`error`), `POST /api/v1/chat`, `GET /api/v1/chat/{thread_id}/history`, `GET /api/v1/chat/health`.
+- **Evaluasi offline** dengan LLM sungguhan: `cd backend && python -m scripts.seed --reset --demo-schedules && python -m scripts.eval_chatbot` (pertanyaan di `tests/chatbot_eval/golden.yaml`).
+
+## Menjalankan tanpa Docker (butuh 2 terminal)
+
+Prasyarat: **Python 3.11+**, **Node.js 18+** (diuji dengan Node 22), dan Postgres lokal (`docker compose up -d db`).
+
+### Terminal 1 — Backend (http://localhost:8000)
+
+```bash
+ # Windows: .venv\Scripts\activate
+cd backend
+python -m venv .venv
+source .venv/bin/activate             
+pip install -r requirements.txt
+
+python -m scripts.seed --demo-schedules    # data contoh + jadwal Senin 30 / Selasa 20 unit
+uvicorn app.main:app --reload --port 8000
+```
+
+Swagger UI: <http://localhost:8000/docs>
+
+### Terminal 2 — Frontend (http://localhost:5173)
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Buka <http://localhost:5173>. Request `/api/*` otomatis di-*proxy* oleh Vite ke `localhost:8000`; backend juga mengaktifkan CORS untuk `http://localhost:5173` bila Anda memanggil API langsung (ubah `VITE_API_URL` di `frontend/.env`, mis. `http://localhost:8000/api/v1`).
+
+> Port backend selain 8000? Ubah target proxy di `frontend/vite.config.js`.
+
+## Demo cepat (mengikuti dokumen alur)
+
+1. **Material** → baris `RM-PDL-01` → *Supplier*: 3 supplier, label Termurah (CV Makmur Bersama) dan Tercepat (PT Industri Lokal).
+2. **Produk Final** → `FG-BIKE-01` (Rp 4.500.000, 4 komponen). **BOM** → Sepeda Gunung: 4 sub-part, 15 material beli; tab *Eksplosi* 50 unit → Ban Luar 100.
+3. **MPS & Planning** → *Jalankan Planning* → hasil: Ban −20 🔴, Rangka Jok 0 🔴, Besi 25 🟡, Pedal 20 🟡 (defisit 60 / 15 / 25 / 10).
+4. Tab **Sourcing** → pilih supplier dan ubah qty: Pedal → PT Industri Lokal **50**, Besi → CV Cipta Logam **100**, Rangka Jok → CV Cipta Logam **50**, Ban → PT Karet Nusantara **100**.
+5. Tab **Purchase Order** → *Konfirmasi*: PO Cipta Logam **Rp 3.400.000**, Karet Nusantara **Rp 3.500.000**, Industri Lokal **Rp 2.400.000**.
+6. Buka tiap PO → *Terbitkan* → *Terima Semua*: stok akhir Ban 180 / Rangka 100 / Besi 200 / Pedal 170, semua 🟢 Aman.
+7. Jalankan planning lagi → defisit 0.
+
+## Kalender produksi, status batch, dan stok
+
+Menu **MPS & Planning** membuka **Kalender** (Harian/Mingguan/Bulanan); tombol **Tabel** menampilkan data yang sama. Setiap jadwal = satu **batch** (`BATCH-YYYYMMDD-NNN`) pada satu production line.
+
+- **Seret** jadwal *Planned* ke tanggal lain untuk reschedule (jadwal yang sudah berjalan/selesai terkunci). Run planning yang ada otomatis ditandai **basi** → banner + tombol *Jalankan Ulang*.
+- **Klik** event → panel batch: info, tombol aksi (**Mulai Produksi**, **Selesaikan**, **Batalkan**, Edit), dan tabel alokasi material (status stok bersifat **global per material**, bukan per batch).
+- **Mulai Produksi** menampilkan pratinjau dampak stok (stok fisik sebelum → sesudah). Bila stok fisik kurang, dialog yang sama menampilkan material yang kurang dan tidak ada yang berubah.
+- Kolom **Terkunci** di Inventory otomatis mengikuti jadwal PLANNED; tombol **Riwayat** menampilkan pergerakan stok (termasuk *Pemakaian produksi*).
+- Contoh: jadwal 30 + 20 unit → Terkunci Ban 100, Pedal 100. Mulai batch Senin → stok fisik Ban 80 → 20, Terkunci 100 → 40, **Tersedia tetap −20**.
+
+## Manual PO
+
+**Purchase Order → + Buat PO Manual**: pilih supplier (termin ditampilkan), tanggal PO, catatan, lalu item dari master material (harga default dari master, lead time per supplier, hint Tersedia/Dipesan/Safety; supplier yang belum terhubung ke material hanya diberi peringatan). Alur: **Submit → Approve/Reject → Terbitkan → Terima barang**. Approver cukup mengisi nama (tanpa login pada MVP). PO hasil planning tetap tanpa approval.
+
+## Membuat produk baru
+
+1. **Produk Final** → *+ Tambah Produk* (SKU, nama, harga jual, spesifikasi).
+2. **Material Beli** → tambahkan bahan yang dibeli + supplier-nya (menu *Supplier* pada barisnya); atur stok di **Inventory**.
+3. **BOM** → pilih produk → *+ Komponen*: tab **Material Beli** (pilih material) atau **Sub-part (Made)** (buat baru / pakai yang ada). Sub-part punya tombol ＋ sendiri untuk menambah komponennya.
+4. **MPS & Planning** → jadwalkan produk (hanya Produk Final) dan jalankan planning.
+
+> **Upgrade dari versi sebelumnya?** Jalankan berurutan `cd backend && python -m scripts.migrate_item_categories` (bila perlu) lalu `python -m scripts.migrate_mps_manual_po` agar database lama dikonversi tanpa kehilangan data. Detail: `backend/README.md`.
+
+Reset data demo (Postgres lokal): `cd backend && python -m scripts.seed --reset --demo-schedules`.
+
+## Tes
+
+```bash
+cd backend && pytest -q          # butuh Postgres lokal (TEST_DATABASE_URL=…localhost:5433/mrp_test); URL Supabase ditolak
+cd frontend && npm run build     # build produksi
+```
+
+Alur UI di atas juga diuji otomatis (vitest + jsdom + Testing Library) terhadap backend sungguhan; hasilnya 24/24 lolos (termasuk drag-and-drop kalender dengan mock FullCalendar). Tes tersebut tidak disertakan agar frontend tetap minimal.
+
+## Catatan asumsi
+
+- **Roda Set = 1 per sepeda** pada data seed (Ban Luar 2 per set) agar kebutuhan Ban Luar = 100 seperti dokumen alur; BOM di dokumen (Roda Set = 2) akan menghasilkan 200.
+- `RM-SBR-01` ditambahkan ke Master; supplier/harga untuk material BUY lain adalah data dummy.
+- Tidak ada autentikasi (di luar scope MVP).
+- Detail endpoint & aturan bisnis: `backend/README.md`.

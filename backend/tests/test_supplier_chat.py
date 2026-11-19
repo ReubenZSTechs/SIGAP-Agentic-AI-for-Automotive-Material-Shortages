@@ -1,0 +1,241 @@
+"""Supplier Telegram agent in sandbox mode: outreach, confirmation, cancellation, linking, escalation."""
+from datetime import date, timedelta
+
+from app.database import SessionLocal
+from app.models import PlanningRun, PurchaseOrder
+from app.models.enums import ConversationPurpose, PlanningRunStatus
+from configs.tools import po_actions as A
+from tests import chat_fakes as F
+from tests import po_helpers as H
+
+SCRIPT = {"SupplierOutreachOutput": F.OUTREACH, "ManagerEscalationOutput": F.ESCALATION}
+
+
+def test_opening_message_has_exact_po_summary(seeded):
+    po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 20)
+    svc, _ = H.supplier_service(SCRIPT)
+    chat = H.link(svc, seeded, "SUP-KRT")
+    cid = H.start(svc, po_id)
+    assert H.conversation(cid).status.value == "AWAITING_SUPPLIER"
+    [out] = H.messages("OUT", chat)[-1:]
+    assert out.conversation_id == cid and out.text.startswith(F.OUTREACH["message_text"])
+    assert "RM-TUB-01 Ban Dalam Karet — 20 Buah × Rp15.000 = Rp300.000" in out.text
+
+
+def test_supplier_confirmation_updates_po_confirmation(seeded):
+    po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 20)
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed", promised=F.SOON, ref="SO-77")})
+    chat = H.link(svc, seeded, "SUP-KRT")
+    cid = H.start(svc, po_id)
+    result = svc.handle_inbound(chat, "Siap, kami kirim tanggal 25")
+    assert result["conversation_status"] == "CONFIRMED"
+    assert H.confirmation_status(po_id) == "CONFIRMED"
+    conv = H.conversation(cid)
+    assert conv.status.value == "CONFIRMED" and conv.outcome["promised_delivery_date"] == F.SOON
+    reply, pdf = H.messages("OUT", chat)[-2:]
+    assert reply.text == "Terima kasih." and pdf.agent_output["source"] == "po_pdf"    # balasan, lalu PDF final
+
+
+def test_cancellation_confirmed_cancels_po_keeps_record_and_reverts_stock(client, seeded):
+    po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 20)
+    assert H.on_order("RM-TUB-01") == 20
+    with SessionLocal() as db:                               # run DRAFT yang harus jadi basi
+        from datetime import date
+        db.add(PlanningRun(date_from=date(2026, 10, 1), date_to=date(2026, 10, 2), status=PlanningRunStatus.DRAFT))
+        db.commit()
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed", "Baik, kami batalkan.")})
+    chat = H.link(svc, seeded, "SUP-KRT")
+    with A.write_session() as db:
+        conv = A.request_po_cancellation(db, {"po": A.po_snapshot(db.get(PurchaseOrder, po_id))}, None)
+        cid = conv.id
+    svc.dispatch_queued()
+    svc.handle_inbound(chat, "Oke, PO dibatalkan")
+    po = H.po(po_id)
+    assert po.status.value == "CANCELLED" and "Dibatalkan" in po.notes and H.on_order("RM-TUB-01") == 0
+    conv = H.conversation(cid)
+    assert conv.status.value == "CANCEL_CONFIRMED" and conv.po_id == po_id     # PO tetap ada (Dibatalkan)
+    with SessionLocal() as db:
+        assert all(r.is_stale for r in db.query(PlanningRun))
+
+
+def test_cancellation_refused_notifies_manager_and_keeps_po(seeded):
+    po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 20)
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("declined", "Maaf, barang sudah diproduksi.")})
+    chat = H.link(svc, seeded, "SUP-KRT")
+    H.start(svc, po_id, ConversationPurpose.CANCEL_ORDER)
+    svc.handle_inbound(chat, "Tidak bisa, sudah produksi")
+    assert H.po(po_id).status.value == "ISSUED"
+    assert H.confirmation_status(po_id) == "PENDING"
+    [notice] = H.messages("MANAGER_OUT")
+    assert F.ESCALATION["message_text"] in notice.text and "Tidak bisa, sudah produksi" in notice.text
+
+
+def test_start_token_links_chat_and_unknown_chats_are_ignored(seeded):
+    po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 5)
+    svc, _ = H.supplier_service(SCRIPT)
+    cid = H.start(svc, po_id)
+    assert H.conversation(cid).status.value == "QUEUED"        # supplier belum tertaut
+    assert "not connected to Telegram" in H.messages("MANAGER_OUT")[0].text
+    assert svc.handle_inbound(555, "halo")["reason"] == "unknown_chat"
+    with SessionLocal() as db:
+        from app.supplier_chat.service import ensure_link
+        token = ensure_link(db, seeded["suppliers"]["SUP-KRT"]).link_token
+        db.commit()
+    assert svc.handle_inbound(555, "/start wrong-token")["linked"] is False
+    assert svc.handle_inbound(555, f"/start {token}")["linked"] is True
+    assert H.conversation(cid).status.value == "AWAITING_SUPPLIER"   # antrean langsung dikirim
+
+
+def test_unclear_replies_escalate_after_max_turns(seeded):
+    po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 5)
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("unclear", "Mohon konfirmasi ya/tidak.")},
+                                max_turns=2)
+    chat = H.link(svc, seeded, "SUP-KRT")
+    cid = H.start(svc, po_id)
+    svc.handle_inbound(chat, "hmm")
+    assert H.conversation(cid).status.value == "AWAITING_SUPPLIER"
+    svc.handle_inbound(chat, "nanti ya")
+    assert H.conversation(cid).status.value == "ESCALATED"
+    assert len(H.messages("MANAGER_OUT")) == 1
+
+
+def test_one_active_conversation_per_supplier(seeded):
+    first, second = (H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 5), H.issue_po(seeded, "RM-RUB-01", "SUP-KRT", 5))
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed", promised=F.SOON)})
+    chat = H.link(svc, seeded, "SUP-KRT")
+    c1, c2 = H.start(svc, first), H.start(svc, second)
+    assert (H.conversation(c1).status.value, H.conversation(c2).status.value) == ("AWAITING_SUPPLIER", "QUEUED")
+    svc.handle_inbound(chat, "ok siap")
+    assert (H.conversation(c1).status.value, H.conversation(c2).status.value) == ("CONFIRMED", "AWAITING_SUPPLIER")
+
+
+def test_sandbox_api_round_trip(client, seeded):
+    """The ops API path: link, start, reply as supplier via HTTP."""
+    import app.api.v1.endpoints.supplier_chat as ep
+    po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 5)
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": F.reply("confirmed", promised=F.SOON)})
+    client.app.dependency_overrides[ep.service] = lambda: svc
+    try:
+        sid = seeded["suppliers"]["SUP-KRT"]
+        assert client.post(f"{H.API}/supplier-chat/links/{sid}/sandbox").status_code == 200
+        r = client.post(f"{H.API}/supplier-chat/conversations", json={"po_id": po_id, "purpose": "CONFIRM_ORDER"})
+        assert r.status_code == 201 and r.json()["status"] == "AWAITING_SUPPLIER"
+        r = client.post(f"{H.API}/supplier-chat/sandbox/inbound", json={"supplier_id": sid, "text": "siap"})
+        assert r.status_code == 200 and [m["direction"] for m in r.json()["messages"]] == ["IN", "OUT", "OUT"]  # balasan + PDF final
+        detail = client.get(f"{H.API}/supplier-chat/conversations/{r.json()['messages'][0]['conversation_id']}").json()
+        assert detail["status"] == "CONFIRMED" and detail["confirmation"]["status"] == "CONFIRMED"
+        assert any(l["linked"] for l in client.get(f"{H.API}/supplier-chat/links").json())
+    finally:
+        client.app.dependency_overrides.pop(ep.service, None)
+
+
+def test_telegram_mode_ignores_sandbox_link_and_resends_after_real_link(seeded):
+    """Sandbox chat ids are not real Telegram chats; linking via /start re-sends the failed opening."""
+    from app.supplier_chat.transport import SandboxTransport
+
+    class FakeTelegram(SandboxTransport):
+        name = "telegram"
+        def send(self, chat_id, text, buttons=None):
+            if chat_id >= 10_000_000 and chat_id < 10_100_000:
+                raise RuntimeError("chat not found")
+            return 1
+
+    po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 5)
+    svc, _ = H.supplier_service(SCRIPT)
+    svc.transport = FakeTelegram()
+    svc.manager_chat_id = 42
+    H.link(svc, seeded, "SUP-KRT")                                 # tautan sandbox lama
+    cid = H.start(svc, po_id)
+    assert H.conversation(cid).status.value == "QUEUED"            # tidak dikirim ke chat palsu
+    with SessionLocal() as db:
+        from app.supplier_chat.service import ensure_link
+        token = ensure_link(db, seeded["suppliers"]["SUP-KRT"]).link_token
+        db.commit()
+    assert svc.handle_inbound(42, f"/start {token}")["reason"] == "manager_chat"   # akun manajer ditolak
+    assert svc.handle_inbound(777, f"/start {token}")["linked"] is True
+    assert H.conversation(cid).status.value == "AWAITING_SUPPLIER"
+    assert [m.error for m in H.messages("OUT", 777)][-1] is None
+
+
+def test_issuing_from_po_page_queues_one_supplier_confirmation(client, seeded):
+    po = H.draft_po(client, seeded, "RM-TUB-01", "SUP-KRT", 5)
+    for step in ("submit", "approve"):
+        body = {"approved_by": "Rina"} if step == "approve" else None
+        assert client.post(f"{H.API}/purchase-orders/{po['id']}/{step}", json=body).status_code == 200
+    assert client.patch(f"{H.API}/purchase-orders/{po['id']}/status", json={"status": "ISSUED"}).status_code == 200
+    convs = [c for c in H.conversations() if c.po_id == po["id"]]
+    assert len(convs) == 1 and convs[0].purpose.value == "CONFIRM_ORDER"
+    assert H.confirmation_status(po["id"]) == "PENDING"
+    with A.write_session() as db:                                       # jalur lain (mis. Hub) tidak menggandakan
+        assert A.ensure_confirm_conversation(db, db.get(PurchaseOrder, po["id"])) is None
+
+
+# ------------------------- required confirmation fields (your Telegram sequence) -------------------------
+def test_confirmation_without_date_asks_for_it_then_sends_one_final_pdf(seeded):
+    transport = H.RecordingTransport()
+    po_id = H.issue_po(seeded, "RM-SBR-01", "SUP-CPT", 1000)
+    number = H.po(po_id).po_number
+    svc, fake = H.supplier_service({**SCRIPT, "SupplierReplyOutput": [
+        F.reply("confirmed", "Terima kasih atas konfirmasinya."),           # "Bisa" (tanpa tanggal)
+        F.reply("unclear", "Baik.", promised=F.SOON)],                       # "Tanggal …" (agent ragu)
+        "SupplierInboundTriageOutput": [F.triage(number, "acknowledgement", "Sama-sama, sudah kami catat."),
+                                        F.triage(number, "delivery_change", "Siap.", promised=F.SOON)]},
+        transport=transport)
+    chat = H.link(svc, seeded, "SUP-CPT")
+    cid = H.start(svc, po_id)
+
+    svc.handle_inbound(chat, "Bisa")
+    conv = H.conversation(cid)
+    assert conv.status.value == "AWAITING_SUPPLIER" and conv.outcome["confirmed_pending"] is True
+    assert "Please let us know the delivery date" in H.messages("OUT", chat)[-1].text
+    assert transport.documents == [] and H.confirmation_status(po_id) == "PENDING"
+
+    svc.handle_inbound(chat, "Tanggal pengirimannya nanti")
+    payload = __import__("json").loads([c for c in fake.calls if c["agent"] == "SupplierReplyOutput"][-1]["messages"][-1]["content"])
+    assert payload["already_confirmed"] is True and payload["still_needed"] == ["the delivery date"]
+    assert H.confirmation_status(po_id) == "CONFIRMED" and len(transport.documents) == 1
+    final = H.revisions(po_id)[-1]
+    assert final.status.value == "FINAL" and final.snapshot["promised_delivery_date"] == F.SOON
+
+    svc.handle_inbound(chat, "Sudah sesuai")                              # setelah final: hanya terima kasih
+    assert len(transport.documents) == 1 and len(H.conversations()) == 1
+    assert H.messages("OUT", chat)[-1].text == f"Thank you, {number} is already recorded as confirmed."
+
+    later = (date.today() + timedelta(days=9)).isoformat()
+    fake.script["SupplierInboundTriageOutput"] = [F.triage(number, "delivery_change", "Siap.", promised=later)]
+    svc.handle_inbound(chat, "Ternyata baru bisa kirim tanggal itu")     # PO tanpa needed-by: dalam batas agent
+    assert H.messages("OUT", chat)[-1].text.startswith(f"Thank you. We have updated the delivery date of {number} to {later}.")
+    with SessionLocal() as db:
+        assert A.confirmation(db, po_id).promised_delivery_date.isoformat() == later
+    rev = H.revisions(po_id)[-1]
+    assert rev.snapshot["promised_delivery_date"] == later and rev.status.value == "FINAL" and rev.version == 2
+    assert len(transport.documents) == 2                                   # PDF versi baru ikut terkirim
+    assert "within the agent's limits" in H.messages("MANAGER_OUT")[-1].text
+
+
+def test_required_fields_are_configurable(seeded):
+    po_id = H.issue_po(seeded, "RM-TUB-01", "SUP-KRT", 5)
+    svc, _ = H.supplier_service({**SCRIPT, "SupplierReplyOutput": [F.reply("confirmed", promised=F.SOON),
+                                                                  F.reply("confirmed", ref="SO-9")]},
+                                required_confirmation_fields=["promised_delivery_date", "supplier_reference"])
+    chat = H.link(svc, seeded, "SUP-KRT")
+    H.start(svc, po_id)
+    svc.handle_inbound(chat, "Siap, kirim minggu depan")
+    assert H.confirmation_status(po_id) == "PENDING" and "reference number" in H.messages("OUT", chat)[-1].text
+    svc.handle_inbound(chat, "No SO-9")
+    assert H.confirmation_status(po_id) == "CONFIRMED" and H.revisions(po_id)[-1].snapshot["supplier_reference"] == "SO-9"
+
+
+def test_worker_logs_never_contain_the_bot_token(caplog):
+    import logging
+    from app.supplier_chat.worker import RedactBotToken
+    fake = "bot123456789:FAKEfakeFAKEfakeFAKEfake_test-token"
+    log = logging.getLogger("redact-test")
+    caplog.handler.addFilter(RedactBotToken())
+    with caplog.at_level(logging.INFO, logger="redact-test"):
+        log.info("POST https://api.telegram.org/%s/getUpdates", fake)
+        try:
+            raise RuntimeError(f"connect to https://api.telegram.org/{fake}/sendMessage failed")
+        except RuntimeError:
+            log.exception("send failed")
+    assert "FAKEfake" not in caplog.text and caplog.text.count("bot<redacted>") == 2

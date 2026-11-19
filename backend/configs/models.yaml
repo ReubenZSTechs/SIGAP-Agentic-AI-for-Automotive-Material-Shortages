@@ -1,0 +1,126 @@
+SAP_LLM:
+  description: LLM deployments on SAP AI Core / Generative AI Hub (resource group from AICORE_RESOURCE_GROUP)
+  models:
+    generator:
+      provider: sap_openai
+      model_name: gpt-5.4
+      served_name: default_llm
+      description: SQL generation, retrieval planning, and answer synthesis
+    judge:
+      provider: sap_bedrock
+      model_name: anthropic--claude-4.6-sonnet
+      served_name: judge_llm
+      description: Independent evaluator (different model family than the generator)
+
+  agents:
+    prompt_rewriter:
+      model: generator
+      config: agent/prompt_rewriter.yaml
+      schema: schema/prompt_rewriter.schema.json
+    router:
+      model: generator
+      config: agent/router.yaml
+      schema: schema/router.schema.json
+    retrieval_planner:
+      model: generator
+      config: agent/retrieval_planner.yaml
+      schema: schema/retrieval_planner.schema.json
+    sql_generator:
+      model: generator
+      config: agent/sql_generator.yaml
+      schema: schema/sql_generator.schema.json
+    sql_fixer:
+      model: generator
+      config: agent/sql_fixer.yaml
+      schema: schema/sql_fixer.schema.json
+    synthesizer:
+      model: generator
+      config: agent/synthesizer.yaml
+      schema: schema/synthesizer.schema.json
+    evaluator:
+      model: judge
+      config: agent/evaluator.yaml
+      schema: schema/evaluator.schema.json
+    direct_responder:
+      model: generator
+      config: agent/direct_responder.yaml
+      schema: schema/direct_responder.schema.json
+    # --- Otomasi PO (Dashboard) ---
+    automation_parser:
+      model: generator
+      config: agent/automation_parser.yaml
+      schema: schema/automation_parser.schema.json
+    automation_clarifier:
+      model: generator
+      config: agent/automation_clarifier.yaml
+      schema: schema/automation_clarifier.schema.json
+    # --- Master data baru (produk / material / supplier) ---
+    master_data_parser:
+      model: generator
+      config: agent/master_data_parser.yaml
+      schema: schema/master_data_parser.schema.json
+    # --- Supplier Telegram ---
+    supplier_outreach_writer:
+      model: generator
+      config: agent/supplier_outreach_writer.yaml
+      schema: schema/supplier_outreach_writer.schema.json
+    supplier_reply_agent:
+      model: generator
+      config: agent/supplier_reply_agent.yaml
+      schema: schema/supplier_reply_agent.schema.json
+    supplier_inbound_triage:
+      model: generator
+      config: agent/supplier_inbound_triage.yaml
+      schema: schema/supplier_inbound_triage.schema.json
+    manager_escalation_writer:
+      model: generator
+      config: agent/manager_escalation_writer.yaml
+      schema: schema/manager_escalation_writer.schema.json
+    manager_decision_agent:
+      model: generator
+      config: agent/manager_decision_agent.yaml
+      schema: schema/manager_decision_agent.schema.json
+    # --- Agent Hub (misi multi-supplier) ---
+    mission_reply_agent:
+      model: generator
+      config: agent/mission_reply_agent.yaml
+      schema: schema/mission_reply_agent.schema.json
+
+chatbot:
+  history_turns: 6
+  evaluation:
+    threshold: 0.75
+    faithfulness_floor: 0.7
+    weights:
+      faithfulness: 0.40
+      answer_relevance: 0.25
+      numeric_grounding: 0.20
+      completeness: 0.15
+    max_retrieve_attempts: 2
+    max_revise_attempts: 2
+  sql_agent:
+    max_attempts: 3
+    row_limit: 200
+    statement_timeout_ms: 5000
+  evidence:
+    max_rows_in_prompt: 60
+    max_calls_per_plan: 4
+
+automation:
+  proposal_ttl_minutes: 30      # kartu konfirmasi kedaluwarsa setelah ini
+  max_clarify_rounds: 3         # setelah ini permintaan dianggap gagal & draf dibuang
+  actor: "Agent MRP (dikonfirmasi pengguna)"
+
+supplier_chat:
+  max_turns: 8                  # balasan supplier tanpa keputusan jelas sebelum eskalasi ke manajer
+  max_revision_rounds: 2        # setelah ini opsi "setujui perubahan" tidak ditawarkan lagi
+  reminder_after_hours: 24
+  escalate_after_hours: 72
+  change_request_ttl_hours: 48  # opsi revisi tanpa keputusan manajer -> EXPIRED
+  history_messages: 12          # pesan terakhir yang diberikan ke agent
+  poll_timeout_s: 25            # long polling getUpdates
+  idle_sleep_s: 5               # jeda loop worker di mode sandbox
+  manager_actor: "Manager via Telegram"
+  # Data yang wajib diberikan supplier sebelum PO dianggap final (PDF final baru dikirim setelah lengkap).
+  # Pilihan: promised_delivery_date, supplier_reference
+  required_confirmation_fields: [promised_delivery_date]

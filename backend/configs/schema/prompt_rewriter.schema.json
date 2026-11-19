@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "prompt_rewriter.schema.json",
+  "title": "PromptRewriterOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rewritten_query", "language", "is_follow_up"],
+  "properties": {
+    "rewritten_query": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Standalone, clear English version of the user's latest message with references to earlier turns resolved."
+    },
+    "language": {
+      "type": "string",
+      "enum": ["id", "en"],
+      "description": "Language of the user's original message: id = Indonesian, en = English."
+    },
+    "is_follow_up": {
+      "type": "boolean",
+      "description": "True when the message depends on earlier conversation turns."
+    }
+  }
+}
